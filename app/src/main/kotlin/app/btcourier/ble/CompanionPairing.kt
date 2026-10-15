@@ -145,8 +145,10 @@ suspend fun bond(context: Context, device: BluetoothDevice) {
             context,
             receiver,
             IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED),
-            // A protected system broadcast still reaches a non-exported receiver.
-            ContextCompat.RECEIVER_NOT_EXPORTED,
+            // Exported because only the Bluetooth stack can send this protected broadcast, and it
+            // runs under its own uid, so a non-exported receiver never hears it. The address check
+            // in onReceive still filters out other devices.
+            ContextCompat.RECEIVER_EXPORTED,
         )
         cont.invokeOnCancellation { runCatching { context.unregisterReceiver(receiver) } }
         val started = try {

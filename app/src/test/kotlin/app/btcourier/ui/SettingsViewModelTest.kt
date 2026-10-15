@@ -6,10 +6,12 @@ import app.btcourier.data.SinkAuth
 import app.btcourier.ui.settings.CacheCapProblem
 import app.btcourier.ui.settings.SettingsViewModel
 import app.btcourier.ui.settings.SinkUrlProblem
+import app.btcourier.ui.settings.validateCacheCap
 import app.btcourier.work.MapSecretStore
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
@@ -153,6 +155,14 @@ class SettingsViewModelTest {
         vm.save()
 
         assertEquals(CacheCapProblem.OUT_OF_RANGE, vm.state.value.capProblem)
+    }
+
+    @Test
+    fun `the cache cap accepts 10 to 2000 MB inclusive`() {
+        assertEquals(CacheCapProblem.OUT_OF_RANGE, validateCacheCap("9"))
+        assertNull(validateCacheCap("10"))
+        assertNull(validateCacheCap("2000"))
+        assertEquals(CacheCapProblem.OUT_OF_RANGE, validateCacheCap("2001"))
     }
 
     @Test

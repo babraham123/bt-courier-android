@@ -3,6 +3,7 @@ package app.btcourier.work
 import app.btcourier.core.sink.Sink
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.sink.deliverPending
+import app.btcourier.core.store.SealPolicy
 import app.btcourier.core.store.Store
 import app.btcourier.data.SinkUpload
 import app.btcourier.data.SyncStatusRepository
@@ -11,7 +12,9 @@ import app.btcourier.log.AppLog
 
 /**
  * One delivery round of every pending batch to every configured sink, independent of WorkManager.
- * Each sink is delivered to on its own, so one that is down does not hold back the others.
+ * Each sink is delivered to on its own, so one that is down does not hold back the others. The
+ * round seals the store first: otherwise rows whose batch only the age rule closes would wait
+ * for the next sync that reaches the device.
  *
  * Retries are bounded: a round that ends in [UploadResult.Retry] asks for another attempt until
  * [maxAttempts] rounds have run, then gives up ([UploadOutcome.GaveUp]); [UploadResult.Failed]
@@ -32,10 +35,12 @@ class UploadJob(
 ) {
     /**
      * @param attempt 0-based index of this round among consecutive retries.
+     * @param sealPolicy what to seal before delivering.
      * @param onLargeBacklog runs before delivery when the backlog is large enough that the upload
      *   may outlast a background job's time limit; the worker promotes itself to a foreground service.
      */
-    suspend fun run(attempt: Int, onLargeBacklog: suspend () -> Unit = {}): UploadOutcome {
+    suspend fun run(attempt: Int, sealPolicy: SealPolicy, onLargeBacklog: suspend () -> Unit = {}): UploadOutcome {
+        store.seal(sealPolicy, clock())
         val configured = try {
             sinks()
         } catch (e: IllegalArgumentException) {

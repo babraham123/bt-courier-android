@@ -101,6 +101,45 @@ class HttpPutUploadTransportTest : MockServerTest() {
         assertInstanceOf(UploadResult.Failed::class.java, transport().upload(batch))
     }
 
+    // An auth proxy (e.g. Authelia forward-auth) redirects to a login page that answers 200.
+    private fun redirectToLogin(code: Int) {
+        respond(code, "", "Location" to "/login")
+        respond(200, "<html>login</html>")
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = [301, 302, 303, 307, 308])
+    fun `a redirect followed by the client fails instead of acking the login page`(code: Int) = runTest {
+        redirectToLogin(code)
+
+        val result = transport().upload(batch)
+
+        assertInstanceOf(UploadResult.Failed::class.java, result)
+        assertEquals("PUT", takeRequest().method)
+        assertEquals("/login", takeRequest().target, "the default client followed the redirect")
+    }
+
+    @Test
+    fun `a redirect is a permanent failure when the client does not follow it`() = runTest {
+        redirectToLogin(302)
+        val noRedirects = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
+
+        assertInstanceOf(UploadResult.Failed::class.java, transport(client = noRedirects).upload(batch))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `a conflict whose HEAD is redirected is not acked`() = runTest {
+        respond(409)
+        respond(302, "", "Location" to "/login")
+        respond(200, "", "Content-Length" to batch.bytes.size.toString())
+
+        val result = transport().upload(batch)
+
+        assertFalse(result == UploadResult.Acked, result.toString())
+        assertEquals(3, server.requestCount)
+    }
+
     @Test
     fun `a connection failure is retried, not thrown`() = runTest {
         val t = transport()

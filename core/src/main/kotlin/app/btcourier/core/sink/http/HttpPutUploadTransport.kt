@@ -11,6 +11,7 @@ import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import java.io.IOException
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -32,15 +33,19 @@ import java.util.zip.GZIPInputStream
  *   idempotent here.
  * - 409, 412: servers that refuse to overwrite answer these for an object that already exists.
  *   A HEAD on the same URL decides:
- *   - 2xx with a `Content-Length` equal to ours: [UploadResult.Acked]. The name embeds a hash of
+ *   - 2xx, not reached via a redirect, with a `Content-Length` equal to ours: [UploadResult.Acked]. The name embeds a hash of
  *     the content, so same name and same length is the same object for any practical purpose,
  *     and the check costs one round trip without downloading anything.
  *   - 404: [UploadResult.Failed]. Nothing is there, so the conflict is about the target itself
  *     (WebDAV answers 409 for a missing parent collection); retrying can't fix that.
  *   - anything else, or a failed HEAD: [UploadResult.Retry], since a conflict can be transient
  *     (a concurrent writer, a lock) and declaring it permanent would strand the batch.
- * - Any other status (401, 403, 404, 413, unfollowed 3xx, ...): [UploadResult.Failed]; these
- *   need a config change, not another attempt.
+ * - 3xx, or any response the client reached by following a redirect: [UploadResult.Failed]. A
+ *   redirect is a config problem (typically an auth proxy sending us to its login page), and
+ *   OkHttp replays a redirected PUT as a bodyless GET whose 200 must not count as an upload. The
+ *   transport checks this itself rather than trusting the client to have redirects disabled.
+ * - Any other status (401, 403, 404, 413, ...): [UploadResult.Failed]; these need a config
+ *   change, not another attempt.
  *
  * [UploadResult.Retry.afterMs] honours `Retry-After` (seconds or HTTP-date, capped at a day);
  * without it, it is an exponential back-off over this instance's consecutive retries, starting at
@@ -84,6 +89,8 @@ class HttpPutUploadTransport(
         return call.await().use { rsp ->
             val code = rsp.code
             when {
+                code in 300..399 || rsp.redirected || rsp.request.method != "PUT" ->
+                    UploadResult.Failed("HTTP $code for $name: redirects are not followed")
                 code in 200..299 -> UploadResult.Acked
                 code == 408 || code == 429 || code in 500..599 ->
                     retry("HTTP $code for $name", retryAfterMs(rsp.header("Retry-After")))
@@ -96,11 +103,13 @@ class HttpPutUploadTransport(
     private suspend fun resolveConflict(code: Int, name: String, url: HttpUrl, length: Long): UploadResult =
         client.newCall(auth) { url(url).head() }.await().use { rsp ->
             when {
-                rsp.isSuccessful && rsp.header("Content-Length")?.toLongOrNull() == length -> UploadResult.Acked
+                rsp.isSuccessful && !rsp.redirected && rsp.header("Content-Length")?.toLongOrNull() == length -> UploadResult.Acked
                 rsp.code == 404 -> UploadResult.Failed("HTTP $code for $name and no object exists there")
                 else -> retry("HTTP $code for $name and the existing object is not verifiably identical", null)
             }
         }
+
+    private val Response.redirected get() = priorResponse != null
 
     // Corrupt stored bytes stay corrupt; reporting them as a network retry would loop forever.
     private fun gunzip(bytes: ByteArray): ByteArray? =

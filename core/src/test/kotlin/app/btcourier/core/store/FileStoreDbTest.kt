@@ -1,5 +1,7 @@
 package app.btcourier.core.store
 
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -84,6 +86,29 @@ class FileStoreDbTest {
         assertEquals(emptyList<SealedBatch>(), reopened.pending("a"))
         assertEquals(1, reopened.seal(neverByAgeOrSize, h.now).size)
         assertEquals(listOf(listOf(marker("f1")) + rows(1..2)), reopened.pending("a").map { it.lines })
+    }
+
+    @Test
+    fun `a caller cancelled mid-commit leaves the open store agreeing with disk`() = runTest {
+        val h = StoreHarness(DbKind.FILE, dir)
+        var caller: Job? = null
+        val s = h.reopen(beforeCommit = { caller?.cancel() })
+        val cancelled = launch { s.appendPage("dev", "c1", rows(1..2)) }.also { caller = it }
+        cancelled.join()
+        caller = null
+        assertTrue(cancelled.isCancelled)
+
+        // The commit reached disk, so the open store must see it and build on it.
+        assertEquals("c1", s.cursor("dev"))
+        assertTrue(s.appendPage("dev", "c2", rows(3..4)))
+        s.seal(neverByAgeOrSize.copy(maxBatchAgeMs = 0), h.now)
+
+        val reopened = h.reopen()
+        assertEquals("c2", s.cursor("dev"))
+        assertEquals("c2", reopened.cursor("dev"))
+        assertEquals(listOf(rows(1..4)), s.pendingRows("a"))
+        assertEquals(listOf(rows(1..4)), reopened.pendingRows("a"))
+        assertEquals(s.counters(), reopened.counters())
     }
 
     @Test

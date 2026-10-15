@@ -1,7 +1,9 @@
 package app.btcourier.core.store
 
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 
 /** Every table except page lines, small enough to rewrite whole on each commit. */
@@ -109,10 +111,13 @@ internal class SnapshotStoreDb(
         if (next != s) commit(next, emptyMap(), removed.map { it.seq })
     }
 
-    private suspend fun commit(next: DbSnapshot, added: Map<Long, List<String>>, removed: Collection<Long>) {
-        persistence.commit(next, added, removed)
-        snapshot = next
-    }
+    // Non-cancellable so a caller cancelled mid-commit can't skip `snapshot = next` after the
+    // commit reached disk; a stale snapshot would be written back by the next mutation.
+    private suspend fun commit(next: DbSnapshot, added: Map<Long, List<String>>, removed: Collection<Long>) =
+        withContext(NonCancellable) {
+            persistence.commit(next, added, removed)
+            snapshot = next
+        }
 }
 
 /** Volatile [StoreDb] for tests and for a sink-less dry run. */

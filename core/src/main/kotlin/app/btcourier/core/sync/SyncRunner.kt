@@ -65,8 +65,8 @@ class SyncRunner(
         } catch (e: IOException) {
             StopReason.LinkLost(e)
         }
-        store.seal(sealPolicy, clock())
-        return SyncReport(progress.pages, progress.linesStored, progress.duplicates, stoppedBecause)
+        val sealed = store.seal(sealPolicy, clock())
+        return SyncReport(progress.pages, progress.linesStored, progress.duplicates, stoppedBecause, sealed)
     }
 
     private class Progress {
@@ -151,12 +151,16 @@ class SyncRunner(
  * @property linesStored data rows newly stored (markers not counted).
  * @property duplicates pages with rows that the store already had (a re-pull after a lost ack
  *   or a crash between persisting and returning).
+ * @property sealed ids of the batches this sync's seal created, whatever the outcome. Not the
+ *   change in pending batches: the same seal may evict old batches at the cache cap, and an
+ *   upload running meanwhile may drain some.
  */
 data class SyncReport(
     val pagesPulled: Int,
     val linesStored: Long,
     val duplicates: Int,
     val stoppedBecause: StopReason,
+    val sealed: List<String>,
 )
 
 sealed interface StopReason {

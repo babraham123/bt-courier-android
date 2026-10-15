@@ -6,6 +6,7 @@ import app.btcourier.core.sink.LocalDirectoryUploadTransport
 import app.btcourier.core.sink.Sink
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.store.DefaultStore
+import app.btcourier.core.store.SealPolicy
 import app.btcourier.data.AppSettings
 import app.btcourier.data.HTTP_SINK_ID
 import app.btcourier.data.InMemorySyncStatus
@@ -71,7 +72,7 @@ class UploadJobTest {
     fun `every pending batch reaches every sink, then the store drops them`() = runTest {
         val store = storeWithTwoBatches(setOf("a", "b"))
 
-        val outcome = job(store, localSink("a"), localSink("b")).run(attempt = 0)
+        val outcome = job(store, localSink("a"), localSink("b")).run(attempt = 0, sealEverything)
 
         assertEquals(UploadOutcome.Delivered, outcome)
         assertEquals(2, dir.resolve("a").listDirectoryEntries().size)
@@ -89,10 +90,10 @@ class UploadJobTest {
         val store = storeWithTwoBatches(setOf("down"))
         val sink = scriptedSink("down", UploadResult.Retry("HTTP 503"))
 
-        assertEquals(UploadOutcome.Retry, job(store, sink).run(attempt = 0))
+        assertEquals(UploadOutcome.Retry, job(store, sink).run(attempt = 0, sealEverything))
         assertEquals(UploadResultKind.RETRYING, status.status.value.lastUpload)
 
-        assertEquals(UploadOutcome.GaveUp, job(store, sink).run(attempt = UploadJob.MAX_ATTEMPTS - 1))
+        assertEquals(UploadOutcome.GaveUp, job(store, sink).run(attempt = UploadJob.MAX_ATTEMPTS - 1, sealEverything))
 
         val s = status.status.value
         assertEquals(UploadResultKind.GAVE_UP, s.lastUpload)
@@ -105,7 +106,7 @@ class UploadJobTest {
     fun `a permanent failure is not retried and does not hold back the other sinks`() = runTest {
         val store = storeWithTwoBatches(setOf("refused", "ok"))
 
-        val outcome = job(store, scriptedSink("refused", UploadResult.Failed("HTTP 403")), localSink("ok")).run(attempt = 0)
+        val outcome = job(store, scriptedSink("refused", UploadResult.Failed("HTTP 403")), localSink("ok")).run(attempt = 0, sealEverything)
 
         assertEquals(UploadOutcome.Failed, outcome)
         assertEquals(2, dir.resolve("ok").listDirectoryEntries().size, "the healthy sink got everything")
@@ -122,7 +123,7 @@ class UploadJobTest {
     fun `with no sink configured nothing is uploaded or dropped`() = runTest {
         val store = storeWithTwoBatches(emptySet())
 
-        assertEquals(UploadOutcome.NoSink, job(store).run(attempt = 0))
+        assertEquals(UploadOutcome.NoSink, job(store).run(attempt = 0, sealEverything))
 
         assertEquals(UploadResultKind.NO_SINK, status.status.value.lastUpload)
         assertEquals(2, store.counters().pendingBatches)
@@ -134,11 +135,30 @@ class UploadJobTest {
         val bytes = store.counters().bytesStored
         var promotions = 0
 
-        job(store, scriptedSink("a", UploadResult.Retry("x")), threshold = bytes + 1).run(0) { promotions++ }
+        job(store, scriptedSink("a", UploadResult.Retry("x")), threshold = bytes + 1).run(0, sealEverything) { promotions++ }
         assertEquals(0, promotions)
 
-        job(store, localSink("a"), threshold = bytes).run(0) { promotions++ }
+        job(store, localSink("a"), threshold = bytes).run(0, sealEverything) { promotions++ }
         assertEquals(1, promotions)
+    }
+
+    @Test
+    fun `a round first seals rows the age rule has closed, so they go out without a sync`() = runTest {
+        var now = NOW
+        val store = openStore(dir.resolve("store"), setOf("a")) { now }
+        val rows = (0 until 3).map { row(1_000L + it, it) }
+        store.appendPage("wican", "1:100", listOf(marker("dl_1.jsonl")) + rows)
+        val upload = ScriptedUpload(UploadResult.Acked)
+        val job = UploadJob(store, { listOf(CompositeSink("a", upload, Jsonl)) }, status, clock = { now })
+
+        assertEquals(UploadOutcome.Delivered, job.run(attempt = 0, SealPolicy()))
+        assertEquals(0, upload.uploads, "younger than the age rule, so the batch is still open")
+
+        now += 30 * MINUTE
+        assertEquals(UploadOutcome.Delivered, job.run(attempt = 0, SealPolicy()))
+
+        assertEquals(rows, upload.ackedRows)
+        assertEquals(0, store.counters().pendingBatches)
     }
 
     @Test
@@ -148,7 +168,7 @@ class UploadJobTest {
         val settings = AppSettings(sinkUrl = server.url("/ingest/").toString(), sinkAuth = SinkAuth.BASIC, sinkUser = "courier")
         val secrets = MapSecretStore(SecretStore.UPLOAD_SECRET to "s3cret")
 
-        val outcome = UploadJob(store, { buildSinks(settings, secrets, client) }, status, clock = { NOW }).run(0)
+        val outcome = UploadJob(store, { buildSinks(settings, secrets, client) }, status, clock = { NOW }).run(0, sealEverything)
 
         assertEquals(UploadOutcome.Delivered, outcome)
         val requests = List(2) { checkNotNull(server.takeRequest(5, TimeUnit.SECONDS)) }
@@ -164,7 +184,7 @@ class UploadJobTest {
         val store = storeWithTwoBatches(setOf(HTTP_SINK_ID))
         val settings = AppSettings(sinkUrl = "not a url")
 
-        val outcome = UploadJob(store, { buildSinks(settings, MapSecretStore(), client) }, status, clock = { NOW }).run(0)
+        val outcome = UploadJob(store, { buildSinks(settings, MapSecretStore(), client) }, status, clock = { NOW }).run(0, sealEverything)
 
         assertEquals(UploadOutcome.Failed, outcome)
         assertTrue(status.status.value.lastError!!.startsWith("invalid sink configuration"))

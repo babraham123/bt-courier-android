@@ -21,6 +21,12 @@ import java.io.IOException
 /**
  * One sync of the paired WiCAN into the store, independent of WorkManager: resolve the address,
  * open the link, run [SyncRunner] over `ble_http`, close the link, record the outcome in [status].
+ * Each paired device has its own store source id ([sourceIdFor]), so a replacement dongle starts
+ * from its own oldest file instead of the previous device's cursor.
+ *
+ * Without a link (nothing paired, device unreachable) the job still seals the store, so rows from
+ * a short trip reach the sinks once the seal policy's age rule closes them, even if the device
+ * stays asleep until the next drive.
  *
  * At most one sync runs per process: periodic and one-time syncs are separate unique works (a
  * periodic and a one-time request can't share a unique name), so [lock] is what keeps them from
@@ -44,43 +50,42 @@ class SyncJob(
         try {
             val address = pairedAddress.current()
             if (address == null) {
-                record(SyncResultKind.NOT_PAIRED, "no device paired")
-                return SyncOutcome.NotPaired
+                return SyncOutcome.NotPaired(sealWithoutLink(sealPolicy, SyncResultKind.NOT_PAIRED, "no device paired"))
             }
             val link = try {
                 links.open(address)
             } catch (e: IOException) {
-                record(SyncResultKind.UNREACHABLE, "device unreachable: ${e.message}")
-                return SyncOutcome.Unreachable
+                val sealed = sealWithoutLink(sealPolicy, SyncResultKind.UNREACHABLE, "device unreachable: ${e.message}")
+                return SyncOutcome.Unreachable(sealed)
             }
-            val pendingBefore = store.counters().pendingBatches
+            val sourceId = sourceIdFor(address)
             val report = try {
                 onConnected()
-                transfer(link, sealPolicy)
+                transfer(link, sourceId, sealPolicy)
             } finally {
                 link.close()
             }
-            return finish(report, pendingBefore)
+            return finish(report, sourceId)
         } finally {
             lock.unlock()
         }
     }
 
-    private suspend fun transfer(link: GattLink, sealPolicy: SealPolicy): SyncReport = coroutineScope {
+    private suspend fun transfer(link: GattLink, sourceId: String, sealPolicy: SealPolicy): SyncReport = coroutineScope {
         // The transport's notification reader must outlive single requests but not the sync.
         val linkJob = Job(coroutineContext[Job])
         try {
             val transport = BleHttpTransport(link, CoroutineScope(coroutineContext + linkJob))
             val source = WicanLoggerSource(transport, pageLimit, clock)
-            SyncRunner(SOURCE_ID, source, store, sealPolicy = sealPolicy, clock = clock).run()
+            SyncRunner(sourceId, source, store, sealPolicy = sealPolicy, clock = clock).run()
         } finally {
             linkJob.cancel()
         }
     }
 
-    private suspend fun finish(report: SyncReport, pendingBefore: Int): SyncOutcome {
+    private suspend fun finish(report: SyncReport, sourceId: String): SyncOutcome {
         val counters = store.counters()
-        val cursor = store.cursor(SOURCE_ID)
+        val cursor = store.cursor(sourceId)
         val (kind, error) = when (val reason = report.stoppedBecause) {
             StopReason.CaughtUp -> SyncResultKind.CAUGHT_UP to null
             is StopReason.NoProgress -> SyncResultKind.DEVICE_ERROR to "device did not advance past ${reason.cursor}"
@@ -109,22 +114,21 @@ class SyncJob(
                 "${report.duplicates} duplicates, cursor $cursor, ${counters.pendingBatches} batches pending" +
                 (error?.let { ": $it" } ?: ""),
         )
-        // Batches are sealed whatever the outcome, so an interrupted sync can still have new ones.
-        val newBatches = counters.pendingBatches > pendingBefore
-        return if (kind == SyncResultKind.INTERRUPTED) {
-            SyncOutcome.Interrupted(report, newBatches)
-        } else {
-            SyncOutcome.Done(report, newBatches)
-        }
+        return if (kind == SyncResultKind.INTERRUPTED) SyncOutcome.Interrupted(report) else SyncOutcome.Done(report)
     }
 
-    private suspend fun record(kind: SyncResultKind, error: String) {
+    /** Seals what the policy closes (by age, mostly) and records the sync that never connected. */
+    private suspend fun sealWithoutLink(sealPolicy: SealPolicy, kind: SyncResultKind, error: String): Boolean {
+        val sealed = store.seal(sealPolicy, clock())
+        val counters = store.counters()
         val now = clock()
         status.update {
             it.copy(lastSyncAtMs = now, lastSync = kind, lastSyncLinesStored = 0, lastSyncPages = 0, lastSyncStop = null)
+                .withCounters(counters)
                 .withError(error, now)
         }
-        log.warn(TAG, "sync $kind: $error")
+        log.warn(TAG, "sync $kind: $error" + if (sealed.isEmpty()) "" else "; sealed ${sealed.size} aged batches")
+        return sealed.isNotEmpty()
     }
 
     private fun stopKind(reason: StopReason): SyncStopKind = when (reason) {
@@ -137,8 +141,12 @@ class SyncJob(
     }
 
     companion object {
-        /** Store source id of the WiCAN logger; one paired device for now. */
-        const val SOURCE_ID = "wican"
+        /**
+         * Store source id of the WiCAN at [address]. Cursors are per device (`<epoch>:<offset>`
+         * of its own files), so each address gets its own; case-folded because Android reports
+         * addresses upper-case but a hand-entered one may not be.
+         */
+        fun sourceIdFor(address: String): String = "wican:" + address.uppercase()
 
         private const val TAG = "sync"
 
@@ -147,16 +155,25 @@ class SyncJob(
 }
 
 sealed interface SyncOutcome {
+    /** The run sealed batches (whatever the outcome), so an upload is worth enqueueing. */
+    val newBatches: Boolean
+
     /** Caught up, or stopped for a reason a retry won't fix (device error). */
-    data class Done(val report: SyncReport, val newBatches: Boolean) : SyncOutcome
+    data class Done(val report: SyncReport) : SyncOutcome {
+        override val newBatches get() = report.sealed.isNotEmpty()
+    }
 
     /** Link lost, truncated or busy; worth a retry with back-off, resuming at the cursor. */
-    data class Interrupted(val report: SyncReport, val newBatches: Boolean) : SyncOutcome
+    data class Interrupted(val report: SyncReport) : SyncOutcome {
+        override val newBatches get() = report.sealed.isNotEmpty()
+    }
 
     /** The link could not be opened; the next trigger (presence, periodic) tries again. */
-    data object Unreachable : SyncOutcome
+    data class Unreachable(override val newBatches: Boolean) : SyncOutcome
 
-    data object NotPaired : SyncOutcome
+    data class NotPaired(override val newBatches: Boolean) : SyncOutcome
 
-    data object AlreadyRunning : SyncOutcome
+    data object AlreadyRunning : SyncOutcome {
+        override val newBatches get() = false
+    }
 }
