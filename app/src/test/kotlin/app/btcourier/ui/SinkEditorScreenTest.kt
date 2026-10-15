@@ -125,16 +125,12 @@ class SinkEditorScreenTest : ScreenTest() {
         show(bearer.id)
 
         onText(R.string.sink_edit_title).assertIsDisplayed()
-        // Material shows a labelled field's placeholder only while it has focus.
-        field(R.string.settings_token)
-            .assertIsPassword()
-            .tap()
-            .assertTextContains(string(R.string.settings_secret_stored))
+        field(R.string.settings_token).assertIsPassword()
         assertNoText(STORED_SECRET, substring = true)
 
         onText(R.string.settings_secret_clear).tap()
 
-        assertNoText(R.string.settings_secret_stored)
+        assertNoText(R.string.settings_secret_clear)
         assertFalse(runBlocking { credentials.stored(bearer.id).secret })
     }
 

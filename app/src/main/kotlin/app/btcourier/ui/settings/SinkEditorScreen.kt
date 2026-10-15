@@ -475,7 +475,7 @@ private fun Field(
     )
 }
 
-/** Never shows the stored value; a placeholder says one exists and empty input keeps it. */
+/** Never shows the stored value; the remove button says one exists and empty input keeps it. */
 @Composable
 private fun SecretField(
     @StringRes label: Int,
@@ -488,7 +488,6 @@ private fun SecretField(
         value = value,
         onValueChange = onChange,
         label = { Text(stringResource(label)) },
-        placeholder = { if (stored) Text(stringResource(R.string.settings_secret_stored)) },
         supportingText = { Text(stringResource(R.string.settings_secret_help)) },
         singleLine = true,
         visualTransformation = PasswordVisualTransformation(),
