@@ -9,6 +9,7 @@ import app.btcourier.data.SinkUpload
 import app.btcourier.data.SyncStatusRepository
 import app.btcourier.data.UploadResultKind
 import app.btcourier.log.AppLog
+import java.io.Closeable
 
 /**
  * One delivery round of every pending batch to every configured sink, independent of WorkManager.
@@ -22,6 +23,7 @@ import app.btcourier.log.AppLog
  * sync that seals new batches, or a manual one) tries them again.
  *
  * @param sinks builds the configured sinks; may throw [IllegalArgumentException] for a bad URL.
+ *   Transports that are [Closeable] are closed when the round ends.
  * @param foregroundThresholdBytes stored bytes from which [run] calls its `onLargeBacklog`.
  */
 class UploadJob(
@@ -47,6 +49,14 @@ class UploadJob(
             record(UploadResultKind.FAILED, "invalid sink configuration: ${e.message}")
             return UploadOutcome.Failed
         }
+        return try {
+            deliver(configured, attempt, onLargeBacklog)
+        } finally {
+            configured.forEach { (it.transport as? Closeable)?.close() }
+        }
+    }
+
+    private suspend fun deliver(configured: List<Sink>, attempt: Int, onLargeBacklog: suspend () -> Unit): UploadOutcome {
         if (configured.isEmpty()) {
             record(UploadResultKind.NO_SINK, null, bySink = emptyMap())
             return UploadOutcome.NoSink

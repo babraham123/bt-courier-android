@@ -56,6 +56,8 @@ android {
                 "/META-INF/versions/**",
                 "/META-INF/INDEX.LIST",
                 "/META-INF/DEPENDENCIES",
+                // Every netty jar (pulled in by the MQTT client) ships its own copy.
+                "/META-INF/io.netty.versions.properties",
                 "/META-INF/LICENSE*",
                 "/META-INF/NOTICE*",
                 "/kotlin-tooling-metadata.json",
@@ -88,9 +90,11 @@ dependencies {
     implementation(libs.kable.core)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.documentfile)
 
     testImplementation(project(":fakes"))
     testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.okhttp.tls)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlinx.coroutines.test)

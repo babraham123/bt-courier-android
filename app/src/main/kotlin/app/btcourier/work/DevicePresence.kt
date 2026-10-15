@@ -10,6 +10,8 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
+import app.btcourier.AppGraph
+import kotlinx.coroutines.launch
 
 /**
  * CDM presence: once observing is started for an associated device, the system binds
@@ -20,8 +22,9 @@ object DevicePresence {
     private const val TAG = "DevicePresence"
 
     /**
-     * Starts observing [address] (an associated device's MAC). Call it right after pairing; the
-     * system keeps observing across app restarts. Returns false if [address] is not associated.
+     * Starts observing [address] (an associated device's MAC). Call it right after pairing (after
+     * bonding, for a device that bonds); the system keeps observing across app restarts. Returns
+     * false if [address] is not associated.
      */
     fun startObserving(context: Context, address: String): Boolean {
         val cdm = context.getSystemService(CompanionDeviceManager::class.java)
@@ -46,13 +49,14 @@ object DevicePresence {
 }
 
 /**
- * Enqueues a one-time sync when the paired device appears. Each API level calls a different
- * callback (31-32 the address one, 33-35 the [AssociationInfo] one, 36+ [onDevicePresenceEvent]);
- * a duplicate call is harmless because the one-time sync is unique work.
+ * Enqueues a one-time sync of the device that appeared ([SyncTrigger.Presence]). Each API level
+ * calls a different callback (31-32 the address one, 33-35 the [AssociationInfo] one, 36+
+ * [onDevicePresenceEvent]); a duplicate call is harmless because each device's one-time sync is
+ * unique work.
  */
 class PresenceService : CompanionDeviceService() {
     @Suppress("OVERRIDE_DEPRECATION")
-    override fun onDeviceAppeared(address: String) = Scheduler.syncNow(this)
+    override fun onDeviceAppeared(address: String) = appeared(address)
 
     // Abstract on API 31-32, so it must exist even though disappearance needs no action.
     @Suppress("OVERRIDE_DEPRECATION")
@@ -60,7 +64,7 @@ class PresenceService : CompanionDeviceService() {
 
     @Suppress("OVERRIDE_DEPRECATION")
     @RequiresApi(33)
-    override fun onDeviceAppeared(associationInfo: AssociationInfo) = Scheduler.syncNow(this)
+    override fun onDeviceAppeared(associationInfo: AssociationInfo) = appeared(associationInfo.deviceMacAddress?.toString())
 
     @Suppress("OVERRIDE_DEPRECATION")
     @RequiresApi(33)
@@ -69,7 +73,23 @@ class PresenceService : CompanionDeviceService() {
     @RequiresApi(36)
     override fun onDevicePresenceEvent(event: DevicePresenceEvent) {
         if (event.event == DevicePresenceEvent.EVENT_BLE_APPEARED || event.event == DevicePresenceEvent.EVENT_BT_CONNECTED) {
-            Scheduler.syncNow(this)
+            val cdm = getSystemService(CompanionDeviceManager::class.java)
+            appeared(cdm?.myAssociations?.firstOrNull { it.id == event.associationId }?.deviceMacAddress?.toString())
         }
+    }
+
+    private fun appeared(address: String?) {
+        if (address == null) return
+        AppGraph.scope.launch {
+            try {
+                AppGraph.syncFanOut.fire(SyncTrigger.Presence(address))
+            } catch (e: Exception) {
+                Log.w(TAG, "presence sync not enqueued", e)
+            }
+        }
+    }
+
+    private companion object {
+        const val TAG = "PresenceService"
     }
 }

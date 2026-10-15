@@ -9,10 +9,12 @@ import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -25,17 +27,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.btcourier.AppGraph
 import app.btcourier.R
 import app.btcourier.ble.KableGattLink
@@ -44,34 +45,29 @@ import app.btcourier.ble.ProbeResult
 import app.btcourier.ble.adapter
 import app.btcourier.ble.associatedDevice
 import app.btcourier.ble.bond
+import app.btcourier.ble.filterSpec
+import app.btcourier.ble.gattProfile
 import app.btcourier.ble.hasBluetoothConnectPermission
 import app.btcourier.ble.pairingStep
-import app.btcourier.ble.probeStatus
 import app.btcourier.ble.requestAssociation
+import app.btcourier.data.DeviceKind
+import app.btcourier.ui.status.kindLabel
 import app.btcourier.work.DevicePresence
 import kotlinx.coroutines.launch
 
-private enum class Step { Explain, Associate, Bond, Test }
-
 /**
- * Pair wizard: explain → companion-device association → bond (system passkey dialog) → test
- * connection over `ble_http`. The association is the persisted record of the paired device
- * (see `CompanionPairedDeviceRepository`), so finishing the wizard needs no extra save.
+ * Pair wizard screen over [PairingViewModel]. It runs what needs an activity (the permission
+ * request, the companion chooser, the bond dialog) and reports their outcomes to the view model.
  */
 @Composable
-fun PairingScreen(onDone: () -> Unit, modifier: Modifier = Modifier) {
+fun PairingScreen(viewModel: PairingViewModel, onDone: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val state by viewModel.state.collectAsStateWithLifecycle()
 
-    // Saved across configuration changes: the system chooser and pairing dialog can outlive
-    // the activity instance that started them.
-    var step by rememberSaveable { mutableStateOf(Step.Explain) }
-    var address by rememberSaveable { mutableStateOf<String?>(null) }
+    // The scanned device carries the address type the stack saw, which bonding an RPA needs; it
+    // cannot be saved, so after a process death bonding falls back to the address.
     var device by remember { mutableStateOf<BluetoothDevice?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var probe by remember { mutableStateOf<ProbeResult?>(null) }
-    var bondAttempt by remember { mutableIntStateOf(0) }
 
     // Resolved during composition so they follow configuration (locale) changes.
     val noDeviceMessage = stringResource(R.string.pairing_error_no_device)
@@ -79,47 +75,37 @@ fun PairingScreen(onDone: () -> Unit, modifier: Modifier = Modifier) {
     val noCdmMessage = stringResource(R.string.pairing_error_no_cdm)
 
     val chooser = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        busy = false
         val picked = if (result.resultCode == Activity.RESULT_OK) associatedDevice(context, result.data) else null
         if (picked == null) {
-            error = noDeviceMessage
+            viewModel.failed(noDeviceMessage)
         } else {
             device = picked
-            address = picked.address
-            error = null
-            step = Step.Bond
+            viewModel.associated(picked.address, advertisedName(context, picked))
         }
     }
 
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
-            error = null
-            step = Step.Associate
-        } else {
-            error = permissionMessage
-        }
+        if (granted) viewModel.permissionGranted() else viewModel.failed(permissionMessage)
     }
 
     fun currentDevice(): BluetoothDevice? =
-        device ?: address?.let { addr -> adapter(context)?.getRemoteDevice(addr) }
+        device?.takeIf { it.address.equals(state.address, ignoreCase = true) }
+            ?: state.address?.let { addr -> adapter(context)?.getRemoteDevice(addr) }
 
-    if (step == Step.Bond) {
-        LaunchedEffect(address, bondAttempt) {
+    if (state.step == PairingStep.Bond) {
+        LaunchedEffect(state.address, state.bondAttempt) {
             val target = currentDevice() ?: return@LaunchedEffect
-            busy = true
-            error = null
+            viewModel.bonding()
             try {
                 pairingStep("Bonding") { bondWithPermission(context, target, permissionMessage) }
-                observePresence(context, target.address)
-                step = Step.Test
+                viewModel.bonded()
             } catch (e: PairingException) {
-                error = e.message
-            } finally {
-                busy = false
+                viewModel.failed(e.message)
             }
         }
     }
 
+    val ring = state.kind == DeviceKind.COLMI_RING
     Column(
         modifier
             .fillMaxSize()
@@ -127,100 +113,116 @@ fun PairingScreen(onDone: () -> Unit, modifier: Modifier = Modifier) {
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        when (step) {
-            Step.Explain -> {
-                Text(stringResource(R.string.pairing_explain_ble))
-                Text(stringResource(R.string.pairing_explain_passkey))
-                Text(stringResource(R.string.pairing_explain_window))
+        when (state.step) {
+            PairingStep.ChooseKind -> {
+                Text(stringResource(R.string.pairing_choose_kind))
+                DeviceKind.entries.forEach { kind ->
+                    OutlinedButton(onClick = { viewModel.chooseKind(kind) }, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                            Text(stringResource(kindLabel(kind)), style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(kindHelp(kind)), style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+
+            PairingStep.Explain -> {
+                if (ring) {
+                    Text(stringResource(R.string.pairing_explain_ring))
+                } else {
+                    Text(stringResource(R.string.pairing_explain_ble))
+                    Text(stringResource(R.string.pairing_explain_passkey))
+                    Text(stringResource(R.string.pairing_explain_window))
+                }
                 Button(onClick = {
                     if (hasBluetoothConnectPermission(context)) {
-                        step = Step.Associate
+                        viewModel.permissionGranted()
                     } else {
                         permission.launch(Manifest.permission.BLUETOOTH_CONNECT)
                     }
                 }) { Text(stringResource(R.string.pairing_start)) }
             }
 
-            Step.Associate -> {
-                Text(stringResource(R.string.pairing_associate_body))
-                Button(enabled = !busy, onClick = {
+            PairingStep.Associate -> {
+                Text(stringResource(if (ring) R.string.pairing_associate_body_ring else R.string.pairing_associate_body))
+                Button(enabled = !state.busy, onClick = {
                     val cdm = context.getSystemService(CompanionDeviceManager::class.java)
                     if (cdm == null) {
-                        error = noCdmMessage
+                        viewModel.failed(noCdmMessage)
                         return@Button
                     }
-                    busy = true
-                    error = null
+                    viewModel.scanning()
                     scope.launch {
                         try {
-                            val sender = pairingStep("Scan") { cdm.requestAssociation(context) }
+                            val sender = pairingStep("Scan") { cdm.requestAssociation(context, state.kind.filterSpec) }
                             chooser.launch(IntentSenderRequest.Builder(sender).build())
                         } catch (e: PairingException) {
-                            busy = false
-                            error = e.message
+                            viewModel.failed(e.message)
                         }
                     }
                 }) { Text(stringResource(R.string.pairing_find)) }
             }
 
-            Step.Bond -> {
+            PairingStep.Bond -> {
                 Text(stringResource(R.string.pairing_bond_body))
-                if (!busy && error != null) {
-                    Button(onClick = { bondAttempt++ }) { Text(stringResource(R.string.pairing_retry)) }
+                if (!state.busy && state.error != null) {
+                    Button(onClick = viewModel::retryBond) { Text(stringResource(R.string.pairing_retry)) }
                 }
             }
 
-            Step.Test -> {
-                Text(stringResource(R.string.pairing_test_body))
-                probe?.let {
-                    Text(stringResource(R.string.pairing_test_ok, it.firmwareVersion, it.mtu))
+            PairingStep.Test -> {
+                Text(stringResource(if (ring) R.string.pairing_test_body_ring else R.string.pairing_test_body))
+                when (val probe = state.probe) {
+                    is ProbeResult.Wican -> Text(stringResource(R.string.pairing_test_ok, probe.firmwareVersion, probe.mtu))
+                    is ProbeResult.Ring -> Text(stringResource(R.string.pairing_test_ok_ring, probe.battery.level))
+                    null -> Unit
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(enabled = !busy, onClick = {
-                        val addr = address ?: return@Button
-                        busy = true
-                        error = null
-                        probe = null
-                        scope.launch {
-                            try {
-                                probe = pairingStep("Test connection") {
-                                    val link = KableGattLink.connect(addr)
-                                    try {
-                                        probeStatus(link)
-                                    } finally {
-                                        link.close()
-                                    }
-                                }
-                            } catch (e: PairingException) {
-                                error = e.message
-                            } finally {
-                                busy = false
-                            }
-                        }
-                    }) { Text(stringResource(R.string.pairing_test)) }
+                    Button(enabled = !state.busy, onClick = viewModel::test) { Text(stringResource(R.string.pairing_test)) }
                     OutlinedButton(onClick = onDone) { Text(stringResource(R.string.pairing_done)) }
                 }
             }
         }
 
-        if (busy) {
+        if (state.busy) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 CircularProgressIndicator(Modifier.size(24.dp))
                 Text(stringResource(R.string.pairing_working))
             }
         }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }
 
-/**
- * From here on the system binds `PresenceService` whenever the dongle comes in range, which is
- * what starts background syncs. The association already exists (bonding comes after it), so a
- * false return means the user removed it meanwhile; the log says so instead of failing pairing.
- */
-private fun observePresence(context: Context, address: String) {
-    val observing = DevicePresence.startObserving(context.applicationContext, address)
-    AppGraph.log.info("pairing", "bonded with $address; presence observed: $observing")
+@StringRes
+private fun kindHelp(kind: DeviceKind): Int = when (kind) {
+    DeviceKind.WICAN -> R.string.pairing_kind_wican_help
+    DeviceKind.COLMI_RING -> R.string.pairing_kind_colmi_ring_help
+}
+
+/** The name the device advertised, if Bluetooth access allows reading it. */
+@SuppressLint("MissingPermission") // Checked first; the wizard cannot reach the chooser without it.
+private fun advertisedName(context: Context, device: BluetoothDevice): String? =
+    if (hasBluetoothConnectPermission(context)) device.name?.takeIf { it.isNotBlank() } else null
+
+/** [PairingPlatform] over CDM presence and [KableGattLink]. */
+class AndroidPairingPlatform(context: Context) : PairingPlatform {
+    private val appContext = context.applicationContext
+
+    override fun observePresence(address: String): Boolean {
+        val observing = DevicePresence.startObserving(appContext, address)
+        AppGraph.log.info("pairing", "paired; presence observed: $observing")
+        return observing
+    }
+
+    override suspend fun probe(address: String, kind: DeviceKind): ProbeResult {
+        val link = KableGattLink.connect(address, kind.gattProfile)
+        try {
+            return app.btcourier.ble.probe(link, kind)
+        } finally {
+            link.close()
+        }
+    }
 }
 
 @SuppressLint("MissingPermission") // Checked just above; the wizard cannot reach this step without it.

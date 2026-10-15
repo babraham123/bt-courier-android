@@ -3,9 +3,8 @@ package app.btcourier.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.btcourier.data.AppSettings
-import app.btcourier.data.SecretStore
 import app.btcourier.data.SettingsRepository
-import app.btcourier.data.SinkAuth
+import app.btcourier.data.SinkConfig
 import app.btcourier.ui.WorkControl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -13,16 +12,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/**
- * The editable copy of the settings. [secretInput] is only what the user typed this time: the
- * stored secret is never read back into the UI, so it can't be shown or leak through state.
- */
+/** The editable copy of the general settings; sinks are edited one at a time in the sink editor. */
 data class SettingsForm(
-    val sinkUrl: String = "",
-    val sinkAuth: SinkAuth = SinkAuth.NONE,
-    val sinkUser: String = "",
-    val secretInput: String = "",
-    val sinkCompress: Boolean = true,
     val uploadOverCellular: Boolean = false,
     val cacheCapMb: String = "",
     val periodicSync: Boolean = true,
@@ -35,8 +26,8 @@ enum class CacheCapProblem { NOT_A_NUMBER, OUT_OF_RANGE }
 data class SettingsUiState(
     val loaded: Boolean = false,
     val form: SettingsForm = SettingsForm(),
-    val hasStoredSecret: Boolean = false,
-    val urlProblem: SinkUrlProblem? = null,
+    /** As stored; enabling or disabling one is saved at once, apart from [form]. */
+    val sinks: List<SinkConfig> = emptyList(),
     val capProblem: CacheCapProblem? = null,
     /** True after a save until the next edit. */
     val saved: Boolean = false,
@@ -60,7 +51,6 @@ fun validateCacheCap(text: String): CacheCapProblem? {
 
 class SettingsViewModel(
     private val settings: SettingsRepository,
-    private val secrets: SecretStore,
     private val work: WorkControl,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(SettingsUiState())
@@ -74,8 +64,7 @@ class SettingsViewModel(
     fun reload() {
         viewModelScope.launch {
             val current = settings.current()
-            val hasSecret = secrets.get(SecretStore.UPLOAD_SECRET) != null
-            mutableState.value = SettingsUiState(loaded = true, form = current.toForm(), hasStoredSecret = hasSecret)
+            mutableState.value = SettingsUiState(loaded = true, form = current.toForm(), sinks = current.sinks)
         }
     }
 
@@ -83,67 +72,44 @@ class SettingsViewModel(
         mutableState.update { it.copy(form = transform(it.form), saved = false) }
     }
 
-    fun clearSecret() {
+    fun setSinkEnabled(id: String, enabled: Boolean) {
         viewModelScope.launch {
-            secrets.put(SecretStore.UPLOAD_SECRET, null)
-            mutableState.update { it.copy(hasStoredSecret = false) }
-            // The running upload would otherwise keep using the old credentials until it ends.
-            work.uploadNow(settings.current().uploadOverCellular, replace = true)
+            var after: AppSettings? = null
+            settings.update { s ->
+                s.copy(sinks = s.sinks.map { if (it.id == id) it.copy(enabled = enabled) else it }).also { after = it }
+            }
+            val stored = checkNotNull(after)
+            mutableState.update { it.copy(sinks = stored.sinks) }
+            // A waiting upload would otherwise still deliver to, or skip, this sink until it ends.
+            work.uploadNow(stored.uploadOverCellular, replace = true)
         }
     }
 
     fun save() {
         val form = mutableState.value.form
-        val urlProblem = validateSinkUrl(form.sinkUrl)
         val capProblem = validateCacheCap(form.cacheCapMb)
-        mutableState.update { it.copy(urlProblem = urlProblem, capProblem = capProblem) }
-        if (urlProblem != null || capProblem != null) return
+        mutableState.update { it.copy(capProblem = capProblem) }
+        if (capProblem != null) return
 
         viewModelScope.launch {
             val before = settings.current()
             var after = before
-            // Not atomic: an upload starting between these two writes can pair the new URL with the
-            // old secret; the uploadNow(replace = true) below bounds that window.
             settings.update { stored ->
                 stored.copy(
-                    sinkUrl = form.sinkUrl.trim(),
-                    sinkAuth = form.sinkAuth,
-                    sinkUser = form.sinkUser.trim(),
-                    sinkCompress = form.sinkCompress,
                     uploadOverCellular = form.uploadOverCellular,
                     cacheCapBytes = form.cacheCapMb.trim().toLong() * MB,
                     periodicSync = form.periodicSync,
                     carDeviceAddress = form.carDeviceAddress,
                 ).also { after = it }
             }
-            val secretChanged = form.secretInput.isNotEmpty() && form.sinkAuth != SinkAuth.NONE
-            if (secretChanged) secrets.put(SecretStore.UPLOAD_SECRET, form.secretInput)
-
-            // Re-enqueue so a waiting upload picks up the new network constraint or sink at once.
-            if (secretChanged || sinkOrNetworkChanged(before, after)) {
-                work.uploadNow(after.uploadOverCellular, replace = true)
-            }
+            // Re-enqueue so a waiting upload picks up the new network constraint at once.
+            if (before.uploadOverCellular != after.uploadOverCellular) work.uploadNow(after.uploadOverCellular, replace = true)
             if (before.periodicSync != after.periodicSync) work.setPeriodicSync(after.periodicSync)
-
-            mutableState.update {
-                it.copy(
-                    form = after.toForm(),
-                    hasStoredSecret = it.hasStoredSecret || secretChanged,
-                    saved = true,
-                )
-            }
+            mutableState.update { it.copy(form = after.toForm(), sinks = after.sinks, saved = true) }
         }
     }
 
-    private fun sinkOrNetworkChanged(a: AppSettings, b: AppSettings) =
-        a.sinkUrl != b.sinkUrl || a.sinkAuth != b.sinkAuth || a.sinkUser != b.sinkUser ||
-            a.sinkCompress != b.sinkCompress || a.uploadOverCellular != b.uploadOverCellular
-
     private fun AppSettings.toForm() = SettingsForm(
-        sinkUrl = sinkUrl,
-        sinkAuth = sinkAuth,
-        sinkUser = sinkUser,
-        sinkCompress = sinkCompress,
         uploadOverCellular = uploadOverCellular,
         cacheCapMb = (cacheCapBytes / MB).toString(),
         periodicSync = periodicSync,

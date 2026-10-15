@@ -7,12 +7,16 @@ import app.btcourier.core.sink.Sink
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.store.DefaultStore
 import app.btcourier.core.store.SealPolicy
+import app.btcourier.core.sink.Batch
+import app.btcourier.core.sink.UploadTransport
 import app.btcourier.data.AppSettings
-import app.btcourier.data.HTTP_SINK_ID
+import app.btcourier.data.AuthConfig
 import app.btcourier.data.InMemorySyncStatus
-import app.btcourier.data.SecretStore
-import app.btcourier.data.SinkAuth
+import app.btcourier.data.SinkConfig
+import app.btcourier.data.SinkEnvironment
+import app.btcourier.data.SinkSecrets
 import app.btcourier.data.SinkUpload
+import app.btcourier.data.TransportConfig
 import app.btcourier.data.UploadResultKind
 import app.btcourier.data.buildSinks
 import kotlinx.coroutines.test.runTest
@@ -26,6 +30,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.io.Closeable
 import java.nio.file.Path
 import java.util.Base64
 import java.util.concurrent.TimeUnit
@@ -161,14 +166,16 @@ class UploadJobTest {
         assertEquals(0, store.counters().pendingBatches)
     }
 
+    private fun env() = SinkEnvironment(client, { error("no folders here") }, InMemorySshKeys())
+
     @Test
     fun `configured HTTP PUT sink uploads with Basic auth from the secret store`() = runTest {
-        val store = storeWithTwoBatches(setOf(HTTP_SINK_ID))
+        val store = storeWithTwoBatches(setOf("put"))
         repeat(2) { server.enqueue(MockResponse.Builder().code(201).build()) }
-        val settings = AppSettings(sinkUrl = server.url("/ingest/").toString(), sinkAuth = SinkAuth.BASIC, sinkUser = "courier")
-        val secrets = MapSecretStore(SecretStore.UPLOAD_SECRET to "s3cret")
+        val sink = SinkConfig("put", "Put", transport = TransportConfig.HttpPut(server.url("/ingest/").toString()), auth = AuthConfig.Basic("courier"))
+        val secrets = MapSecretStore(SinkSecrets.secret("put") to "s3cret")
 
-        val outcome = UploadJob(store, { buildSinks(settings, secrets, client) }, status, clock = { NOW }).run(0, sealEverything)
+        val outcome = UploadJob(store, { buildSinks(AppSettings(sinks = listOf(sink)), secrets, env()) }, status, clock = { NOW }).run(0, sealEverything)
 
         assertEquals(UploadOutcome.Delivered, outcome)
         val requests = List(2) { checkNotNull(server.takeRequest(5, TimeUnit.SECONDS)) }
@@ -180,19 +187,39 @@ class UploadJobTest {
     }
 
     @Test
-    fun `an unparseable sink URL fails the upload instead of crashing the worker`() = runTest {
-        val store = storeWithTwoBatches(setOf(HTTP_SINK_ID))
-        val settings = AppSettings(sinkUrl = "not a url")
+    fun `an unparseable sink URL fails that sink instead of crashing the worker, and keeps its batches`() = runTest {
+        val store = storeWithTwoBatches(setOf("bad"))
+        val settings = AppSettings(sinks = listOf(SinkConfig("bad", "Bad", transport = TransportConfig.HttpPut("not a url"))))
 
-        val outcome = UploadJob(store, { buildSinks(settings, MapSecretStore(), client) }, status, clock = { NOW }).run(0, sealEverything)
+        val outcome = UploadJob(store, { buildSinks(settings, MapSecretStore(), env()) }, status, clock = { NOW }).run(0, sealEverything)
 
         assertEquals(UploadOutcome.Failed, outcome)
-        assertTrue(status.status.value.lastError!!.startsWith("invalid sink configuration"))
+        assertTrue(status.status.value.lastError!!.startsWith("bad: invalid sink configuration"), status.status.value.lastError)
         assertEquals(2, store.counters().pendingBatches)
     }
 
     @Test
-    fun `a blank sink URL means no sink`() = runTest {
-        assertEquals(emptyList<Sink>(), buildSinks(AppSettings(sinkUrl = " "), MapSecretStore(), client))
+    fun `no sinks, or only disabled ones, means no sink`() = runTest {
+        assertEquals(emptyList<Sink>(), buildSinks(AppSettings(), MapSecretStore(), env()))
+        val disabled = SinkConfig("off", "Off", enabled = false, transport = TransportConfig.HttpPut("https://sink.invalid/"))
+        assertEquals(emptyList<Sink>(), buildSinks(AppSettings(sinks = listOf(disabled)), MapSecretStore(), env()))
+    }
+
+    @Test
+    fun `closeable transports are closed after the round, also when it fails`() = runTest {
+        val store = storeWithTwoBatches(setOf("c"))
+        val transport = object : UploadTransport, Closeable {
+            var closed = 0
+
+            override suspend fun upload(batch: Batch): UploadResult = UploadResult.Failed("refused")
+
+            override fun close() {
+                closed++
+            }
+        }
+
+        job(store, CompositeSink("c", transport, Jsonl)).run(attempt = 0, sealEverything)
+
+        assertEquals(1, transport.closed)
     }
 }

@@ -1,5 +1,6 @@
 package app.btcourier.core.sink
 
+import app.btcourier.core.auth.OidcException
 import app.btcourier.core.store.SealedBatch
 import app.btcourier.core.store.Store
 import java.security.MessageDigest
@@ -17,7 +18,17 @@ interface Sink {
 
     fun encode(batch: SealedBatch): Batch = encodeBatch(batch, format)
 
-    suspend fun upload(batch: SealedBatch): UploadResult = transport.upload(encode(batch))
+    /**
+     * An [OidcException] from a refreshing bearer token (sign-in revoked, client rejected) is a
+     * configuration failure, not a transport error: transports only retry [java.io.IOException],
+     * and letting it escape would crash the upload job instead of surfacing "sign in again".
+     */
+    suspend fun upload(batch: SealedBatch): UploadResult =
+        try {
+            transport.upload(encode(batch))
+        } catch (e: OidcException) {
+            UploadResult.Failed("${batch.id}: ${e.message}")
+        }
 }
 
 /** The plain [Format] × [UploadTransport] product; most sinks need nothing more. */
@@ -55,7 +66,7 @@ data class Batch(
  * a zlib upgrade changes the compressed bytes between a failed upload and its retry.
  */
 fun encodeBatch(batch: SealedBatch, format: Format): Batch {
-    val content = format.encode(batch.lines)
+    val content = format.encode(batch.lines, batch.sourceId)
     val hash = MessageDigest.getInstance("SHA-256").digest(content).joinToString("") { "%02x".format(it) }
     val name = "${sanitise(batch.sourceId)}-${sanitise(batch.firstCursor)}-${hash.take(16)}.${format.extension}.gz"
     return Batch(batch.id, Gzip.compress(content), name)

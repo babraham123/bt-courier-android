@@ -1,10 +1,14 @@
 package app.btcourier.core.source
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+
 /**
- * A device that keeps history and serves it incrementally from an opaque cursor.
+ * A device the app reads data from.
  *
- * First implementation: `WicanLoggerSource` (`/api/logger/export`). Stream and broadcast sources will
- * get a separate `subscribe()` seam.
+ * Pull-with-history devices serve what they kept incrementally from an opaque cursor through
+ * [pull]: `WicanLoggerSource` (`/api/logger/export`), `ColmiRingSource` (per-day logs). Stream and
+ * broadcast devices, which keep nothing, deliver through [subscribe] instead.
  */
 interface Source {
     /**
@@ -18,6 +22,20 @@ interface Source {
 
     /** The device's wall clock sampled against the phone's, or null if the device exposes none. */
     suspend fun deviceStatus(): DeviceStatus? = null
+
+    /**
+     * Live data from a stream-while-connected or broadcast device (HR strap, ELM327 live, Ruuvi,
+     * TPMS): each emission is a group of JSONL rows the device produced together, in the same row
+     * shape as [pull]'s, `{"ts":<epoch ms>,"param":"<name>","value":<value>}`.
+     *
+     * There is no cursor and no `{"_file":...}` marker or cursor line: nothing is kept on the
+     * device, so whatever arrives while nobody collects is gone, and a new collection starts at
+     * "now". Collection ends when the link drops (the flow completes, or fails with the
+     * transport's [java.io.IOException]) or when the collector cancels.
+     *
+     * Pull-with-history sources keep the default, which completes at once without emitting.
+     */
+    fun subscribe(): Flow<List<String>> = emptyFlow()
 }
 
 /**
@@ -63,7 +81,8 @@ sealed class SourceException(message: String, cause: Throwable? = null) : Except
  *
  * @property lines raw JSONL rows exactly as the device sent them, including `{"_file":...}`
  *   markers and excluding the trailing cursor line.
- * @property nextCursor opaque to core; WiCAN's is `<file epoch>:<byte offset>`.
+ * @property nextCursor opaque to core; WiCAN's is `<file epoch>:<byte offset>`, Colmi's the last
+ *   day pulled (`YYYY-MM-DD`).
  */
 data class Page(
     val lines: List<String>,

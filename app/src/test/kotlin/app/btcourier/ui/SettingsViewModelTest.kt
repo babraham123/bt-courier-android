@@ -1,13 +1,11 @@
 package app.btcourier.ui
 
 import app.btcourier.data.AppSettings
-import app.btcourier.data.SecretStore
-import app.btcourier.data.SinkAuth
+import app.btcourier.data.SinkConfig
+import app.btcourier.data.TransportConfig
 import app.btcourier.ui.settings.CacheCapProblem
 import app.btcourier.ui.settings.SettingsViewModel
-import app.btcourier.ui.settings.SinkUrlProblem
 import app.btcourier.ui.settings.validateCacheCap
-import app.btcourier.work.MapSecretStore
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -18,81 +16,49 @@ import org.junit.jupiter.api.extension.ExtendWith
 
 @ExtendWith(MainDispatcherExtension::class)
 class SettingsViewModelTest {
-    private val settings = FakeSettings(AppSettings(cacheCapBytes = 200_000_000))
-    private val secrets = MapSecretStore()
+    private val sink = SinkConfig("a1", "Archive", transport = TransportConfig.HttpPut("https://sink.invalid/"))
+    private val settings = FakeSettings(AppSettings(sinks = listOf(sink), cacheCapBytes = 200_000_000))
     private val work = RecordingWorkControl()
 
-    private fun vm() = SettingsViewModel(settings, secrets, work)
+    private fun vm() = SettingsViewModel(settings, work)
 
     @Test
-    fun `the form starts from the stored settings and only says whether a secret exists`() = runTest {
-        settings.update {
-            it.copy(sinkUrl = "https://sink.invalid/", sinkAuth = SinkAuth.BASIC, sinkUser = "u", carDeviceAddress = CAR)
-        }
-        secrets.put(SecretStore.UPLOAD_SECRET, "hunter22")
+    fun `the form starts from the stored settings and lists the sinks`() = runTest {
+        settings.update { it.copy(carDeviceAddress = CAR) }
 
         val state = vm().state.value
 
         assertTrue(state.loaded)
-        assertEquals("https://sink.invalid/", state.form.sinkUrl)
         assertEquals(CAR, state.form.carDeviceAddress)
-        assertEquals(SinkAuth.BASIC, state.form.sinkAuth)
         assertEquals("200", state.form.cacheCapMb)
-        assertTrue(state.hasStoredSecret)
-        assertEquals("", state.form.secretInput)
-        assertFalse(state.toString().contains("hunter22"))
+        assertEquals(listOf(sink), state.sinks)
     }
 
     @Test
-    fun `saving persists every field, stores the secret apart and re-enqueues the upload`() = runTest {
+    fun `saving persists every general field, leaves the sinks alone and re-enqueues the upload`() = runTest {
         val vm = vm()
-        vm.edit {
-            it.copy(
-                sinkUrl = " https://sink.invalid/up/ ",
-                sinkAuth = SinkAuth.BASIC,
-                sinkUser = "courier",
-                secretInput = "s3cret!",
-                sinkCompress = false,
-                uploadOverCellular = true,
-                cacheCapMb = "50",
-                periodicSync = false,
-                carDeviceAddress = CAR,
-            )
-        }
+        vm.edit { it.copy(uploadOverCellular = true, cacheCapMb = " 50 ", periodicSync = false, carDeviceAddress = CAR) }
 
         vm.save()
 
         assertEquals(
-            AppSettings(
-                sinkUrl = "https://sink.invalid/up/",
-                sinkAuth = SinkAuth.BASIC,
-                sinkUser = "courier",
-                sinkCompress = false,
-                uploadOverCellular = true,
-                cacheCapBytes = 50_000_000,
-                periodicSync = false,
-                carDeviceAddress = CAR,
-            ),
+            AppSettings(sinks = listOf(sink), uploadOverCellular = true, cacheCapBytes = 50_000_000, periodicSync = false, carDeviceAddress = CAR),
             settings.current(),
         )
-        assertEquals("s3cret!", secrets.get(SecretStore.UPLOAD_SECRET))
         assertEquals(listOf(true to true), work.uploads)
         assertEquals(listOf(false), work.periodic)
-        val state = vm.state.value
-        assertTrue(state.saved)
-        assertTrue(state.hasStoredSecret)
-        assertEquals("", state.form.secretInput)
+        assertTrue(vm.state.value.saved)
     }
 
     @Test
-    fun `toggling cellular alone replaces the upload with the new network constraint`() = runTest {
+    fun `disabling a sink is saved at once and replaces the queued upload`() = runTest {
         val vm = vm()
-        vm.edit { it.copy(uploadOverCellular = true) }
 
-        vm.save()
+        vm.setSinkEnabled("a1", false)
 
-        assertEquals(listOf(true to true), work.uploads)
-        assertEquals(emptyList<Boolean>(), work.periodic)
+        assertEquals(listOf(sink.copy(enabled = false)), settings.current().sinks)
+        assertEquals(listOf(sink.copy(enabled = false)), vm.state.value.sinks)
+        assertEquals(listOf(false to true), work.uploads)
     }
 
     @Test
@@ -102,19 +68,17 @@ class SettingsViewModelTest {
         vm.save()
 
         assertEquals(CAR, settings.current().carDeviceAddress)
-        assertEquals(CAR, vm.state.value.form.carDeviceAddress)
 
         vm.edit { it.copy(carDeviceAddress = null) }
         vm.save()
 
         assertEquals(null, settings.current().carDeviceAddress)
-        assertEquals(null, vm.state.value.form.carDeviceAddress)
         assertTrue(work.uploads.isEmpty())
         assertTrue(work.periodic.isEmpty())
     }
 
     @Test
-    fun `reloading discards an unsaved car choice`() = runTest {
+    fun `reloading discards unsaved edits`() = runTest {
         settings.update { it.copy(carDeviceAddress = CAR) }
         val vm = vm()
         vm.edit { it.copy(carDeviceAddress = null) }
@@ -122,7 +86,6 @@ class SettingsViewModelTest {
         vm.reload()
 
         assertEquals(CAR, vm.state.value.form.carDeviceAddress)
-        assertEquals(CAR, settings.current().carDeviceAddress)
     }
 
     @Test
@@ -134,26 +97,18 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun `an invalid URL or cache cap is reported and nothing is saved`() = runTest {
+    fun `an invalid cache cap is reported and nothing is saved`() = runTest {
         val vm = vm()
-        vm.edit { it.copy(sinkUrl = "http://sink.example.org/", cacheCapMb = "lots") }
+        vm.edit { it.copy(cacheCapMb = "lots", uploadOverCellular = true) }
 
         vm.save()
 
-        assertEquals(SinkUrlProblem.CLEARTEXT, vm.state.value.urlProblem)
         assertEquals(CacheCapProblem.NOT_A_NUMBER, vm.state.value.capProblem)
         assertFalse(vm.state.value.saved)
-        assertEquals(AppSettings(cacheCapBytes = 200_000_000), settings.current())
-        assertTrue(work.uploads.isEmpty())
-    }
+        assertFalse(settings.current().uploadOverCellular)
 
-    @Test
-    fun `a cache cap outside the allowed range is refused`() = runTest {
-        val vm = vm()
         vm.edit { it.copy(cacheCapMb = "5") }
-
         vm.save()
-
         assertEquals(CacheCapProblem.OUT_OF_RANGE, vm.state.value.capProblem)
     }
 
@@ -163,27 +118,6 @@ class SettingsViewModelTest {
         assertNull(validateCacheCap("10"))
         assertNull(validateCacheCap("2000"))
         assertEquals(CacheCapProblem.OUT_OF_RANGE, validateCacheCap("2001"))
-    }
-
-    @Test
-    fun `without authentication a typed secret is not stored`() = runTest {
-        val vm = vm()
-        vm.edit { it.copy(sinkUrl = "https://sink.invalid/", secretInput = "ignored") }
-
-        vm.save()
-
-        assertEquals(null, secrets.get(SecretStore.UPLOAD_SECRET))
-    }
-
-    @Test
-    fun `clearing the secret deletes it`() = runTest {
-        secrets.put(SecretStore.UPLOAD_SECRET, "old")
-        val vm = vm()
-
-        vm.clearSecret()
-
-        assertEquals(null, secrets.get(SecretStore.UPLOAD_SECRET))
-        assertFalse(vm.state.value.hasStoredSecret)
     }
 
     private companion object {

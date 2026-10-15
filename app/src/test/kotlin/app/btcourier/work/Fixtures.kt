@@ -8,6 +8,10 @@ import app.btcourier.core.store.FileStoreDb
 import app.btcourier.core.store.SealPolicy
 import app.btcourier.core.store.Store
 import app.btcourier.data.SecretStore
+import app.btcourier.data.SshKeys
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.spec.ECGenParameterSpec
 import java.nio.file.Path
 import java.util.zip.GZIPInputStream
 
@@ -53,9 +57,27 @@ class ScriptedUpload(private vararg val results: UploadResult) : UploadTransport
 class MapSecretStore(vararg entries: Pair<String, String>) : SecretStore {
     private val map = mutableMapOf(*entries)
 
+    /** Names currently stored. */
+    val names: Set<String> get() = map.keys.toSet()
+
     override suspend fun get(name: String): String? = map[name]
 
     override suspend fun put(name: String, value: String?) {
         if (value == null) map.remove(name) else map[name] = value
+    }
+}
+
+/** [SshKeys] with software P-256 keys, standing in for AndroidKeyStore on the JVM. */
+class InMemorySshKeys : SshKeys {
+    val keys = mutableMapOf<String, KeyPair>()
+
+    override fun load(alias: String): KeyPair? = keys[alias]
+
+    override fun loadOrCreate(alias: String): KeyPair = keys.getOrPut(alias) {
+        KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+    }
+
+    override fun delete(alias: String) {
+        keys.remove(alias)
     }
 }

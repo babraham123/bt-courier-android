@@ -3,16 +3,22 @@ package app.btcourier.ui
 import android.net.Uri
 import app.btcourier.ble.PairedDevice
 import app.btcourier.data.AppSettings
+import app.btcourier.data.DeviceKind
+import app.btcourier.data.DeviceSync
 import app.btcourier.data.InMemorySyncStatus
+import app.btcourier.data.SinkConfig
 import app.btcourier.data.SinkUpload
+import app.btcourier.data.TransportConfig
 import app.btcourier.data.SyncResultKind
 import app.btcourier.data.SyncStatus
 import app.btcourier.data.SyncStopKind
 import app.btcourier.data.UploadResultKind
+import app.btcourier.ui.status.DeviceRow
 import app.btcourier.ui.status.DiagnosticsExport
 import app.btcourier.ui.status.LastError
 import app.btcourier.ui.status.LastSync
 import app.btcourier.ui.status.LastUpload
+import app.btcourier.ui.status.SinkRow
 import app.btcourier.ui.status.StatusViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -29,9 +35,11 @@ import org.junit.jupiter.api.extension.ExtendWith
 @OptIn(ExperimentalCoroutinesApi::class)
 @ExtendWith(MainDispatcherExtension::class)
 class StatusViewModelTest {
-    private val device = PairedDevice("AA:BB:CC:DD:EE:FF", "WiC_000000000000", 7)
+    private val device = PairedDevice("AA:BB:CC:DD:EE:01", "WiC_000000000000", 7)
+    private val ring = PairedDevice("AA:BB:CC:DD:EE:02", "R02_0000", 8, DeviceKind.COLMI_RING)
     private val status = InMemorySyncStatus()
-    private val settings = FakeSettings(AppSettings(sinkUrl = "https://sink.invalid/up/", uploadOverCellular = true))
+    private val sink = SinkConfig("http", "Home server", transport = TransportConfig.HttpPut("https://sink.invalid/up/"))
+    private val settings = FakeSettings(AppSettings(sinks = listOf(sink), uploadOverCellular = true))
     private val devices = FakePairedDevices(device)
     private val work = RecordingWorkControl()
 
@@ -51,12 +59,7 @@ class StatusViewModelTest {
     fun `every status field reaches the screen state`() = runTest {
         status.update {
             SyncStatus(
-                lastSyncAtMs = 1_000,
-                lastSync = SyncResultKind.INTERRUPTED,
-                lastSyncLinesStored = 120,
-                lastSyncPages = 3,
-                lastSyncStop = SyncStopKind.LINK_LOST,
-                cursor = "1700000000:4096",
+                lastSyncByDevice = mapOf(device.address to DeviceSync(1_000, SyncResultKind.INTERRUPTED, 120, 3, SyncStopKind.LINK_LOST, "1700000000:4096")),
                 pendingBatches = 2,
                 bytesStored = 5_000,
                 droppedLines = 4,
@@ -73,9 +76,10 @@ class StatusViewModelTest {
         val s = subscribed().state.value
 
         assertFalse(s.loading)
-        assertEquals(device, s.device)
-        assertEquals(LastSync(1_000, SyncResultKind.INTERRUPTED, 3, 120, SyncStopKind.LINK_LOST), s.lastSync)
-        assertEquals("1700000000:4096", s.cursor)
+        assertEquals(
+            listOf(DeviceRow(device, LastSync(1_000, SyncResultKind.INTERRUPTED, 3, 120, SyncStopKind.LINK_LOST), "1700000000:4096")),
+            s.devices,
+        )
         assertEquals(2, s.pendingBatches)
         assertEquals(5_000, s.bytesStored)
         assertEquals(50_000_000, s.cacheCapBytes)
@@ -83,72 +87,109 @@ class StatusViewModelTest {
         assertEquals(400, s.droppedBytes)
         assertTrue(s.sinkConfigured)
         assertEquals(LastUpload(2_000, UploadResultKind.RETRYING), s.lastUpload)
-        assertEquals(listOf("http" to SinkUpload(2_000, UploadResultKind.RETRYING)), s.sinks)
+        assertEquals(listOf(SinkRow("Home server", SinkUpload(2_000, UploadResultKind.RETRYING))), s.sinks)
         assertEquals(LastError("link lost: timeout", 1_000), s.lastError)
     }
 
     @Test
     fun `a sync that never reached the device shows no page counts or stop reason`() = runTest {
         status.update {
-            it.copy(lastSyncAtMs = 1_000, lastSync = SyncResultKind.UNREACHABLE, lastSyncPages = 9, lastSyncStop = SyncStopKind.BUSY)
+            it.withSync(device.address, DeviceSync(1_000, SyncResultKind.UNREACHABLE, pages = 9, stop = SyncStopKind.BUSY, cursor = "1:2"))
         }
 
-        val sync = subscribed().state.value.lastSync!!
+        val row = subscribed().state.value.devices.single()
+        val sync = row.lastSync!!
 
         assertEquals(SyncResultKind.UNREACHABLE, sync.result)
         assertNull(sync.pages)
         assertNull(sync.lines)
         assertNull(sync.stoppedBecause)
+        assertEquals("1:2", row.cursor, "the cursor of the last sync that reached the device stays")
+    }
+
+    @Test
+    fun `each paired device is listed with its kind and only its own sync, in pairing order`() = runTest {
+        devices.devices = listOf(device, ring)
+        status.update {
+            it.withSync(ring.address, DeviceSync(5, SyncResultKind.CAUGHT_UP, 9, 1, SyncStopKind.CAUGHT_UP, "2026-10-14"))
+                .withSync("AA:BB:CC:DD:EE:09", DeviceSync(6, SyncResultKind.CAUGHT_UP))
+        }
+
+        val rows = subscribed().state.value.devices
+
+        assertEquals(listOf(device, ring), rows.map { it.device })
+        assertEquals(listOf(DeviceKind.WICAN, DeviceKind.COLMI_RING), rows.map { it.device.kind })
+        assertNull(rows[0].lastSync, "the dongle never synced")
+        assertNull(rows[0].cursor)
+        assertEquals(LastSync(5, SyncResultKind.CAUGHT_UP, 1, 9, SyncStopKind.CAUGHT_UP), rows[1].lastSync)
+        assertEquals("2026-10-14", rows[1].cursor)
     }
 
     @Test
     fun `the screen follows status updates`() = runTest {
         val vm = subscribed()
-        assertNull(vm.state.value.lastSync)
+        assertNull(vm.state.value.devices.single().lastSync)
 
-        status.update { it.copy(lastSyncAtMs = 5, lastSync = SyncResultKind.CAUGHT_UP, pendingBatches = 1) }
+        status.update { it.withSync(device.address, DeviceSync(5, SyncResultKind.CAUGHT_UP)).copy(pendingBatches = 1) }
 
-        assertEquals(SyncResultKind.CAUGHT_UP, vm.state.value.lastSync?.result)
+        assertEquals(SyncResultKind.CAUGHT_UP, vm.state.value.devices.single().lastSync?.result)
         assertEquals(1, vm.state.value.pendingBatches)
     }
 
     @Test
-    fun `without an upload URL there is no sink to upload to`() = runTest {
-        settings.update { it.copy(sinkUrl = " ") }
+    fun `without an enabled sink there is nothing to upload to`() = runTest {
+        settings.update { it.copy(sinks = listOf(sink.copy(enabled = false))) }
+        assertFalse(subscribed().state.value.sinkConfigured)
 
+        settings.update { it.copy(sinks = emptyList()) }
         assertFalse(subscribed().state.value.sinkConfigured)
     }
 
     @Test
-    fun `forget drops the association and the device disappears`() = runTest {
+    fun `sink outcomes show the sink's name, sorted by it, and a deleted sink by its id`() = runTest {
+        settings.update { it.copy(sinks = listOf(sink, SinkConfig("b2", "Archive", transport = TransportConfig.LocalFolder("content://x")))) }
+        val upload = SinkUpload(5, UploadResultKind.DELIVERED)
+        status.update { it.copy(lastUploadBySink = mapOf("http" to upload, "b2" to upload, "gone" to upload)) }
+
+        assertEquals(listOf("Archive", "Home server", "gone"), subscribed().state.value.sinks.map { it.name })
+    }
+
+    @Test
+    fun `forget drops that device and only it disappears`() = runTest {
+        devices.devices = listOf(device, ring)
         val vm = subscribed()
 
-        vm.forget()
+        vm.forget(ring)
 
-        assertEquals(listOf(device), devices.forgotten)
-        assertNull(vm.state.value.device)
+        assertEquals(listOf(ring), devices.forgotten)
+        assertEquals(listOf(device), vm.state.value.devices.map { it.device })
     }
 
     @Test
     fun `refreshing picks up a device paired since`() = runTest {
-        devices.device = null
+        devices.devices = emptyList()
         val vm = subscribed()
-        assertNull(vm.state.value.device)
+        assertEquals(emptyList<DeviceRow>(), vm.state.value.devices)
 
-        devices.device = device
-        vm.refreshDevice()
+        devices.devices = listOf(device)
+        vm.refreshDevices()
 
-        assertEquals(device, vm.state.value.device)
+        assertEquals(listOf(device), vm.state.value.devices.map { it.device })
     }
 
     @Test
     fun `buttons go through the scheduler, upload with the cellular setting and replacing queued work`() = runTest {
+        devices.devices = listOf(device, ring)
         val vm = subscribed()
 
-        vm.syncNow()
+        vm.syncNow(ring)
         vm.uploadNow()
 
-        assertEquals(1, work.syncs)
+        assertEquals(listOf(ring.address), work.syncs)
         assertEquals(listOf(true to true), work.uploads)
+
+        vm.syncAll()
+
+        assertEquals(listOf(ring.address, device.address, ring.address), work.syncs)
     }
 }

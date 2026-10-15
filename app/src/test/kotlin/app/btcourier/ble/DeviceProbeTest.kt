@@ -1,5 +1,9 @@
 package app.btcourier.ble
 
+import app.btcourier.core.source.colmi.Battery
+import app.btcourier.data.DeviceKind
+import app.btcourier.fakes.FakeColmiRing
+import app.btcourier.fakes.FakeGattLink
 import app.btcourier.fakes.ScriptedPeripheral
 import app.btcourier.fakes.ScriptedPeripheral.Reply
 import kotlinx.coroutines.test.runTest
@@ -8,8 +12,9 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.io.IOException
+import java.time.LocalDate
 
-/** The pair wizard's "test connection" over the scripted `ble_http` peripheral. */
+/** The pair wizard's "test connection" over the scripted `ble_http` peripheral and the fake ring. */
 class DeviceProbeTest {
     // Shape from dev_status_manager HTTP_API.md `GET /api/status`, padded past one notify frame.
     private val status = """{"bits":{"awake":true,"ble_connected":true},"uptime":"0d 00:01:02",""" +
@@ -18,7 +23,24 @@ class DeviceProbeTest {
     @Test
     fun `reads the firmware version through the tunnel`() = runTest {
         val peripheral = ScriptedPeripheral(mapOf("/api/status" to Reply(200, status)), mtu = 247, scope = backgroundScope)
-        assertEquals(ProbeResult("v0.0.0-test", 247), probeStatus(peripheral.link))
+        assertEquals(ProbeResult.Wican("v0.0.0-test", 247), probeStatus(peripheral.link))
+        assertEquals(ProbeResult.Wican("v0.0.0-test", 247), probe(peripheral.link, DeviceKind.WICAN))
+    }
+
+    @Test
+    fun `the ring probe reads the battery with one command written without response, leaving its clock alone`() = runTest {
+        val ring = FakeColmiRing(today = LocalDate.of(2026, 10, 15), batteryLevel = 64, charging = true)
+
+        assertEquals(ProbeResult.Ring(Battery(level = 64, charging = true)), probe(ring.link, DeviceKind.COLMI_RING))
+
+        assertEquals(listOf(0x03), ring.commands.map { it[0].toInt() })
+        assertEquals(listOf(false), ring.link.writesWithResponse)
+        assertEquals(emptyList<Any>(), ring.clockSets)
+    }
+
+    @Test
+    fun `a silent ring fails the probe`() = runTest {
+        assertThrows<IOException> { probeBattery(FakeGattLink(mtu = 23)) }
     }
 
     @Test

@@ -39,6 +39,8 @@ fun decideCarTrigger(action: String?, address: String?, configuredAddress: Strin
  * On API 31+ the system sends these broadcasts only to holders of BLUETOOTH_CONNECT, so the trigger
  * stays silent until that runtime permission is granted.
  *
+ * Only WiCAN devices are synced ([SyncTrigger.Car]): other paired devices are not in the car.
+ *
  * - Connect: the phone is in the car, so the dongle is awake; sync now.
  * - Disconnect: the trip just ended. The dongle stays awake ~3 min before sleeping, so syncing now
  *   lands the trip instead of waiting for the next drive.
@@ -64,7 +66,7 @@ class CarTrigger : BroadcastReceiver() {
                     // Wall clock, not elapsedRealtime: the window must survive a process death, and
                     // elapsedRealtime resets on reboot.
                     prefs.edit { putLong(LAST_TRIGGER, now) }
-                    Scheduler.syncNow(app)
+                    AppGraph.syncFanOut.fire(SyncTrigger.Car)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "car trigger failed", e)
