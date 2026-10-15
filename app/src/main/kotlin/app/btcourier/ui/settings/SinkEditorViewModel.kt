@@ -13,15 +13,20 @@ import app.btcourier.data.AuthKind
 import app.btcourier.data.CredentialEdits
 import app.btcourier.data.FormatKind
 import app.btcourier.data.OidcClientAuth
-import app.btcourier.data.PostEncoding
 import app.btcourier.data.SettingsRepository
 import app.btcourier.data.SinkConfig
 import app.btcourier.data.SinkCredentials
-import app.btcourier.data.TransportConfig
 import app.btcourier.data.TransportKind
-import app.btcourier.data.defaultMqttPort
-import app.btcourier.data.newMqttClientId
 import app.btcourier.data.newSinkId
+import app.btcourier.data.sinkkind.FieldProblem
+import app.btcourier.data.sinkkind.FieldValues
+import app.btcourier.data.sinkkind.SinkTransportKind
+import app.btcourier.data.sinkkind.SinkUrlProblem
+import app.btcourier.data.sinkkind.TransportCapability
+import app.btcourier.data.sinkkind.TransportField
+import app.btcourier.data.sinkkind.capability
+import app.btcourier.data.sinkkind.module
+import app.btcourier.data.sinkkind.validateSinkUrl
 import app.btcourier.ui.WorkControl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -40,10 +45,11 @@ import java.security.GeneralSecurityException
 import kotlin.coroutines.CoroutineContext
 
 /**
- * Every field the editor can show, for all transports at once, so switching the transport back and
- * forth keeps what was typed. Secret inputs hold only what the user typed this visit: stored
- * secrets are never read back into the form.
+ * What the editor holds: the fields every sink has, the auth fields, and each transport kind's own
+ * values, so switching the transport back and forth keeps what was typed. Secret inputs hold only
+ * what the user typed this visit: stored secrets are never read back into the form.
  *
+ * @property transports each kind's values, as its [SinkTransportKind] defines them.
  * @property oidcSignedInAs issuer and client id the endpoints and tokens (stored, or staged by a
  *   sign-in this visit) were obtained with; editing either away from it means signing in again.
  */
@@ -52,20 +58,7 @@ data class SinkForm(
     val enabled: Boolean = true,
     val kind: TransportKind = TransportKind.HTTP_PUT,
     val format: FormatKind = FormatKind.JSONL,
-    val url: String = "",
-    val compress: Boolean = true,
-    val postEncoding: PostEncoding = PostEncoding.GZIP_FILE,
-    val nameQuery: Boolean = false,
-    val host: String = "",
-    val sftpPort: String = "22",
-    val sftpUser: String = "",
-    val remoteDir: String = "",
-    val hostKeyFingerprint: String? = null,
-    val mqttTls: Boolean = true,
-    val mqttPort: String = defaultMqttPort(true).toString(),
-    val mqttClientId: String = "",
-    val baseTopic: String = "btcourier",
-    val treeUri: String? = null,
+    val transports: Map<TransportKind, FieldValues> = TransportKind.entries.associateWith { it.module.defaults() },
     val authKind: AuthKind = AuthKind.NONE,
     val basicUser: String = "",
     val secretInput: String = "",
@@ -77,14 +70,24 @@ data class SinkForm(
     val oidcDeviceEndpoint: String? = null,
     val oidcSignedInAs: Pair<String, String>? = null,
 ) {
+    val transport: SinkTransportKind get() = kind.module
+
+    /** The current kind's values. */
+    val values: FieldValues get() = transports.getValue(kind)
+
     /** The auth kinds the editor offers for the current transport. */
-    val allowedAuth: List<AuthKind> get() = kind.allowedAuth
+    val allowedAuth: List<AuthKind> get() = transport.allowedAuth
+
+    fun withValues(values: FieldValues) = copy(transports = transports + (kind to values))
 
     override fun toString() = "SinkForm(name=$name, kind=$kind, authKind=$authKind)"
 }
 
-/** Required fields left empty or unusable; drawn as errors on the matching inputs. */
-enum class SinkField { NAME, HOST, PORT, USERNAME, MQTT_CLIENT_ID, BASE_TOPIC, FOLDER, BASIC_USER, OIDC_CLIENT_ID }
+/**
+ * Common and auth fields left empty; drawn as errors. Transport fields report through
+ * [SinkEditorState.transportProblems].
+ */
+enum class SinkField { NAME, BASIC_USER, OIDC_CLIENT_ID }
 
 sealed interface SignInState {
     data object SignedOut : SignInState
@@ -121,12 +124,13 @@ data class SinkEditorState(
     val form: SinkForm = SinkForm(),
     val hasStoredSecret: Boolean = false,
     val hasStoredClientSecret: Boolean = false,
-    /** OpenSSH `authorized_keys` line of this sink's SFTP key; null until the SFTP transport is picked. */
+    /** OpenSSH `authorized_keys` line of this sink's key; null until a kind with [TransportCapability.ClientKey] is picked. */
     val publicKey: String? = null,
     val keyError: String? = null,
     val hostKey: HostKeyState = HostKeyState.Idle,
     val signIn: SignInState = SignInState.SignedOut,
-    val urlProblem: SinkUrlProblem? = null,
+    /** The current kind's [SinkTransportKind.validate] result as of the last save or action. */
+    val transportProblems: Map<String, FieldProblem> = emptyMap(),
     val issuerProblem: SinkUrlProblem? = null,
     val invalid: Set<SinkField> = emptySet(),
     val saved: Boolean = false,
@@ -176,7 +180,7 @@ class SinkEditorViewModel(
     init {
         viewModelScope.launch {
             val stored = settings.current().sinks.firstOrNull { it.id == id }
-            val form = stored?.toForm() ?: SinkForm(mqttClientId = newMqttClientId())
+            val form = stored?.toForm() ?: SinkForm()
             val held = credentials.stored(id)
             val signedIn = held.tokens && (stored?.auth as? AuthConfig.Oidc)?.signedInEndpoints == true
             mutableState.value = SinkEditorState(
@@ -188,7 +192,7 @@ class SinkEditorViewModel(
                 hasStoredClientSecret = held.clientSecret,
                 signIn = if (signedIn) SignInState.SignedIn else SignInState.SignedOut,
             )
-            if (form.kind == TransportKind.SFTP) ensureKey()
+            if (form.transport.capability<TransportCapability.ClientKey>() != null) ensureKey()
         }
     }
 
@@ -197,23 +201,29 @@ class SinkEditorViewModel(
     }
 
     /**
-     * Switches transport. Auth falls back to None where the old kind is not allowed; picking SFTP
-     * creates the sink's key so its public half can be shown.
+     * Switches transport. Auth falls back to the new kind's first where the old one is not allowed.
+     * A text field the new kind shares by key with the old one (URL, host) starts with what was
+     * typed there if it is still empty. A kind with a [TransportCapability.ClientKey] gets its key
+     * now, so its public half can be shown.
      */
     fun setTransport(kind: TransportKind) {
-        edit { f -> f.copy(kind = kind, authKind = if (f.authKind in kind.allowedAuth) f.authKind else AuthKind.NONE) }
-        if (kind == TransportKind.SFTP) viewModelScope.launch { ensureKey() }
+        val next = kind.module
+        edit { f ->
+            val carried = next.fields.filterIsInstance<TransportField.Text>().fold(f.transports.getValue(kind)) { values, field ->
+                if (values[field.key].isBlank() && f.values[field.key].isNotBlank()) values.with(field.key, f.values[field.key]) else values
+            }
+            val auth = if (f.authKind in next.allowedAuth) f.authKind else next.allowedAuth.first()
+            f.copy(kind = kind, authKind = auth).withValues(carried)
+        }
+        if (next.capability<TransportCapability.ClientKey>() != null) viewModelScope.launch { ensureKey() }
     }
+
+    /** Sets one of the current kind's values; the kind may adjust others with it ([SinkTransportKind.adjust]). */
+    fun setField(key: String, value: String?) = edit { f -> f.withValues(f.transport.adjust(f.values, f.values.with(key, value))) }
 
     /** Ignored for kinds the transport does not allow, so the UI can't store an impossible pair. */
     fun setAuth(kind: AuthKind) {
         if (kind in mutableState.value.form.allowedAuth) edit { it.copy(authKind = kind) }
-    }
-
-    /** Keeps the port on the protocol default when it was on the other one. */
-    fun setMqttTls(tls: Boolean) = edit { f ->
-        val port = if (f.mqttPort == defaultMqttPort(!tls).toString()) defaultMqttPort(tls).toString() else f.mqttPort
-        f.copy(mqttTls = tls, mqttPort = port)
     }
 
     fun clearSecret() {
@@ -224,18 +234,21 @@ class SinkEditorViewModel(
         }
     }
 
+    /** For a kind with a [TransportCapability.HostKeyPin]: fetches the key to present, once host and port are valid. */
     fun fetchHostKey() {
         val form = mutableState.value.form
-        val port = form.sftpPort.trim().toIntOrNull()
-        val missing = setOfNotNull(SinkField.HOST.takeIf { form.host.isBlank() }, SinkField.PORT.takeIf { port !in 1..65535 })
-        if (missing.isNotEmpty() || port == null) {
-            mutableState.update { it.copy(invalid = it.invalid + missing) }
+        val pin = form.transport.capability<TransportCapability.HostKeyPin>() ?: return
+        val problems = form.transport.validate(form.values).filterKeys { it == pin.hostKey || it == pin.portKey }
+        if (problems.isNotEmpty()) {
+            mutableState.update { it.copy(transportProblems = it.transportProblems + problems) }
             return
         }
+        val host = form.values[pin.hostKey].trim()
+        val port = form.values[pin.portKey].trim().toInt()
         mutableState.update { it.copy(hostKey = HostKeyState.Fetching) }
         viewModelScope.launch {
             val next = try {
-                HostKeyState.Presented(hostKeys.fetch(form.host.trim(), port))
+                HostKeyState.Presented(hostKeys.fetch(host, port))
             } catch (e: IOException) {
                 HostKeyState.Failed(e.message ?: e.javaClass.simpleName)
             }
@@ -246,11 +259,16 @@ class SinkEditorViewModel(
     /** Pins the presented fingerprint; stored with the next save. */
     fun trustHostKey() {
         val presented = mutableState.value.hostKey as? HostKeyState.Presented ?: return
-        mutableState.update { it.copy(form = it.form.copy(hostKeyFingerprint = presented.fingerprint), hostKey = HostKeyState.Idle, saved = false) }
+        setPin(presented.fingerprint)
     }
 
-    fun forgetHostKey() {
-        mutableState.update { it.copy(form = it.form.copy(hostKeyFingerprint = null), hostKey = HostKeyState.Idle, saved = false) }
+    fun forgetHostKey() = setPin(null)
+
+    private fun setPin(fingerprint: String?) {
+        val pin = mutableState.value.form.transport.capability<TransportCapability.HostKeyPin>() ?: return
+        mutableState.update {
+            it.copy(form = it.form.withValues(it.form.values.with(pin.fingerprintKey, fingerprint)), hostKey = HostKeyState.Idle, saved = false)
+        }
     }
 
     /**
@@ -260,7 +278,7 @@ class SinkEditorViewModel(
      */
     fun signIn() {
         val form = mutableState.value.form
-        val issuerProblem = validateSinkUrl(form.oidcIssuer) ?: SinkUrlProblem.INVALID.takeIf { form.oidcIssuer.isBlank() }
+        val issuerProblem = validateSinkUrl(form.oidcIssuer, required = true)
         val clientIdMissing = form.oidcClientId.isBlank()
         mutableState.update {
             it.copy(issuerProblem = issuerProblem, invalid = if (clientIdMissing) it.invalid + SinkField.OIDC_CLIENT_ID else it.invalid - SinkField.OIDC_CLIENT_ID)
@@ -334,29 +352,24 @@ class SinkEditorViewModel(
         }
     }
 
+    /**
+     * Validates and saves. The sink's upload back-off is forgotten ([WorkControl.forgetRetries]):
+     * the user just fixed or re-pointed it, so the next upload should try it at once.
+     */
     fun save() {
-        val current = mutableState.value
-        val form = current.form
-        val urlProblem = when (form.kind) {
-            TransportKind.HTTP_PUT, TransportKind.HTTP_POST ->
-                validateSinkUrl(form.url, allowQuery = form.kind == TransportKind.HTTP_POST)
-                    ?: SinkUrlProblem.INVALID.takeIf { form.url.isBlank() }
-            else -> null
-        }
-        val issuerProblem = if (form.authKind == AuthKind.OIDC) {
-            validateSinkUrl(form.oidcIssuer) ?: SinkUrlProblem.INVALID.takeIf { form.oidcIssuer.isBlank() }
-        } else {
-            null
-        }
+        val form = mutableState.value.form
+        val transportProblems = form.transport.validate(form.values)
+        val issuerProblem = if (form.authKind == AuthKind.OIDC) validateSinkUrl(form.oidcIssuer, required = true) else null
         val invalid = invalidFields(form)
-        mutableState.update { it.copy(urlProblem = urlProblem, issuerProblem = issuerProblem, invalid = invalid) }
-        if (urlProblem != null || issuerProblem != null || invalid.isNotEmpty()) return
+        mutableState.update { it.copy(transportProblems = transportProblems, issuerProblem = issuerProblem, invalid = invalid) }
+        if (transportProblems.isNotEmpty() || issuerProblem != null || invalid.isNotEmpty()) return
 
         val config = form.toConfig()
         val staged = stagedTokens
         val edits = CredentialEdits(form.secretInput.ifEmpty { null }, form.oidcClientSecretInput.ifEmpty { null }, staged)
         viewModelScope.launch {
             val previous = credentials.save(config, edits, settings)
+            work.forgetRetries(id)
             if (previous != config || !edits.isEmpty) replaceUpload()
             if (stagedTokens === staged) stagedTokens = null
             val stored = credentials.stored(id)
@@ -373,10 +386,12 @@ class SinkEditorViewModel(
         }
     }
 
+    /** Deletes the sink, its credentials and its upload back-off. */
     fun delete() {
         signInJob?.cancel()
         viewModelScope.launch {
             credentials.delete(id, settings)
+            work.forgetRetries(id)
             replaceUpload()
             mutableState.update { it.copy(deleted = true) }
         }
@@ -390,7 +405,9 @@ class SinkEditorViewModel(
     fun discard() {
         signInJob?.cancel()
         stagedTokens = null
-        val pickedTree = mutableState.value.form.treeUri
+        val pickedTree = mutableState.value.form.transports.firstNotNullOfOrNull { (kind, values) ->
+            kind.module.capability<TransportCapability.FolderPick>()?.let { values.orNull(it.treeUriKey) }
+        }
         appScope.launch { credentials.discard(id, settings, pickedTree) }
     }
 
@@ -415,21 +432,6 @@ class SinkEditorViewModel(
 
     private fun invalidFields(f: SinkForm): Set<SinkField> = buildSet {
         if (f.name.isBlank()) add(SinkField.NAME)
-        when (f.kind) {
-            TransportKind.HTTP_PUT, TransportKind.HTTP_POST -> Unit
-            TransportKind.SFTP -> {
-                if (f.host.isBlank()) add(SinkField.HOST)
-                if (f.sftpPort.trim().toIntOrNull() !in 1..65535) add(SinkField.PORT)
-                if (f.sftpUser.isBlank()) add(SinkField.USERNAME)
-            }
-            TransportKind.MQTT -> {
-                if (f.host.isBlank()) add(SinkField.HOST)
-                if (f.mqttPort.trim().toIntOrNull() !in 1..65535) add(SinkField.PORT)
-                if (f.mqttClientId.isBlank()) add(SinkField.MQTT_CLIENT_ID)
-                if (f.baseTopic.any { it == '+' || it == '#' } || f.baseTopic.trim().startsWith("$")) add(SinkField.BASE_TOPIC)
-            }
-            TransportKind.LOCAL_FOLDER -> if (f.treeUri == null) add(SinkField.FOLDER)
-        }
         if (f.authKind == AuthKind.BASIC && f.basicUser.isBlank()) add(SinkField.BASIC_USER)
         if (f.authKind == AuthKind.OIDC && f.oidcClientId.isBlank()) add(SinkField.OIDC_CLIENT_ID)
     }
@@ -438,19 +440,7 @@ class SinkEditorViewModel(
         id = id,
         name = name.trim(),
         enabled = enabled,
-        transport = when (kind) {
-            TransportKind.HTTP_PUT -> TransportConfig.HttpPut(url.trim(), compress)
-            TransportKind.HTTP_POST -> TransportConfig.HttpPost(url.trim(), postEncoding, nameQuery)
-            TransportKind.SFTP -> TransportConfig.Sftp(
-                host = host.trim(),
-                port = sftpPort.trim().toInt(),
-                username = sftpUser.trim(),
-                remoteDir = remoteDir.trim(),
-                hostKeyFingerprint = hostKeyFingerprint,
-            )
-            TransportKind.MQTT -> TransportConfig.Mqtt(host.trim(), mqttPort.trim().toInt(), mqttTls, mqttClientId.trim(), baseTopic.trim())
-            TransportKind.LOCAL_FOLDER -> TransportConfig.LocalFolder(checkNotNull(treeUri))
-        },
+        transport = transport.toConfig(values),
         format = format,
         auth = toAuth(),
     )
@@ -480,20 +470,8 @@ internal fun SinkForm.toAuth(): AuthConfig {
 }
 
 internal fun SinkConfig.toForm(): SinkForm {
-    val base = SinkForm(name = name, enabled = enabled, kind = transport.kind, format = format, mqttClientId = newMqttClientId())
-    val withTransport = when (val t = transport) {
-        is TransportConfig.HttpPut -> base.copy(url = t.url, compress = t.compress)
-        is TransportConfig.HttpPost -> base.copy(url = t.url, postEncoding = t.encoding, nameQuery = t.nameQuery)
-        is TransportConfig.Sftp -> base.copy(
-            host = t.host,
-            sftpPort = t.port.toString(),
-            sftpUser = t.username,
-            remoteDir = t.remoteDir,
-            hostKeyFingerprint = t.hostKeyFingerprint,
-        )
-        is TransportConfig.Mqtt -> base.copy(host = t.host, mqttPort = t.port.toString(), mqttTls = t.tls, mqttClientId = t.clientId, baseTopic = t.baseTopic)
-        is TransportConfig.LocalFolder -> base.copy(treeUri = t.treeUri)
-    }
+    val base = SinkForm(name = name, enabled = enabled, kind = transport.kind, format = format)
+    val withTransport = base.withValues(transport.kind.module.toValues(transport))
     return when (val a = auth) {
         AuthConfig.None -> withTransport.copy(authKind = AuthKind.NONE)
         is AuthConfig.Basic -> withTransport.copy(authKind = AuthKind.BASIC, basicUser = a.user)

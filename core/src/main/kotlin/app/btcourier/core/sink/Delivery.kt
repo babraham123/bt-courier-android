@@ -50,6 +50,14 @@ class Delivery(private val store: Store, private val clock: () -> Long = System:
         }
     }
 
+    /**
+     * Drops [sinkId]'s schedule, so its next round tries it at once. For a sink whose configuration
+     * changed or which was removed: the old schedule was earned by a target that no longer exists.
+     */
+    fun forget(sinkId: String) {
+        backoffs.remove(sinkId)
+    }
+
     private fun record(sinkId: String, result: UploadResult) {
         if (result !is UploadResult.Retry) {
             backoffs.remove(sinkId)

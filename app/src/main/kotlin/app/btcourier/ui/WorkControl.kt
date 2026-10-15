@@ -1,6 +1,7 @@
 package app.btcourier.ui
 
 import android.content.Context
+import app.btcourier.AppGraph
 import app.btcourier.work.Scheduler
 
 /** What the screens may ask of the scheduler; a seam so view models are testable on the JVM. */
@@ -14,6 +15,9 @@ interface WorkControl {
     fun cancelUpload()
 
     fun setPeriodicSync(enabled: Boolean)
+
+    /** Drops [sinkId]'s upload back-off, so a sink just fixed or removed is not skipped meanwhile. */
+    fun forgetRetries(sinkId: String)
 }
 
 class SchedulerWorkControl(context: Context) : WorkControl {
@@ -26,4 +30,6 @@ class SchedulerWorkControl(context: Context) : WorkControl {
     override fun cancelUpload() = Scheduler.cancelUpload(app)
 
     override fun setPeriodicSync(enabled: Boolean) = Scheduler.setPeriodicSync(app, enabled)
+
+    override fun forgetRetries(sinkId: String) = AppGraph.uploadJob.forgetRetries(sinkId)
 }
