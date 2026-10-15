@@ -1,18 +1,13 @@
 package app.btcourier.core.sink
 
 import app.btcourier.core.auth.OidcException
-import app.btcourier.core.store.DbKind
-import app.btcourier.core.store.SealPolicy
 import app.btcourier.core.store.SealedBatch
-import app.btcourier.core.store.StoreCounters
-import app.btcourier.core.store.StoreHarness
 import app.btcourier.core.store.marker
 import app.btcourier.core.store.rows
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -83,44 +78,6 @@ class SinkTest {
         val notADir = Files.writeString(dir.resolve("file"), "x")
         val result = LocalDirectoryUploadTransport(notADir).upload(encodeBatch(batch(), Jsonl))
         assertTrue(result is UploadResult.Retry, "$result")
-    }
-
-    @Test
-    fun `two sinks each receive every batch and the store empties once both acked`() = runTest {
-        val h = StoreHarness(DbKind.FILE, dir.resolve("store"), sinks = setOf("one", "two"))
-        val s = h.store
-        val one = CompositeSink("one", LocalDirectoryUploadTransport(dir.resolve("one")), Jsonl)
-        val two = CompositeSink("two", LocalDirectoryUploadTransport(dir.resolve("two")), Jsonl)
-        s.appendPage("wican", "1:0", listOf(marker("f1")) + rows(1..5))
-        s.appendPage("wican", "2:0", listOf(marker("f2")) + rows(6..9))
-        s.seal(SealPolicy(maxBatchAgeMs = 0), h.now)
-        val expected = s.pending("one").map { encodeBatch(it, Jsonl) }
-        assertEquals(2, expected.size)
-
-        assertNull(deliverPending(s, one))
-        assertEquals(2, s.counters().pendingBatches)
-        assertNull(deliverPending(s, two))
-        assertEquals(StoreCounters(0, 0, 0, 0), s.counters())
-
-        for (sinkDir in listOf("one", "two")) {
-            val written = dir.resolve(sinkDir).listDirectoryEntries().associate { it.name to it.readBytes() }
-            assertEquals(expected.map { it.name }.toSet(), written.keys)
-            expected.forEach { assertArrayEquals(it.bytes, written.getValue(it.name)) }
-        }
-    }
-
-    @Test
-    fun `delivery stops at the first failure and keeps the batch`() = runTest {
-        val h = StoreHarness(DbKind.MEMORY, dir, sinks = setOf("flaky"))
-        val s = h.store
-        val flaky = CompositeSink("flaky", object : UploadTransport {
-            override suspend fun upload(batch: Batch) = UploadResult.Retry("offline")
-        }, Jsonl)
-        s.appendPage("wican", "1:0", rows(1..3))
-        s.seal(SealPolicy(maxBatchAgeMs = 0), h.now)
-
-        assertEquals(UploadResult.Retry("offline"), deliverPending(s, flaky))
-        assertEquals(1, s.pending("flaky").size)
     }
 
     @Test

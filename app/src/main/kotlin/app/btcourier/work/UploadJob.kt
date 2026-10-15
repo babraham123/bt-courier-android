@@ -1,8 +1,8 @@
 package app.btcourier.work
 
+import app.btcourier.core.sink.Delivery
 import app.btcourier.core.sink.Sink
 import app.btcourier.core.sink.UploadResult
-import app.btcourier.core.sink.deliverPending
 import app.btcourier.core.store.SealPolicy
 import app.btcourier.core.store.Store
 import app.btcourier.data.SinkUpload
@@ -20,11 +20,14 @@ import java.io.Closeable
  * Retries are bounded: a round that ends in [UploadResult.Retry] asks for another attempt until
  * [maxAttempts] rounds have run, then gives up ([UploadOutcome.GaveUp]); [UploadResult.Failed]
  * is never retried. Either way the batches stay in the store and the next upload (after the next
- * sync that seals new batches, or a manual one) tries them again.
+ * sync that seals new batches, or a manual one) tries them again. Within a round, [delivery]
+ * decides whether a sink is due; one still waiting (its server's `Retry-After`, or back-off) is
+ * not contacted and counts as a Retry.
  *
  * @param sinks builds the configured sinks; may throw [IllegalArgumentException] for a bad URL.
  *   Transports that are [Closeable] are closed when the round ends.
  * @param foregroundThresholdBytes stored bytes from which [run] calls its `onLargeBacklog`.
+ * @param delivery holds per-sink retry state across rounds, so one job must serve every round.
  */
 class UploadJob(
     private val store: Store,
@@ -34,6 +37,7 @@ class UploadJob(
     private val maxAttempts: Int = MAX_ATTEMPTS,
     private val foregroundThresholdBytes: Long = FOREGROUND_THRESHOLD_BYTES,
     private val log: AppLog = AppLog(),
+    private val delivery: Delivery = Delivery(store, clock),
 ) {
     /**
      * @param attempt 0-based index of this round among consecutive retries.
@@ -63,7 +67,7 @@ class UploadJob(
         }
         if (store.counters().bytesStored >= foregroundThresholdBytes) onLargeBacklog()
 
-        val results = configured.map { sink -> sink.id to deliverPending(store, sink) }
+        val results = configured.map { sink -> sink.id to delivery.deliverPending(sink) }
         val stops = results.mapNotNull { (id, result) -> result?.let { id to it } }
         val retries = stops.filter { it.second is UploadResult.Retry }
         val error = stops.takeIf { it.isNotEmpty() }?.joinToString("; ") { (id, result) -> "$id: ${reason(result)}" }

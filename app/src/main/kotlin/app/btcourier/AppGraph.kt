@@ -120,6 +120,8 @@ object AppGraph {
         )
     }
 
+    // One instance for the process: it keeps each sink's retry schedule across rounds, while the
+    // sinks themselves are rebuilt every round from the current settings.
     val uploadJob: UploadJob by lazy {
         UploadJob(store, sinks = { buildSinks(settings.current(), secrets, sinkEnvironment) }, status = status, log = log)
     }
