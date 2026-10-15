@@ -1,0 +1,24 @@
+name: Assemble unsigned release APK
+description: >-
+  The one Gradle invocation that produces the release APK, shared by the reproducibility check and
+  the release workflow so the bytes that get signed are the bytes that were checked.
+
+outputs:
+  apk:
+    description: Path of the unsigned release APK.
+    value: ${{ steps.build.outputs.apk }}
+
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup-build
+      with:
+        gradle-cache: "false"
+    - id: build
+      shell: bash
+      run: |
+        # No build cache: every task runs from source, as an F-Droid rebuild would.
+        ./gradlew --no-build-cache :app:assembleRelease
+        apk=app/build/outputs/apk/release/app-release-unsigned.apk
+        test -f "$apk"
+        echo "apk=$apk" >> "$GITHUB_OUTPUT"
