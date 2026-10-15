@@ -58,7 +58,7 @@ data class SyncStatus(
 }
 
 /**
- * One device's latest sync.
+ * One device's latest sync, as `SyncJob` records it from the run's outcome.
  *
  * @property stop why the sync stopped; null when it never reached the device.
  * @property cursor the device's store cursor after the sync; kept from the previous sync when
@@ -90,7 +90,7 @@ enum class SyncResultKind {
     NOT_PAIRED,
 }
 
-/** Mirrors core's `StopReason` without its causes, so it can be persisted. */
+/** Why a sync that reached the device stopped: core's `StopReason` without its causes, so it can be persisted. */
 enum class SyncStopKind { CAUGHT_UP, NO_PROGRESS, LINK_LOST, TRUNCATED, BUSY, DEVICE_ERROR }
 
 @Serializable

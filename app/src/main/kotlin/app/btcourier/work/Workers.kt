@@ -14,27 +14,24 @@ import app.btcourier.AppGraph
  * it fans out instead: one sync per paired device ([SyncTrigger.Periodic]), or with none paired a
  * run that only seals.
  *
- * Interrupted syncs (link lost, truncated, busy) retry with WorkManager's back-off, at most
- * [MAX_ATTEMPTS] runs in a row; then the next trigger takes over. Whenever the run sealed new
- * batches, an upload is enqueued: also after an interrupted sync, and after one that found no
- * device, since sealing happens anyway.
+ * Whether to run again is the outcome's [SyncOutcome.retryWorthwhile] ([SyncRetryPolicy] states
+ * when); the worker turns it into WorkManager's back-off. Whenever the run sealed new batches, an
+ * upload is enqueued: also after an interrupted sync, and after one that found no device, since
+ * sealing happens anyway.
  */
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val settings = AppGraph.settings.current()
         val address = inputData.getString(KEY_ADDRESS)
         if (address == null && AppGraph.syncFanOut.fire(SyncTrigger.Periodic).isNotEmpty()) return Result.success()
-        val outcome = AppGraph.syncJob.run(address, settings.sealPolicy) {
+        val outcome = AppGraph.syncJob.run(address, settings.sealPolicy, runAttemptCount) {
             tryForeground(Notifications.syncForeground(applicationContext, checkNotNull(address)))
         }
         if (outcome.newBatches) Scheduler.uploadNow(applicationContext, settings.uploadOverCellular)
-        val retry = outcome is SyncOutcome.Interrupted && runAttemptCount + 1 < MAX_ATTEMPTS
-        return if (retry) Result.retry() else Result.success()
+        return if (outcome.retryWorthwhile) Result.retry() else Result.success()
     }
 
     companion object {
-        const val MAX_ATTEMPTS = 5
-
         /** Input: upper-case address of the device to sync. */
         const val KEY_ADDRESS = "address"
     }
