@@ -1,6 +1,6 @@
 package app.btcourier.fakes
 
-import app.btcourier.core.source.colmi.ColmiBigDataTimeoutException
+import app.btcourier.core.source.colmi.ColmiTimeoutException
 import app.btcourier.core.source.colmi.colmiBigDataRequest
 import app.btcourier.core.transport.ChannelUnavailableException
 import app.btcourier.core.transport.GattChannel
@@ -44,7 +44,7 @@ class ColmiBigDataRequestTest {
                     // Announces 30 bytes, sends 14.
                     notify(bytes(0xBC, 0x25, 30, 0, 0, 0) + ByteArray(14), GattChannel.SECONDARY)
                 })
-            assertThrows<ColmiBigDataTimeoutException> { link.colmiBigDataRequest(0x25, 5.seconds) }
+            assertThrows<ColmiTimeoutException> { link.colmiBigDataRequest(0x25, 5.seconds) }
             assertFalse(link.closed)
         }
 
@@ -55,6 +55,6 @@ class ColmiBigDataRequestTest {
 
             val dropping = FakeGattLink(mtu = 23, onSecondaryWrite = { _, _ -> drop() })
             val failure = assertThrows<IOException> { dropping.colmiBigDataRequest(0x27, 5.seconds) }
-            assertFalse(failure is ColmiBigDataTimeoutException || failure is ChannelUnavailableException)
+            assertFalse(failure is ColmiTimeoutException || failure is ChannelUnavailableException)
         }
 }
