@@ -21,8 +21,9 @@ import java.time.ZoneOffset
 
 /**
  * [FakeColmiRing] → [ColmiRingSource] (→ [SyncRunner] → [DefaultStore]). Expected rows follow the
- * published protocol: heart rate every 5 minutes from midnight, steps per quarter hour, stamps in
- * the phone's zone because the ring is set to the phone's wall clock.
+ * published protocol: heart rate every 5 minutes from midnight, steps per quarter hour, HRV every
+ * 30 minutes from midnight, stamps in the phone's zone because the ring is set to the phone's wall
+ * clock.
  */
 class ColmiRingSourceTest {
     // A zone off UTC, so a wrong frame (UTC vs wall clock) moves every stamp.
@@ -61,7 +62,29 @@ class ColmiRingSourceTest {
                         },
                 ),
             steps = mapOf(day1 to mapOf(1 to 120, 95 to 30), day2 to mapOf(40 to 500)),
+            // Half-hour slots: 1 is 00:30, 47 is 23:30. day2 has none, so its answer is 0xFF.
+            hrv =
+                mapOf(
+                    day1 to
+                        IntArray(48).apply {
+                            this[1] = 35
+                            this[47] = 58
+                        },
+                ),
             batteryLevel = 87,
+        )
+
+    // ring()'s day1 as rows, in time order.
+    private val day1Rows =
+        listOf(
+            row(at(day1, 0, 0), "colmi.hr", 60),
+            row(at(day1, 0, 15), "colmi.steps", 120),
+            row(at(day1, 0, 30), "colmi.hrv", 35),
+            row(at(day1, 0, 40), "colmi.hr", 61),
+            row(at(day1, 0, 45), "colmi.hr", 62),
+            row(at(day1, 23, 30), "colmi.hrv", 58),
+            row(at(day1, 23, 45), "colmi.steps", 30),
+            row(at(day1, 23, 55), "colmi.hr", 70),
         )
 
     private fun source(ring: FakeColmiRing) = ColmiRingSource(ring.link, zone, phoneClock = { nowMs })
@@ -82,16 +105,7 @@ class ColmiRingSourceTest {
             // Only the 2 s settle before set-time takes (virtual) time; every answer is immediate.
             assertEquals(2_000L, currentTime)
             assertEquals(
-                listOf(
-                    """{"_file":"colmi/2026-10-13"}""",
-                    row(at(day1, 0, 0), "colmi.hr", 60),
-                    row(at(day1, 0, 15), "colmi.steps", 120),
-                    row(at(day1, 0, 40), "colmi.hr", 61),
-                    row(at(day1, 0, 45), "colmi.hr", 62),
-                    row(at(day1, 23, 45), "colmi.steps", 30),
-                    row(at(day1, 23, 55), "colmi.hr", 70),
-                    row(nowMs, "colmi.battery", 87),
-                ),
+                listOf("""{"_file":"colmi/2026-10-13"}""") + day1Rows + row(nowMs, "colmi.battery", 87),
                 first.lines,
             )
             assertEquals("2026-10-13", first.nextCursor)
@@ -116,14 +130,16 @@ class ColmiRingSourceTest {
             val commands = ring.commands
             assertEquals(0x01, commands.first()[0].toInt())
             // Heart-rate requests carry the day's wall-clock midnight counted as UTC, little-endian.
-            val hrDays =
-                commands.filter { it[0].toInt() == 0x15 }.map { p ->
-                    (0 until 4).fold(0L) { acc, i -> acc or ((p[1 + i].toLong() and 0xFF) shl (8 * i)) }
-                }
+            val hrDays = commands.filter { it[0].toInt() == 0x15 }.map(::u32le)
             assertEquals(listOf(day1, day2).map { it.atStartOfDay().toEpochSecond(ZoneOffset.UTC) }, hrDays)
             // Steps requests address days by offset from the ring's today.
             assertEquals(listOf(2, 1), commands.filter { it[0].toInt() == 0x43 }.map { it[1].toInt() })
+            // So do HRV requests, as a 4-byte LE count.
+            assertEquals(listOf(2L, 1L), commands.filter { it[0].toInt() == 0x39 }.map(::u32le))
         }
+
+    private fun u32le(p: ByteArray) =
+        (0 until 4).fold(0L) { acc, i -> acc or ((p[1 + i].toLong() and 0xFF) shl (8 * i)) }
 
     @Test
     fun `a null or too-old cursor starts at the oldest day the ring keeps`() =
@@ -133,10 +149,53 @@ class ColmiRingSourceTest {
             assertEquals(oldest, source(ring()).pull(null).lines.first())
             assertEquals(oldest, source(ring()).pull("2026-09-01").lines.first())
             assertEquals("2026-10-08", source(ring()).pull("2026-09-01").nextCursor)
-            // The oldest day is 7 days before the ring's today in the steps request.
+            // The oldest day is 7 days before the ring's today in the steps request, one day more
+            // than the HRV log reaches, so it is not asked for HRV.
             val ring = ring()
             source(ring).pull(null)
             assertEquals(listOf(7), ring.commands.filter { it[0].toInt() == 0x43 }.map { it[1].toInt() })
+            assertEquals(emptyList<Long>(), ring.commands.filter { it[0].toInt() == 0x39 }.map(::u32le))
+        }
+
+    @Test
+    fun `a ring that never answers HRV is probed once per instance and its days go on without HRV`() =
+        runTest {
+            val ring = ring()
+            ring.silentCommands += FakeColmiRing.CMD_HRV_LOG
+            val source = source(ring)
+
+            val first = source.pull("2026-10-12")
+            assertEquals(
+                listOf("""{"_file":"colmi/2026-10-13"}""") + day1Rows.filterNot { "colmi.hrv" in it } +
+                    row(nowMs, "colmi.battery", 87),
+                first.lines,
+            )
+            // The 2 s settle, then one 5 s HRV timeout.
+            assertEquals(7_000L, currentTime)
+
+            assertEquals("2026-10-14", source.pull(first.nextCursor).nextCursor)
+            assertEquals(1, ring.commands.count { it[0].toInt() == 0x39 })
+            assertEquals(7_000L, currentTime)
+
+            // A new instance (the next connection) probes again.
+            source(ring).pull("2026-10-12")
+            assertEquals(2, ring.commands.count { it[0].toInt() == 0x39 })
+        }
+
+    @Test
+    fun `an HRV answer cut short, or silence after the ring has answered, retries the day`() =
+        runTest {
+            val ring = ring()
+            val source = source(ring)
+
+            // Day 1's HRV answer is a header and sub-indexes 1..4; 2 arrives damaged.
+            ring.corruptNextHrvPacket(2)
+            assertInstanceOf(IOException::class.java, runCatching { source.pull("2026-10-12") }.exceptionOrNull())
+            val day1 = source.pull("2026-10-12")
+            assertEquals(listOf("""{"_file":"colmi/2026-10-13"}""") + day1Rows, day1.lines.dropLast(1))
+
+            ring.silentCommands += FakeColmiRing.CMD_HRV_LOG
+            assertInstanceOf(IOException::class.java, runCatching { source.pull(day1.nextCursor) }.exceptionOrNull())
         }
 
     @Test
@@ -184,14 +243,15 @@ class ColmiRingSourceTest {
             val report = sync(ring, store)
             assertEquals(StopReason.CaughtUp, report.stoppedBecause)
             assertEquals(2, report.pagesPulled)
-            assertEquals(8L, report.linesStored)
+            // Day 1's 8 rows and the battery, then day 2's one.
+            assertEquals(10L, report.linesStored)
             assertEquals("2026-10-14", store.cursor("colmi"))
 
             // The day-1 batch is sealed by day 2's marker; every row keeps its stamp as `device`.
             val day1Batch = store.pending("sink").first()
             assertEquals("""{"_file":"colmi/2026-10-13"}""", day1Batch.lines.first())
             val rows = day1Batch.lines.drop(1)
-            assertEquals(7, rows.size)
+            assertEquals(9, rows.size)
             assertTrue(rows.all { it.contains("\"ts_quality\":\"device\"") }, rows.joinToString("\n"))
 
             val again = sync(ring, store)
@@ -222,6 +282,13 @@ class ColmiRingSourceTest {
             assertEquals("2026-10-12", store.cursor("colmi"))
             assertEquals(emptyList<Any>(), store.pending("sink"))
 
+            // Day 1's HRV answer is sub-indexes 1..4 after the header; 4 is the last.
+            ring.corruptNextHrvPacket(4)
+            val hrvLost = sync(ring, store)
+            assertInstanceOf(StopReason.LinkLost::class.java, hrvLost.stoppedBecause)
+            assertEquals(0L, hrvLost.linesStored)
+            assertEquals("2026-10-12", store.cursor("colmi"))
+
             val recovered = sync(ring, store)
             assertEquals(StopReason.CaughtUp, recovered.stoppedBecause)
             assertEquals("2026-10-14", store.cursor("colmi"))
@@ -229,15 +296,7 @@ class ColmiRingSourceTest {
             assertEquals("""{"_file":"colmi/2026-10-13"}""", day1Batch.lines.first())
             // Stored rows are the source's with ts_raw and ts_quality appended.
             assertEquals(
-                listOf(
-                    row(at(day1, 0, 0), "colmi.hr", 60),
-                    row(at(day1, 0, 15), "colmi.steps", 120),
-                    row(at(day1, 0, 40), "colmi.hr", 61),
-                    row(at(day1, 0, 45), "colmi.hr", 62),
-                    row(at(day1, 23, 45), "colmi.steps", 30),
-                    row(at(day1, 23, 55), "colmi.hr", 70),
-                    row(nowMs, "colmi.battery", 87),
-                ),
+                day1Rows + row(nowMs, "colmi.battery", 87),
                 day1Batch.lines.drop(1).map { it.substringBefore(""","ts_raw"""") + "}" },
             )
         }

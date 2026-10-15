@@ -6,8 +6,9 @@ import java.time.ZoneOffset
 
 /**
  * A Colmi R02-family ring on a [FakeGattLink], answering from tables. Packets are built here byte
- * by byte from the published layout (`colmi_r02_client`, Gadgetbridge ColmiR0x), independently
- * of core's codec, so a codec mistake shows up as a mismatch instead of cancelling out.
+ * by byte from the published layout (`colmi_r02_client`, Gadgetbridge ColmiR0x, PulseLoopiOS),
+ * independently of core's codec, so a codec mistake shows up as a mismatch instead of cancelling
+ * out.
  *
  * Packets: 16 bytes, byte 0 command, byte 15 = `sum(bytes 0..14) & 0xFF`. One packet per
  * notification. Days are in the ring's wall clock, which [set-time][CMD_SET_TIME] moves; its
@@ -17,11 +18,14 @@ import java.time.ZoneOffset
  *
  * @param heartRate per day, readings every 5 minutes from midnight (index = slot, 0 = none).
  * @param steps per day, steps by quarter hour (0..95).
+ * @param hrv per day, HRV in ms every 30 minutes from midnight (index = slot 0..47, 0 = none).
+ *   Put `0x39` in [silentCommands] for older firmware, which never answers it.
  */
 class FakeColmiRing(
     private var today: LocalDate,
     private val heartRate: Map<LocalDate, IntArray> = emptyMap(),
     private val steps: Map<LocalDate, Map<Int, Int>> = emptyMap(),
+    private val hrv: Map<LocalDate, IntArray> = emptyMap(),
     private val batteryLevel: Int = 80,
     private val charging: Boolean = false,
 ) {
@@ -46,20 +50,25 @@ class FakeColmiRing(
      */
     val silentCommands: MutableSet<Int> = mutableSetOf()
 
-    private var corruptHeartRateSub: Int? = null
-    private var corruptStepsIndex: Int? = null
+    // Command -> sub-type or index of the packet its next answer damages.
+    private val corruptNext = mutableMapOf<Int, Int>()
 
     /**
      * The next heart-rate log answer sends sub-type [sub] with a wrong checksum, as a packet
      * damaged on air would arrive; later answers are intact again.
      */
     fun corruptNextHeartRatePacket(sub: Int) {
-        corruptHeartRateSub = sub
+        corruptNext[CMD_HEART_RATE_LOG] = sub
     }
 
     /** The next steps log answer sends packet [index] with a wrong checksum; later answers are intact. */
     fun corruptNextStepsPacket(index: Int) {
-        corruptStepsIndex = index
+        corruptNext[CMD_STEPS_LOG] = index
+    }
+
+    /** The next HRV log answer sends sub-index [sub] with a wrong checksum; later answers are intact. */
+    fun corruptNextHrvPacket(sub: Int) {
+        corruptNext[CMD_HRV_LOG] = sub
     }
 
     private fun receive(bytes: ByteArray) {
@@ -73,6 +82,7 @@ class FakeColmiRing(
             CMD_BATTERY -> send(CMD_BATTERY, batteryLevel, if (charging) 1 else 0)
             CMD_HEART_RATE_LOG -> heartRateLog(bytes)
             CMD_STEPS_LOG -> stepsLog(bytes)
+            CMD_HRV_LOG -> hrvLog(bytes)
         }
     }
 
@@ -86,10 +96,10 @@ class FakeColmiRing(
     }
 
     private fun heartRateLog(p: ByteArray) {
-        val ts = (0 until 4).fold(0L) { acc, i -> acc or ((p[1 + i].toLong() and 0xFF) shl (8 * i)) }
+        val ts = u32le(p)
         val day = LocalDateTime.ofEpochSecond(ts, 0, ZoneOffset.UTC).toLocalDate()
         val readings = heartRate[day] ?: return send(CMD_HEART_RATE_LOG, 0xFF)
-        val corrupt = corruptHeartRateSub.also { corruptHeartRateSub = null }
+        val corrupt = corruptNext.remove(CMD_HEART_RATE_LOG)
         // 288 slots: 9 in sub-type 1 and 13 in each later one, so 24 packets with the header.
         val dataPackets = 1 + (288 - 9 + 12) / 13
         send(CMD_HEART_RATE_LOG, 0, dataPackets + 1, 5)
@@ -119,7 +129,7 @@ class FakeColmiRing(
         val day = today.minusDays((p[1].toInt() and 0xFF).toLong())
         val quarters = steps[day]?.toSortedMap()
         if (quarters.isNullOrEmpty()) return send(CMD_STEPS_LOG, 0xFF)
-        val corrupt = corruptStepsIndex.also { corruptStepsIndex = null }
+        val corrupt = corruptNext.remove(CMD_STEPS_LOG)
         send(CMD_STEPS_LOG, 0xF0, 0x05, 0x01)
         quarters.entries.forEachIndexed { i, (quarter, n) ->
             val calories = n / 20
@@ -142,6 +152,26 @@ class FakeColmiRing(
             )
         }
     }
+
+    // PulseLoopiOS / Gadgetbridge layout: header, then 12 readings from byte 3 of sub-index 1 and 13
+    // from byte 2 of each of 2..4.
+    private fun hrvLog(p: ByteArray) {
+        val readings = hrv[today.minusDays(u32le(p))] ?: return send(CMD_HRV_LOG, 0xFF)
+        val corrupt = corruptNext.remove(CMD_HRV_LOG)
+        send(CMD_HRV_LOG, 0, 5)
+        // Byte 2 of sub-index 1 is undocumented; sent as 0.
+        send(CMD_HRV_LOG, 1, 0, *IntArray(12) { readings.getOrElse(it) { 0 } }, corrupt = corrupt == 1)
+        for (sub in 2..4) {
+            val first = 12 + (sub - 2) * 13
+            send(CMD_HRV_LOG, sub, *IntArray(13) { readings.getOrElse(first + it) { 0 } }, corrupt = corrupt == sub)
+        }
+    }
+
+    private fun u32le(p: ByteArray): Long =
+        (0 until 4).fold(0L) { acc, i ->
+            acc or
+                ((p[1 + i].toLong() and 0xFF) shl (8 * i))
+        }
 
     private fun send(
         command: Int,
@@ -167,5 +197,6 @@ class FakeColmiRing(
         const val CMD_BATTERY: Int = 0x03
         const val CMD_HEART_RATE_LOG: Int = 0x15
         const val CMD_STEPS_LOG: Int = 0x43
+        const val CMD_HRV_LOG: Int = 0x39
     }
 }

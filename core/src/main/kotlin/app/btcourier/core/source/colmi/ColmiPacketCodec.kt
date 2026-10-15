@@ -35,9 +35,13 @@ object ColmiPacketCodec {
     const val CMD_BATTERY: Int = 0x03
     const val CMD_HEART_RATE_LOG: Int = 0x15
     const val CMD_STEPS_LOG: Int = 0x43
+    const val CMD_HRV_LOG: Int = 0x39
 
     /** Byte 1 of a log answer when the ring has nothing for the requested day. */
     const val NO_DATA: Int = 0xFF
+
+    /** Oldest day [hrvLogRequest] asks for, in days before the ring's today. */
+    const val HRV_MAX_DAYS_AGO: Int = 6
 
     /** Language byte of set-time; 1 is English, 0 Chinese. */
     private const val LANGUAGE_ENGLISH = 1
@@ -94,8 +98,7 @@ object ColmiPacketCodec {
     /** `0x15`: the heart-rate log of the day starting at [dayStartRingEpochSeconds], 4 bytes LE. */
     fun heartRateLogRequest(dayStartRingEpochSeconds: Long): ByteArray {
         require(dayStartRingEpochSeconds in 0..0xFFFF_FFFFL) { "timestamp must fit 4 bytes" }
-        val t = dayStartRingEpochSeconds
-        return packet(CMD_HEART_RATE_LOG, ByteArray(4) { (t shr (8 * it)).toByte() })
+        return packet(CMD_HEART_RATE_LOG, u32le(dayStartRingEpochSeconds))
     }
 
     /** `0x43`: the steps log of the day [dayOffset] days before the ring's today (0 = today). */
@@ -103,6 +106,18 @@ object ColmiPacketCodec {
         require(dayOffset in 0..0xFF) { "day offset must be one byte, got $dayOffset" }
         return packet(CMD_STEPS_LOG, byteArrayOf(dayOffset.toByte()) + STEPS_REQUEST_TAIL)
     }
+
+    /**
+     * `0x39`: the HRV log of the day [daysAgo] days before the ring's today, 4 bytes LE
+     * (PulseLoopiOS `ColmiEncoder.syncHRV`, Gadgetbridge `fetchHistoryHRV`). Both ask for 0..6
+     * only, one day less than the other logs.
+     */
+    fun hrvLogRequest(daysAgo: Int): ByteArray {
+        require(daysAgo in 0..HRV_MAX_DAYS_AGO) { "the HRV log reaches $HRV_MAX_DAYS_AGO days back, got $daysAgo" }
+        return packet(CMD_HRV_LOG, u32le(daysAgo.toLong()))
+    }
+
+    private fun u32le(v: Long): ByteArray = ByteArray(4) { (v shr (8 * it)).toByte() }
 
     /** `0x03` answer: byte 1 the level in percent, byte 2 non-zero while charging. */
     fun parseBattery(packet: ByteArray): Battery {
@@ -262,5 +277,52 @@ class StepsLogAssembler : ColmiAssembler<List<StepsSample>> {
 
     private companion object {
         const val HEADER = 0xF0
+    }
+}
+
+/**
+ * The `0x39` answer (PulseLoopiOS `ColmiDecoder.decodeHRVHistory`, Gadgetbridge
+ * `historicalHRV`; the same framing as the stress log), by byte 1 (sub-index):
+ * - `0xFF`: no data for the day; the only packet.
+ * - `0`: header; byte 2 the packet count. Not relied on: see below.
+ * - `1`: byte 2 undocumented, bytes 3..14 the first 12 readings.
+ * - `2..4`: 13 readings each in bytes 2..14.
+ *
+ * Readings are HRV in ms, one per 30 minutes from the start of the requested day in the ring's
+ * wall clock; 0 means no reading in that slot. The day's 48 slots take exactly sub-indexes 1..4
+ * (12 + 3 * 13 = 51), and both references take sub-index 4 as the last packet, so the log is
+ * complete once each of 1..4 has arrived, whatever the header announces; as for
+ * [HeartRateLogAssembler], a gap keeps it waiting until the request times out. Readings are placed
+ * by sub-index, so a duplicate cannot shift the day; other sub-indexes are ignored. The result is
+ * the 48 slots, or empty for a day without data.
+ */
+class HrvLogAssembler : ColmiAssembler<List<Int>> {
+    /** Whether any packet of the answer arrived, which tells a ring that never answers `0x39` apart. */
+    var started: Boolean = false
+        private set
+
+    private val values = IntArray(SLOTS)
+    private val received = mutableSetOf<Int>()
+
+    override fun feed(packet: ByteArray): List<Int>? {
+        started = true
+        val sub = ColmiPacketCodec.u8(packet, 1)
+        if (sub == ColmiPacketCodec.NO_DATA) return emptyList()
+        if (sub !in 1..LAST_SUB) return null
+        val (first, from) = if (sub == 1) 0 to 3 else (FIRST_PACKET_READINGS + (sub - 2) * READINGS_PER_PACKET) to 2
+        for (i in from until ColmiPacketCodec.SIZE - 1) {
+            val slot = first + i - from
+            if (slot < SLOTS) values[slot] = ColmiPacketCodec.u8(packet, i)
+        }
+        received += sub
+        return if (received.size == LAST_SUB) values.toList() else null
+    }
+
+    companion object {
+        const val SLOT_MINUTES: Int = 30
+        const val SLOTS: Int = 24 * 60 / SLOT_MINUTES
+        private const val LAST_SUB = 4
+        private const val FIRST_PACKET_READINGS = 12
+        private const val READINGS_PER_PACKET = 13
     }
 }

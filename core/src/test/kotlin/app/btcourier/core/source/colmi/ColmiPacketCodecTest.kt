@@ -11,9 +11,9 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 
 /**
- * Byte layouts from `colmi_r02_client` (tahnok) and Gadgetbridge ColmiR0x: 16-byte packets,
- * byte 0 command, bytes 1..14 payload, byte 15 = sum(bytes 0..14) & 0xFF. Checksums below are
- * worked by hand.
+ * Byte layouts from `colmi_r02_client` (tahnok), Gadgetbridge ColmiR0x and PulseLoopiOS: 16-byte
+ * packets, byte 0 command, bytes 1..14 payload, byte 15 = sum(bytes 0..14) & 0xFF. Checksums
+ * below are worked by hand.
  */
 class ColmiPacketCodecTest {
     private fun hex(s: String): ByteArray =
@@ -56,6 +56,66 @@ class ColmiPacketCodecTest {
             hex("43 02 0F 00 5F 01 00 00 00 00 00 00 00 00 00 B4"),
             ColmiPacketCodec.stepsLogRequest(2),
         )
+        // HRV log: days ago as 4-byte LE, 0..6 only.
+        assertArrayEquals(
+            hex("39 03 00 00 00 00 00 00 00 00 00 00 00 00 00 3C"),
+            ColmiPacketCodec.hrvLogRequest(3),
+        )
+        assertArrayEquals(
+            hex("39 06 00 00 00 00 00 00 00 00 00 00 00 00 00 3F"),
+            ColmiPacketCodec.hrvLogRequest(6),
+        )
+        assertThrows<IllegalArgumentException> { ColmiPacketCodec.hrvLogRequest(7) }
+        assertThrows<IllegalArgumentException> { ColmiPacketCodec.hrvLogRequest(-1) }
+    }
+
+    @Test
+    fun `HRV log takes 12 readings from byte 3 of sub-index 1 and 13 from byte 2 of 2 to 4, 48 half hours`() {
+        val a = HrvLogAssembler()
+        assertFalse(a.started)
+        // Header: sub-index 0, byte 2 the packet count.
+        assertNull(a.feed(answer(0x39, 0, 5)))
+        assertTrue(a.started)
+        // Byte 2 of sub-index 1 is not a reading; slots 0..11 follow.
+        assertNull(a.feed(answer(0x39, 1, 0x7F, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 41)))
+        // Slots 12..24, 25..37, then 38..50 of which 48..50 are past the day.
+        assertNull(a.feed(answer(0x39, 2, 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
+        assertNull(a.feed(answer(0x39, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 43)))
+        val log = a.feed(answer(0x39, 4, 44, 0, 0, 0, 0, 0, 0, 0, 0, 45, 99, 99, 99))
+
+        val expected =
+            MutableList(48) { 0 }.apply {
+                this[0] = 40
+                this[11] = 41
+                this[12] = 42
+                this[37] = 43
+                this[38] = 44
+                this[47] = 45
+            }
+        assertEquals(expected, log)
+    }
+
+    @Test
+    fun `HRV log waits for every sub-index 1 to 4 and ignores repeats and others`() {
+        val a = HrvLogAssembler()
+        val sub1 = answer(0x39, 1, 0, 50)
+        assertNull(a.feed(sub1))
+        assertNull(a.feed(answer(0x39, 2, 51)))
+        // Sub-index 3 is lost: the last one alone does not complete the day.
+        assertNull(a.feed(answer(0x39, 4, 53)))
+        assertNull(a.feed(sub1))
+        assertNull(a.feed(answer(0x39, 5, 99)))
+        val log = a.feed(answer(0x39, 3, 52))
+
+        val expected =
+            MutableList(48) { 0 }.apply {
+                this[0] = 50
+                this[12] = 51
+                this[25] = 52
+                this[38] = 53
+            }
+        assertEquals(expected, log)
+        assertEquals(emptyList<Int>(), HrvLogAssembler().feed(answer(0x39, 0xFF)))
     }
 
     @Test
