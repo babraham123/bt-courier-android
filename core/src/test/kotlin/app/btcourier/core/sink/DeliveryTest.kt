@@ -10,7 +10,6 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
@@ -58,12 +57,12 @@ class DeliveryTest {
 
     private suspend fun pendingIds(sinkId: String) = store.pending(sinkId).map { it.id }
 
-    /** How long [sink] must still wait, asserting the round reported Retry and sent nothing. */
+    /** How long [sink] must still wait, asserting the round reported Deferred and sent nothing. */
     private suspend fun Delivery.waitLeft(sink: Sink, transport: Recording): Long {
         val before = transport.sent.size
-        val result = assertInstanceOf(UploadResult.Retry::class.java, deliverPending(sink))
+        val result = assertInstanceOf(DeliveryResult.Deferred::class.java, deliverPending(sink))
         assertEquals(before, transport.sent.size, "a waiting sink must not be contacted")
-        return checkNotNull(result.retryAfterMs)
+        return result.dueAtMs - h.now
     }
 
     @Test
@@ -75,7 +74,7 @@ class DeliveryTest {
 
         for (id in listOf("one", "two")) {
             val local = Recording(LocalDirectoryUploadTransport(dir.resolve(id))::upload)
-            assertNull(delivery.deliverPending(sink(id, local)))
+            assertEquals(DeliveryResult.Delivered, delivery.deliverPending(sink(id, local)))
             assertEquals(order, local.sent)
         }
 
@@ -96,9 +95,9 @@ class DeliveryTest {
         val ok = scripted(UploadResult.Acked)
         val delivery = delivery()
 
-        assertEquals(UploadResult.Retry("offline"), delivery.deliverPending(sink("retrying", retrying)))
-        assertEquals(UploadResult.Failed("HTTP 403"), delivery.deliverPending(sink("refused", refused)))
-        assertNull(delivery.deliverPending(sink("ok", ok)))
+        assertEquals(DeliveryResult.Stopped(UploadResult.Retry("offline")), delivery.deliverPending(sink("retrying", retrying)))
+        assertEquals(DeliveryResult.Stopped(UploadResult.Failed("HTTP 403")), delivery.deliverPending(sink("refused", refused)))
+        assertEquals(DeliveryResult.Delivered, delivery.deliverPending(sink("ok", ok)))
 
         assertEquals(order.take(2), retrying.sent)
         assertEquals(order.drop(1), pendingIds("retrying"))
@@ -116,13 +115,13 @@ class DeliveryTest {
 
         h.now += 119_999
         val rebuilt = scripted(UploadResult.Acked)
-        val waiting = assertInstanceOf(UploadResult.Retry::class.java, delivery.deliverPending(sink("throttled", rebuilt)))
-        assertEquals(1, waiting.retryAfterMs)
+        val waiting = assertInstanceOf(DeliveryResult.Deferred::class.java, delivery.deliverPending(sink("throttled", rebuilt)))
+        assertEquals(DeliveryResult.Deferred("HTTP 429", h.now + 1), waiting)
         assertEquals(emptyList<String>(), rebuilt.sent, "a rebuilt sink with the same id keeps the schedule")
-        assertNull(delivery.deliverPending(sink("other", scripted(UploadResult.Acked))), "another sink is not held back")
+        assertEquals(DeliveryResult.Delivered, delivery.deliverPending(sink("other", scripted(UploadResult.Acked))), "another sink is not held back")
 
         h.now += 1
-        assertNull(delivery.deliverPending(sink("throttled", rebuilt)))
+        assertEquals(DeliveryResult.Delivered, delivery.deliverPending(sink("throttled", rebuilt)))
         assertEquals(2, rebuilt.sent.size)
     }
 
@@ -144,7 +143,7 @@ class DeliveryTest {
         val a = sink("a", down)
 
         val waits = (1..10).map {
-            assertInstanceOf(UploadResult.Retry::class.java, delivery.deliverPending(a))
+            assertInstanceOf(DeliveryResult.Stopped::class.java, delivery.deliverPending(a))
             val wait = delivery.waitLeft(a, down)
             h.now += wait - 1
             assertEquals(1, delivery.waitLeft(a, down))
@@ -167,7 +166,7 @@ class DeliveryTest {
             h.now += delivery.waitLeft(a, flaky)
         }
 
-        assertEquals(UploadResult.Retry("x"), delivery.deliverPending(a), "first batch acked, second retried")
+        assertEquals(DeliveryResult.Stopped(UploadResult.Retry("x")), delivery.deliverPending(a), "first batch acked, second retried")
         assertEquals(30_000, delivery.waitLeft(a, flaky))
     }
 
@@ -180,8 +179,8 @@ class DeliveryTest {
         delivery.deliverPending(a)
         h.now += delivery.waitLeft(a, script)
 
-        assertEquals(UploadResult.Failed("HTTP 401"), delivery.deliverPending(a))
-        assertNull(delivery.deliverPending(a), "after a config fix the sink is tried at once")
+        assertEquals(DeliveryResult.Stopped(UploadResult.Failed("HTTP 401")), delivery.deliverPending(a))
+        assertEquals(DeliveryResult.Delivered, delivery.deliverPending(a), "after a config fix the sink is tried at once")
     }
 
     @Test
@@ -200,7 +199,7 @@ class DeliveryTest {
         delivery.forget("edited")
 
         val fixed = scripted(UploadResult.Retry("still down"))
-        assertEquals(UploadResult.Retry("still down"), delivery.deliverPending(sink("edited", fixed)), "contacted without waiting")
+        assertEquals(DeliveryResult.Stopped(UploadResult.Retry("still down")), delivery.deliverPending(sink("edited", fixed)), "contacted without waiting")
         assertEquals(30_000, delivery.waitLeft(sink("edited", fixed), fixed), "the streak starts over")
         assertEquals(600_000, delivery.waitLeft(sink("other", otherDown), otherDown))
     }
@@ -213,6 +212,6 @@ class DeliveryTest {
         delivery.deliverPending(sink("a", scripted(UploadResult.Retry("x"))))
         store.ack(batch.id, "a")
 
-        assertNull(delivery.deliverPending(sink("a", scripted(UploadResult.Acked))))
+        assertEquals(DeliveryResult.Delivered, delivery.deliverPending(sink("a", scripted(UploadResult.Acked))))
     }
 }

@@ -3,6 +3,7 @@ package app.btcourier.fakes
 import app.btcourier.core.sink.Batch
 import app.btcourier.core.sink.CompositeSink
 import app.btcourier.core.sink.Delivery
+import app.btcourier.core.sink.DeliveryResult
 import app.btcourier.core.sink.Jsonl
 import app.btcourier.core.sink.LocalDirectoryUploadTransport
 import app.btcourier.core.sink.UploadResult
@@ -18,7 +19,6 @@ import app.btcourier.fakes.ScriptedPeripheral.Fault
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -111,7 +111,7 @@ class EndToEndSyncTest {
         val report = SyncRunner("wican", source, store).run()
         // Age 0 seals the open file too, so every stored row is deliverable after each sync.
         val sealed = store.seal(SealPolicy(maxBatchAgeMs = 0), 0)
-        assertNull(Delivery(store).deliverPending(sink), "everything sealed was delivered")
+        assertEquals(DeliveryResult.Delivered, Delivery(store).deliverPending(sink), "everything sealed was delivered")
         return Synced(report, sealed, peripheral)
     }
 

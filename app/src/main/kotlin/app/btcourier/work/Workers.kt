@@ -27,13 +27,15 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 }
 
 /**
- * Runs [UploadJob]. Expedited by default; a backlog over [UploadJob.FOREGROUND_THRESHOLD_BYTES]
+ * Runs [UploadWork]. Expedited by default; a backlog over [UploadJob.FOREGROUND_THRESHOLD_BYTES]
  * promotes it to a `dataSync` foreground service so a long upload is not stopped halfway.
  */
 class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val settings = AppGraph.settings.current()
-        val outcome = AppGraph.uploadJob.run(runAttemptCount, settings.sealPolicy) { tryForeground(Notifications.uploadForeground(applicationContext)) }
-        return if (outcome == UploadOutcome.Retry) Result.retry() else Result.success()
+        val verdict = AppGraph.uploadWork.run(runAttemptCount, settings.sealPolicy, settings.uploadOverCellular) {
+            tryForeground(Notifications.uploadForeground(applicationContext))
+        }
+        return if (verdict == WorkVerdict.RETRY) Result.retry() else Result.success()
     }
 }

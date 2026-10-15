@@ -42,6 +42,25 @@ class SyncWork(private val job: SyncJob, private val fanOut: SyncFanOut, private
 }
 
 /**
+ * The rules of one [UploadWorker] run, kept out of the worker like [SyncWork]: a round that
+ * ended [UploadOutcome.Retry] runs again on WorkManager's back-off; one that ended
+ * [UploadOutcome.Deferred] enqueues the follow-up for when the waiting sink is due
+ * ([WorkControl.uploadAt]) and ends this work, so the attempt budget is spent on attempts only.
+ */
+class UploadWork(private val job: UploadJob, private val work: WorkControl) {
+    /** @param attempt WorkManager's `runAttemptCount`; the rest as [UploadJob.run]. */
+    suspend fun run(attempt: Int, sealPolicy: SealPolicy, uploadOverCellular: Boolean, onLargeBacklog: suspend () -> Unit = {}): WorkVerdict =
+        when (val outcome = job.run(attempt, sealPolicy, onLargeBacklog)) {
+            UploadOutcome.Retry -> WorkVerdict.RETRY
+            is UploadOutcome.Deferred -> {
+                work.uploadAt(outcome.delayMs, uploadOverCellular)
+                WorkVerdict.SUCCESS
+            }
+            else -> WorkVerdict.SUCCESS
+        }
+}
+
+/**
  * Re-registers what the system may have dropped, at app start and after a reboot: the periodic
  * sync per the settings toggle, and presence observation of every paired device. Safe to repeat:
  * the periodic sync is registered KEEP, and observing a device already observed keeps observing it.

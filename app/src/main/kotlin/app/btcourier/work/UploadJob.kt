@@ -1,6 +1,7 @@
 package app.btcourier.work
 
 import app.btcourier.core.sink.Delivery
+import app.btcourier.core.sink.DeliveryResult
 import app.btcourier.core.sink.Sink
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.store.SealPolicy
@@ -17,12 +18,14 @@ import java.io.Closeable
  * round seals the store first: otherwise rows whose batch only the age rule closes would wait
  * for the next sync that reaches the device.
  *
- * Retries are bounded: a round that ends in [UploadResult.Retry] asks for another attempt until
- * [maxAttempts] rounds have run, then gives up ([UploadOutcome.GaveUp]); [UploadResult.Failed]
- * is never retried. Either way the batches stay in the store and the next upload (after the next
- * sync that seals new batches, or a manual one) tries them again. Within a round, [delivery]
- * decides whether a sink is due; one still waiting (its server's `Retry-After`, or back-off) is
- * not contacted and counts as a Retry.
+ * Retries are bounded: a round in which a sink answered [UploadResult.Retry] asks for another
+ * attempt until [maxAttempts] rounds have run, then gives up ([UploadOutcome.GaveUp]);
+ * [UploadResult.Failed] is never retried. Either way the batches stay in the store and the next
+ * upload (after the next sync that seals new batches, or a manual one) tries them again. Within a
+ * round, [delivery] decides whether a sink is due; one still waiting (its server's `Retry-After`,
+ * or back-off) is not contacted. Such a round is no attempt: when nothing else asks for a retry it
+ * ends [UploadOutcome.Deferred], asking for one follow-up when the earliest waiting sink is due, so
+ * a long `Retry-After` neither burns the attempt budget nor strands the backlog until the next sync.
  *
  * @param sinks builds the configured sinks; may throw [IllegalArgumentException] for a bad URL.
  *   Transports that are [Closeable] are closed when the round ends.
@@ -70,23 +73,28 @@ class UploadJob(
         }
         if (store.counters().bytesStored >= foregroundThresholdBytes) onLargeBacklog()
 
+        val now = clock()
         val results = configured.map { sink -> sink.id to delivery.deliverPending(sink) }
-        val stops = results.mapNotNull { (id, result) -> result?.let { id to it } }
-        val retries = stops.filter { it.second is UploadResult.Retry }
-        val error = stops.takeIf { it.isNotEmpty() }?.joinToString("; ") { (id, result) -> "$id: ${reason(result)}" }
+        val stops = results.filter { (_, result) -> result != DeliveryResult.Delivered }
+        val attempted = stops.any { (_, result) -> result is DeliveryResult.Stopped && result.result is UploadResult.Retry }
+        val dueAtMs = stops.mapNotNull { (_, result) -> (result as? DeliveryResult.Deferred)?.dueAtMs }.minOrNull()
+        val error = stops.takeIf { it.isNotEmpty() }?.joinToString("; ") { (id, result) -> "$id: ${reason(result, now)}" }
         val (kind, outcome) = when {
             stops.isEmpty() -> UploadResultKind.DELIVERED to UploadOutcome.Delivered
-            retries.isEmpty() -> UploadResultKind.FAILED to UploadOutcome.Failed
-            attempt + 1 >= maxAttempts -> UploadResultKind.GAVE_UP to UploadOutcome.GaveUp
-            else -> UploadResultKind.RETRYING to UploadOutcome.Retry
+            attempted && attempt + 1 < maxAttempts -> UploadResultKind.RETRYING to UploadOutcome.Retry
+            dueAtMs != null -> UploadResultKind.RETRYING to UploadOutcome.Deferred((dueAtMs - now).coerceAtLeast(0))
+            attempted -> UploadResultKind.GAVE_UP to UploadOutcome.GaveUp
+            else -> UploadResultKind.FAILED to UploadOutcome.Failed
         }
         val message = if (kind == UploadResultKind.GAVE_UP) "gave up after $maxAttempts attempts: $error" else error
-        val now = clock()
         val bySink = results.associate { (id, result) ->
             val sinkKind = when (result) {
-                null, UploadResult.Acked -> UploadResultKind.DELIVERED
-                is UploadResult.Failed -> UploadResultKind.FAILED
-                is UploadResult.Retry -> if (kind == UploadResultKind.GAVE_UP) UploadResultKind.GAVE_UP else UploadResultKind.RETRYING
+                DeliveryResult.Delivered -> UploadResultKind.DELIVERED
+                is DeliveryResult.Deferred -> UploadResultKind.RETRYING
+                is DeliveryResult.Stopped -> when (result.result) {
+                    is UploadResult.Failed -> UploadResultKind.FAILED
+                    else -> if (kind == UploadResultKind.GAVE_UP) UploadResultKind.GAVE_UP else UploadResultKind.RETRYING
+                }
             }
             id to SinkUpload(now, sinkKind)
         }
@@ -94,10 +102,14 @@ class UploadJob(
         return outcome
     }
 
-    private fun reason(result: UploadResult): String = when (result) {
-        is UploadResult.Retry -> result.reason
-        is UploadResult.Failed -> result.reason
-        UploadResult.Acked -> "acked"
+    private fun reason(result: DeliveryResult, now: Long): String = when (result) {
+        DeliveryResult.Delivered -> "delivered"
+        is DeliveryResult.Deferred -> "${result.reason} (next attempt in ${(result.dueAtMs - now + 999) / 1000} s)"
+        is DeliveryResult.Stopped -> when (val r = result.result) {
+            is UploadResult.Retry -> r.reason
+            is UploadResult.Failed -> r.reason
+            UploadResult.Acked -> "acked"
+        }
     }
 
     /** @param bySink replaces the per-sink outcomes; null keeps the previous ones. */
@@ -140,6 +152,13 @@ sealed interface UploadOutcome {
 
     /** A sink answered a transient failure and attempts remain. */
     data object Retry : UploadOutcome
+
+    /**
+     * No sink was attempted and at least one is waiting out its schedule: nothing to retry now,
+     * but a follow-up upload is due in [delayMs]. Also the end of a run whose attempts are used
+     * up while a sink still waits, since its due time is the better guess than giving up.
+     */
+    data class Deferred(val delayMs: Long) : UploadOutcome
 
     data object GaveUp : UploadOutcome
 

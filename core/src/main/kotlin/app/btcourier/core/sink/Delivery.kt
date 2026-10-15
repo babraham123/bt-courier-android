@@ -13,8 +13,9 @@ import java.util.concurrent.ConcurrentHashMap
  * attempt: [UploadResult.Retry.retryAfterMs] from now when the backend gave one (capped at
  * [MAX_RETRY_AFTER_MS]), else an exponential back-off over the sink's consecutive retries,
  * [INITIAL_BACKOFF_MS] doubling up to [MAX_BACKOFF_MS]. Until that time [deliverPending] sends
- * nothing to the sink and reports a Retry, so a backend is never hit before it asked to be.
- * An Acked or [UploadResult.Failed] result clears the schedule.
+ * nothing to the sink and reports [DeliveryResult.Deferred], so a backend is never hit before it
+ * asked to be, and the caller can tell a round that waited from one that failed. An Acked or
+ * [UploadResult.Failed] result clears the schedule.
  *
  * Retry state is keyed by [Sink.id] and lives in this instance, not in the sinks, so callers may
  * rebuild sinks every round (fresh transports, fresh credentials) without losing it. Keep one
@@ -28,25 +29,18 @@ class Delivery(private val store: Store, private val clock: () -> Long = System:
 
     private val backoffs = ConcurrentHashMap<String, Backoff>()
 
-    /**
-     * One round for [sink].
-     *
-     * @return null if nothing is pending for it any more, else the result that stopped delivery.
-     *   A sink still waiting out its schedule gets a [UploadResult.Retry] naming the last reason,
-     *   with [UploadResult.Retry.retryAfterMs] set to the time left, and nothing is sent.
-     */
-    suspend fun deliverPending(sink: Sink): UploadResult? {
-        var batch = store.pending(sink.id, limit = 1).firstOrNull() ?: return null
+    /** One round for [sink]; see [DeliveryResult]. */
+    suspend fun deliverPending(sink: Sink): DeliveryResult {
+        var batch = store.pending(sink.id, limit = 1).firstOrNull() ?: return DeliveryResult.Delivered
         backoffs[sink.id]?.let { waiting ->
-            val left = waiting.nextAttemptAtMs - clock()
-            if (left > 0) return UploadResult.Retry("${waiting.reason} (next attempt in ${(left + 999) / 1000} s)", left)
+            if (waiting.nextAttemptAtMs > clock()) return DeliveryResult.Deferred(waiting.reason, waiting.nextAttemptAtMs)
         }
         while (true) {
             val result = sink.upload(batch)
             record(sink.id, result)
-            if (result != UploadResult.Acked) return result
+            if (result != UploadResult.Acked) return DeliveryResult.Stopped(result)
             store.ack(batch.id, sink.id)
-            batch = store.pending(sink.id, limit = 1).firstOrNull() ?: return null
+            batch = store.pending(sink.id, limit = 1).firstOrNull() ?: return DeliveryResult.Delivered
         }
     }
 
@@ -91,4 +85,20 @@ class Delivery(private val store: Store, private val clock: () -> Long = System:
         fun backoffMs(streak: Int): Long =
             (INITIAL_BACKOFF_MS shl (streak - 1).coerceIn(0, MAX_DOUBLINGS)).coerceAtMost(MAX_BACKOFF_MS)
     }
+}
+
+/** How a [Delivery.deliverPending] round for one sink ended. */
+sealed interface DeliveryResult {
+    /** Nothing is pending for the sink any more. */
+    data object Delivered : DeliveryResult
+
+    /** A batch was sent and the sink answered [result] (Retry or Failed); it and later batches stay pending. */
+    data class Stopped(val result: UploadResult) : DeliveryResult
+
+    /**
+     * Nothing was sent: the sink is waiting out its schedule after [reason] and is due at
+     * [dueAtMs] (the delivery's clock). Not an attempt, so a caller counting attempts must not
+     * count it, and should come back at [dueAtMs] rather than on its own back-off.
+     */
+    data class Deferred(val reason: String, val dueAtMs: Long) : DeliveryResult
 }

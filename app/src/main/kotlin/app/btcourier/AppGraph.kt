@@ -35,6 +35,7 @@ import app.btcourier.work.SyncFanOut
 import app.btcourier.work.SyncJob
 import app.btcourier.work.SyncWork
 import app.btcourier.work.UploadJob
+import app.btcourier.work.UploadWork
 import app.btcourier.work.WorkControl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -136,6 +137,8 @@ object AppGraph {
     val uploadJob: UploadJob by lazy {
         UploadJob(store, sinks = { buildSinks(settings.current(), secrets, sinkEnvironment) }, status = status, log = log)
     }
+
+    val uploadWork: UploadWork by lazy { UploadWork(uploadJob, work) }
 
     fun init(context: Context, links: LinkFactory, associations: Associations) {
         app = context.applicationContext

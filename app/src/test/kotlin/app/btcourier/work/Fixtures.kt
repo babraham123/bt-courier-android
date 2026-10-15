@@ -29,6 +29,7 @@ fun isMarker(line: String) = line.startsWith("""{"_file":""")
 
 /** Minutes, for advancing a test clock past [SealPolicy.maxBatchAgeMs]. */
 const val MINUTE = 60_000L
+const val HOUR = 60 * MINUTE
 
 /** The app's store as the app builds it: [DefaultStore.open] on a directory. */
 fun openStore(dir: Path, sinks: Set<String>, clock: () -> Long = { NOW }): DefaultStore =

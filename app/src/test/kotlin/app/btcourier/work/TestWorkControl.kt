@@ -5,6 +5,9 @@ class RecordingWorkControl : WorkControl {
     /** Addresses passed to [syncNow], in order. */
     val syncs = mutableListOf<String>()
     val uploads = mutableListOf<Pair<Boolean, Boolean>>()
+
+    /** `delayMs to allowCellular` passed to [uploadAt], in order. */
+    val deferredUploads = mutableListOf<Pair<Long, Boolean>>()
     val periodic = mutableListOf<Boolean>()
 
     /** `cancel`, `upload` and `forget <sink id>` in call order, to check what precedes what. */
@@ -20,6 +23,11 @@ class RecordingWorkControl : WorkControl {
     override fun uploadNow(allowCellular: Boolean, replace: Boolean) {
         uploads += allowCellular to replace
         calls += "upload"
+    }
+
+    override fun uploadAt(delayMs: Long, allowCellular: Boolean) {
+        deferredUploads += delayMs to allowCellular
+        calls += "upload-at"
     }
 
     override fun cancelUpload() {
