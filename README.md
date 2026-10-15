@@ -19,7 +19,7 @@ Requires JDK 21 and the Android SDK (platform 36) configured via `sdk.dir` in `l
 ./gradlew :core:test :fakes:test :app:testDebugUnitTest ktlintCheck :app:lintDebug :app:lintRelease :app:assembleDebug :app:assembleRelease
 ```
 
-The debug APK outputs to `app/build/outputs/apk/debug/`. See `CONTRIBUTING.md` for code style, tests, and the no-personal-data rule, and `SECURITY.md` to report vulnerabilities.
+The debug APK outputs to `app/build/outputs/apk/debug/`, the unsigned, R8-shrunk, reproducible release APK to `app/build/outputs/apk/release/`. See `CONTRIBUTING.md` for code style, tests, and the no-personal-data rule, and `SECURITY.md` to report vulnerabilities.
 
 ## Attribution
 
