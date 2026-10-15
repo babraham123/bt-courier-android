@@ -49,19 +49,43 @@ object ColmiRingGatt {
             wantsBond = false,
         )
 
-    /** The family's advertised names start with the model, `R02_...`, `R06_...` (unverified on hardware). */
-    val NAME_PATTERN: Regex = Regex("^R0.*")
+    /**
+     * The model, optionally after the brand, then `_` and an id: `R02_...`, `COLMI R07_...`
+     * (PulseLoopiOS's model table, Gadgetbridge's name patterns). R1x rings speak another protocol
+     * and stay out by name. Unverified on hardware.
+     */
+    val NAME_PATTERN: Regex = Regex("^(COLMI )?R0\\d_.*")
 
-    val FILTER = DeviceFilterSpec(ColmiGatt.SERVICE, NAME_PATTERN)
+    /**
+     * Name or service, as PulseLoopiOS matches: `6E40FFF0` is this protocol's own service rather
+     * than a generic UART UUID, so either alone identifies the ring, and a ring that leaves one of
+     * them out of its advertising is still offered.
+     */
+    val FILTER = DeviceFilterSpec(ColmiGatt.SERVICE, NAME_PATTERN, DeviceFilterSpec.Match.NAME_OR_SERVICE)
 }
 
-/** What a companion-device scan must match; kept free of Android types so it can be tested. */
+/**
+ * What a companion-device scan must match; kept free of Android types so it can be tested.
+ *
+ * @property match how the name and service conditions combine. Each kind picks its own: a kind
+ *   whose service UUID other devices share (the WiCAN's FFF0) needs both.
+ */
 data class DeviceFilterSpec(
     val serviceUuid: UUID,
     val namePattern: Regex,
+    val match: Match,
 ) {
+    enum class Match { NAME_AND_SERVICE, NAME_OR_SERVICE }
+
     fun matches(
         advertisedName: String?,
         advertisedServices: Collection<UUID>,
-    ): Boolean = advertisedName != null && namePattern.matches(advertisedName) && serviceUuid in advertisedServices
+    ): Boolean {
+        val name = advertisedName != null && namePattern.matches(advertisedName)
+        val service = serviceUuid in advertisedServices
+        return when (match) {
+            Match.NAME_AND_SERVICE -> name && service
+            Match.NAME_OR_SERVICE -> name || service
+        }
+    }
 }

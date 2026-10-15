@@ -42,7 +42,7 @@ class DeviceSupportTest {
         assertEquals(ColmiRingGatt.PROFILE, ring.profile)
         assertFalse(ring.profile.wantsBond)
         assertTrue(ring.filter.matches("R02_0000", listOf(ColmiGatt.SERVICE)))
-        assertFalse(ring.filter.matches("WiC_0123456789ab", listOf(ColmiGatt.SERVICE)))
+        assertFalse(ring.filter.matches("WiC_0123456789ab", emptyList()))
         assertEquals("colmi:", ring.sourcePrefix)
         assertFalse(ring.syncsOnCarTrigger)
     }

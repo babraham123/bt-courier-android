@@ -34,12 +34,22 @@ class GattProfileTest {
     }
 
     @Test
-    fun `the ring filter needs the ring service and an R0 name`() {
+    fun `the ring filter takes an R0x name with or without the brand, or the ring service alone`() {
         val spec = ColmiRingGatt.FILTER
-        assertTrue(spec.matches("R02_0000", listOf(ringService)))
-        assertTrue(spec.matches("R06_ABCD", listOf(ringService)))
-        assertFalse(spec.matches("WiC_0123456789ab", listOf(ringService)))
-        assertFalse(spec.matches("R02_0000", listOf(WicanGatt.SERVICE)))
-        assertFalse(spec.matches(null, listOf(ringService)))
+        // Name alone, as PulseLoopiOS's model table names the family.
+        assertTrue(spec.matches("R02_0000", emptyList()))
+        assertTrue(spec.matches("R06_ABCD", listOf(WicanGatt.SERVICE)))
+        assertTrue(spec.matches("COLMI R07_1A2B", emptyList()))
+        // Service alone: an unnamed or oddly named ring advertising 6E40FFF0.
+        assertTrue(spec.matches(null, listOf(ringService)))
+        assertTrue(spec.matches("WiC_0123456789ab", listOf(ringService)))
+        // Neither: R1x is another protocol, and the name needs the model digit and the underscore.
+        assertFalse(spec.matches("R10_0000", emptyList()))
+        assertFalse(spec.matches("COLMI R11_0000", emptyList()))
+        assertFalse(spec.matches("R0_0000", emptyList()))
+        assertFalse(spec.matches("R02", emptyList()))
+        assertFalse(spec.matches("XR02_0000", emptyList()))
+        assertFalse(spec.matches("WiC_0123456789ab", listOf(WicanGatt.SERVICE)))
+        assertFalse(spec.matches(null, emptyList()))
     }
 }
