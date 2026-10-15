@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Bouncy Castle's bcpkix (pulled in by sshj) ships an accept-all trust manager in its EST
+         client helpers (JcaJceUtils). Nothing here calls them: sshj verifies SSH host keys, not
+         X.509 chains. The check stays on for the app's own code. -->
+    <issue id="TrustAllX509TrustManager">
+        <ignore path="**/bcpkix-*.jar" />
+    </issue>
+</lint>
