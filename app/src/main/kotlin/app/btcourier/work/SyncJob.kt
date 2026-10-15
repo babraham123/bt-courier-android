@@ -1,41 +1,45 @@
 package app.btcourier.work
 
+import app.btcourier.ble.PairedDevice
+import app.btcourier.ble.PairedDevices
 import app.btcourier.core.store.SealPolicy
 import app.btcourier.core.store.Store
 import app.btcourier.core.sync.StopReason
 import app.btcourier.core.sync.SyncReport
 import app.btcourier.core.sync.SyncRunner
-import app.btcourier.ble.PairedDevice
-import app.btcourier.ble.PairedDevices
 import app.btcourier.core.transport.GattLink
 import app.btcourier.core.wican.WicanLoggerSource
 import app.btcourier.data.DeviceKind
-import app.btcourier.device.SourceOptions
-import app.btcourier.device.support
 import app.btcourier.data.DeviceSync
 import app.btcourier.data.SyncResultKind
 import app.btcourier.data.SyncStatusRepository
 import app.btcourier.data.SyncStopKind
+import app.btcourier.device.SourceOptions
+import app.btcourier.device.support
 import app.btcourier.log.AppLog
 import java.io.IOException
 import java.time.ZoneId
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * One sync of one paired device into the store, independent of WorkManager: look the device up,
  * open a link with its kind's GATT profile, run [SyncRunner] over the source its kind's
- * [support][app.btcourier.device.DeviceSupport] opens on the link, close the link, record the outcome in
- * [status] under its address. Each paired device has its own store source id ([sourceIdFor]), so
- * a replacement device starts from its own oldest data instead of the previous device's cursor.
+ * [support][app.btcourier.device.DeviceSupport] opens on the link, close the link, then finish.
+ * Each paired device has its own store source id ([sourceIdFor]), so a replacement device starts
+ * from its own oldest data instead of the previous device's cursor.
  *
- * Without a link (device not paired, unreachable) the job still seals the store, so rows from a
- * short trip reach the sinks once the seal policy's age rule closes them, even if the device
- * stays asleep until the next drive.
+ * Every run that gets past the lock ends through one path, whether or not it reached the device:
+ * seal what [SealPolicy] closes, record the [SyncOutcome] in [status] (under the device's address
+ * when it is paired), log it and return it. So rows from a short trip reach the sinks once the
+ * policy's age rule closes them, even if the device stays asleep until the next drive.
  *
  * At most one sync runs per device: periodic fan-out, presence and manual syncs can enqueue
  * overlapping works for one device, so [locks] is what keeps them from opening two links to it;
  * the pair wizard's probe takes the same lock. A sync that finds its device's lock held returns
  * [SyncOutcome.AlreadyRunning]. Different devices sync in parallel.
  *
+ * @param retry when a sync is tried again, within the run and across runs; see [SyncRetryPolicy].
  * @param zone the phone's zone, which the ring's clock is set to and its days are counted in.
  */
 class SyncJob(
@@ -48,96 +52,109 @@ class SyncJob(
     private val pageLimit: Int = WicanLoggerSource.DEFAULT_LIMIT,
     private val zone: () -> ZoneId = ZoneId::systemDefault,
     private val log: AppLog = AppLog(),
+    private val retry: SyncRetryPolicy = SyncRetryPolicy(),
 ) {
     /**
      * @param address the device to sync; null when nothing is paired, which only seals.
+     * @param attempt how many runs of this sync came before this one in a row (WorkManager's
+     *   `runAttemptCount`); [SyncOutcome.retryWorthwhile] weighs it against [SyncRetryPolicy.maxRuns].
      * @param onConnected runs once the link is up, before any transfer; the worker promotes itself
      *   to a foreground service there, so the service never runs while the device is merely being
      *   looked for.
      */
-    suspend fun run(address: String?, sealPolicy: SealPolicy, onConnected: suspend () -> Unit = {}): SyncOutcome {
+    suspend fun run(address: String?, sealPolicy: SealPolicy, attempt: Int = 0, onConnected: suspend () -> Unit = {}): SyncOutcome {
         val device = address?.let { a -> devices.all().firstOrNull { it.address.equals(a, ignoreCase = true) } }
-        if (device == null) {
-            val what = if (address == null) "no device paired" else "device not paired"
-            return SyncOutcome.NotPaired(sealWithoutLink(sealPolicy, null, SyncResultKind.NOT_PAIRED, what))
-        }
+            ?: return finish(End.NotPaired(address), null, sealPolicy, attempt)
         val lock = locks.of(device.address)
         if (!lock.tryLock()) return SyncOutcome.AlreadyRunning
         try {
             val link = try {
                 links.open(device.address, device.kind)
             } catch (e: IOException) {
-                val sealed = sealWithoutLink(sealPolicy, device.address, SyncResultKind.UNREACHABLE, "device unreachable: ${e.message}")
-                return SyncOutcome.Unreachable(sealed)
+                return finish(End.Unreachable(e), device, sealPolicy, attempt)
             }
-            val sourceId = sourceIdFor(device.kind, device.address)
             val report = try {
                 onConnected()
-                transfer(link, device.kind, sourceId, sealPolicy)
+                transfer(link, device)
             } finally {
                 link.close()
             }
-            return finish(report, device, sourceId)
+            return finish(End.Reached(report), device, sealPolicy, attempt)
         } finally {
             lock.unlock()
         }
     }
 
-    private suspend fun transfer(link: GattLink, kind: DeviceKind, sourceId: String, sealPolicy: SealPolicy): SyncReport =
-        kind.support.withSource(link, SourceOptions(clock, zone(), pageLimit)) { source ->
-            SyncRunner(sourceId, source, store, sealPolicy = sealPolicy, clock = clock).run()
+    private suspend fun transfer(link: GattLink, device: PairedDevice): SyncReport =
+        device.kind.support.withSource(link, SourceOptions(clock, zone(), pageLimit)) { source ->
+            SyncRunner(sourceIdFor(device.kind, device.address), source, store, busyBackoff = retry.busyBackoff).run()
         }
 
-    private suspend fun finish(report: SyncReport, device: PairedDevice, sourceId: String): SyncOutcome {
+    /** How a run ended, before [finish] turns it into its [SyncOutcome]. */
+    private sealed interface End {
+        data class Reached(val report: SyncReport) : End
+
+        data class Unreachable(val cause: IOException) : End
+
+        data class NotPaired(val address: String?) : End
+    }
+
+    private suspend fun finish(end: End, device: PairedDevice?, sealPolicy: SealPolicy, attempt: Int): SyncOutcome.Recorded {
+        val sealed = store.seal(sealPolicy, clock())
         val counters = store.counters()
-        val cursor = store.cursor(sourceId)
-        val (kind, error) = when (val reason = report.stoppedBecause) {
-            StopReason.CaughtUp -> SyncResultKind.CAUGHT_UP to null
-            is StopReason.NoProgress -> SyncResultKind.DEVICE_ERROR to "device did not advance past ${reason.cursor}"
-            is StopReason.DeviceError -> SyncResultKind.DEVICE_ERROR to reason.cause.message
-            is StopReason.LinkLost -> SyncResultKind.INTERRUPTED to "link lost: ${reason.cause.message}"
-            is StopReason.Truncated -> SyncResultKind.INTERRUPTED to "transfer truncated: ${reason.cause.message}"
-            StopReason.Busy -> SyncResultKind.INTERRUPTED to "device busy"
-        }
-        val stop = stopKind(report.stoppedBecause)
+        val cursor = device?.let { store.cursor(sourceIdFor(it.kind, it.address)) }
+        val outcome = outcomeOf(end, cursor, sealed, attempt)
         val now = clock()
         status.update {
-            it.withSync(device.address, DeviceSync(now, kind, report.linesStored, report.pagesPulled, stop, cursor))
-                .withCounters(counters)
-                .withError(error, now)
+            val recorded = device?.let { d -> it.withSync(d.address, outcome.deviceSync(now)) } ?: it
+            recorded.withCounters(counters).withError(outcome.error, now)
         }
-        log.info(
-            TAG,
-            "sync ${device.kind} $kind ($stop): ${report.pagesPulled} pages, ${report.linesStored} lines, " +
-                "${report.duplicates} duplicates, cursor $cursor, ${counters.pendingBatches} batches pending" +
-                (error?.let { ": $it" } ?: ""),
-        )
-        return if (kind == SyncResultKind.INTERRUPTED) SyncOutcome.Interrupted(report) else SyncOutcome.Done(report)
+        val report = (end as? End.Reached)?.report
+        val line = buildString {
+            append("sync ${device?.kind ?: "-"} ${outcome.result}")
+            if (report != null) {
+                append(" (${outcome.stop}): ${report.pagesPulled} pages, ${report.linesStored} lines, ")
+                append("${report.duplicates} duplicates, cursor $cursor")
+            }
+            append("; sealed ${sealed.size}, ${counters.pendingBatches} batches pending")
+            outcome.error?.let { append(": $it") }
+        }
+        if (report != null) log.info(TAG, line) else log.warn(TAG, line)
+        return outcome
     }
 
     /**
-     * Seals what the policy closes (by age, mostly) and records the sync that never connected:
-     * under [address] when it is a paired device, keeping its cursor; otherwise only as the error.
+     * The one place a run's end becomes what is recorded and whether another run is worth it. A
+     * new [StopReason] is one branch here, plus its [SyncStopKind] and the status screen's label.
      */
-    private suspend fun sealWithoutLink(sealPolicy: SealPolicy, address: String?, kind: SyncResultKind, error: String): Boolean {
-        val sealed = store.seal(sealPolicy, clock())
-        val counters = store.counters()
-        val now = clock()
-        status.update {
-            val recorded = address?.let { a -> it.withSync(a, DeviceSync(now, kind, cursor = it.syncOf(a)?.cursor)) } ?: it
-            recorded.withCounters(counters).withError(error, now)
+    private fun outcomeOf(end: End, cursor: String?, sealed: List<String>, attempt: Int): SyncOutcome.Recorded {
+        fun reached(report: SyncReport, result: SyncResultKind, stop: SyncStopKind, error: String?) = SyncOutcome.Recorded(
+            result, stop, error, report.linesStored, report.pagesPulled, cursor, sealed,
+            retryWorthwhile = retry.anotherRun(interrupted = result == SyncResultKind.INTERRUPTED, attempt),
+        )
+        return when (end) {
+            is End.NotPaired -> SyncOutcome.Recorded(
+                SyncResultKind.NOT_PAIRED,
+                error = if (end.address == null) "no device paired" else "device not paired",
+                sealed = sealed,
+            )
+            is End.Unreachable -> SyncOutcome.Recorded(
+                SyncResultKind.UNREACHABLE,
+                error = "device unreachable: ${end.cause.message}",
+                cursor = cursor,
+                sealed = sealed,
+            )
+            is End.Reached -> when (val reason = end.report.stoppedBecause) {
+                StopReason.CaughtUp -> reached(end.report, SyncResultKind.CAUGHT_UP, SyncStopKind.CAUGHT_UP, null)
+                is StopReason.NoProgress ->
+                    reached(end.report, SyncResultKind.DEVICE_ERROR, SyncStopKind.NO_PROGRESS, "device did not advance past ${reason.cursor}")
+                is StopReason.DeviceError -> reached(end.report, SyncResultKind.DEVICE_ERROR, SyncStopKind.DEVICE_ERROR, reason.cause.message)
+                is StopReason.LinkLost -> reached(end.report, SyncResultKind.INTERRUPTED, SyncStopKind.LINK_LOST, "link lost: ${reason.cause.message}")
+                is StopReason.Truncated ->
+                    reached(end.report, SyncResultKind.INTERRUPTED, SyncStopKind.TRUNCATED, "transfer truncated: ${reason.cause.message}")
+                StopReason.Busy -> reached(end.report, SyncResultKind.INTERRUPTED, SyncStopKind.BUSY, "device busy")
+            }
         }
-        log.warn(TAG, "sync $kind: $error" + if (sealed.isEmpty()) "" else "; sealed ${sealed.size} aged batches")
-        return sealed.isNotEmpty()
-    }
-
-    private fun stopKind(reason: StopReason): SyncStopKind = when (reason) {
-        StopReason.CaughtUp -> SyncStopKind.CAUGHT_UP
-        is StopReason.NoProgress -> SyncStopKind.NO_PROGRESS
-        is StopReason.DeviceError -> SyncStopKind.DEVICE_ERROR
-        is StopReason.LinkLost -> SyncStopKind.LINK_LOST
-        is StopReason.Truncated -> SyncStopKind.TRUNCATED
-        StopReason.Busy -> SyncStopKind.BUSY
     }
 
     companion object {
@@ -153,26 +170,72 @@ class SyncJob(
     }
 }
 
+/**
+ * When a sync is tried again, in two steps:
+ *
+ * 1. Within a run, a device call answered 429 (busy) is retried on the same link after each of
+ *    [busyBackoff]. Still busy after the last wait, the run ends interrupted.
+ * 2. Across runs, an interrupted run (link lost, transfer truncated, still busy) is worth another
+ *    one, resuming at the stored cursor, until [maxRuns] runs in a row have been made; the worker
+ *    spaces them with WorkManager's back-off. After that, the next trigger (presence, periodic)
+ *    takes over. A run that caught up, met a device error or never reached the device is not
+ *    run again: a retry would not change its answer, and the next trigger tries anyway.
+ */
+data class SyncRetryPolicy(
+    val busyBackoff: List<Duration> = listOf(1.seconds, 2.seconds, 4.seconds),
+    val maxRuns: Int = 5,
+) {
+    /** Whether a run ending [interrupted] after [attempt] earlier runs in a row earns another. */
+    fun anotherRun(interrupted: Boolean, attempt: Int): Boolean = interrupted && attempt + 1 < maxRuns
+}
+
+/**
+ * How one run of [SyncJob] ended: the one vocabulary the status record, the log, the upload
+ * trigger and the worker's retry decision read. [SyncJob] computes it in one place, from why the
+ * run stopped.
+ */
 sealed interface SyncOutcome {
-    /** The run sealed batches (whatever the outcome), so an upload is worth enqueueing. */
-    val newBatches: Boolean
+    /**
+     * Ids of the batches this run's seal created, whatever the outcome. Not the change in pending
+     * batches: the same seal may evict old batches at the cache cap, and an upload running
+     * meanwhile may drain some.
+     */
+    val sealed: List<String>
 
-    /** Caught up, or stopped for a reason a retry won't fix (device error). */
-    data class Done(val report: SyncReport) : SyncOutcome {
-        override val newBatches get() = report.sealed.isNotEmpty()
+    /** Whether the worker should run this sync again; [SyncRetryPolicy] says when. */
+    val retryWorthwhile: Boolean
+
+    /** The run sealed batches, so an upload is worth enqueueing. */
+    val newBatches: Boolean get() = sealed.isNotEmpty()
+
+    /**
+     * A run that was sealed and recorded, whether or not it reached the device.
+     *
+     * @property result the status screen's headline for the run.
+     * @property stop why the transfer stopped; null when the run never reached the device.
+     * @property error the status screen's last error; null when the run caught up.
+     * @property linesStored data rows newly stored; 0 when the run never reached the device.
+     * @property pages export responses received; 0 when the run never reached the device.
+     * @property cursor the device's store cursor after the run; null when no paired device was
+     *   found or nothing was ever stored for it.
+     */
+    data class Recorded(
+        val result: SyncResultKind,
+        val stop: SyncStopKind? = null,
+        val error: String? = null,
+        val linesStored: Long = 0,
+        val pages: Int = 0,
+        val cursor: String? = null,
+        override val sealed: List<String> = emptyList(),
+        override val retryWorthwhile: Boolean = false,
+    ) : SyncOutcome {
+        /** What [app.btcourier.data.SyncStatus] keeps of this run under the device's address. */
+        fun deviceSync(atMs: Long) = DeviceSync(atMs, result, linesStored, pages, stop, cursor)
     }
 
-    /** Link lost, truncated or busy; worth a retry with back-off, resuming at the cursor. */
-    data class Interrupted(val report: SyncReport) : SyncOutcome {
-        override val newBatches get() = report.sealed.isNotEmpty()
-    }
-
-    /** The link could not be opened; the next trigger (presence, periodic) tries again. */
-    data class Unreachable(override val newBatches: Boolean) : SyncOutcome
-
-    data class NotPaired(override val newBatches: Boolean) : SyncOutcome
-
+    /** Another run holds the device's lock; nothing was sealed or recorded. */
     data object AlreadyRunning : SyncOutcome {
-        override val newBatches get() = false
+        override val sealed get() = emptyList<String>()
+        override val retryWorthwhile get() = false
     }
 }

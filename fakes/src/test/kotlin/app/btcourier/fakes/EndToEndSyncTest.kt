@@ -98,7 +98,7 @@ class EndToEndSyncTest {
         store: DefaultStore,
         limit: Int = 7,
         beforeExport: ScriptedPeripheral.(Int) -> Unit = {},
-    ): Pair<SyncReport, ScriptedPeripheral> {
+    ): Synced {
         lateinit var peripheral: ScriptedPeripheral
         peripheral = ScriptedPeripheral(
             { request ->
@@ -108,11 +108,14 @@ class EndToEndSyncTest {
         )
         val transport = BleHttpTransport(peripheral.link, backgroundScope)
         val source = WicanLoggerSource(transport, limit, phoneClock = { (epochB + 600) * 1000 })
+        val report = SyncRunner("wican", source, store).run()
         // Age 0 seals the open file too, so every stored row is deliverable after each sync.
-        val report = SyncRunner("wican", source, store, sealPolicy = SealPolicy(maxBatchAgeMs = 0), clock = { 0 }).run()
+        val sealed = store.seal(SealPolicy(maxBatchAgeMs = 0), 0)
         assertNull(Delivery(store).deliverPending(sink), "everything sealed was delivered")
-        return report to peripheral
+        return Synced(report, sealed, peripheral)
     }
+
+    private data class Synced(val report: SyncReport, val sealed: List<String>, val peripheral: ScriptedPeripheral)
 
     private fun objects(): List<Path> = outDir.listDirectoryEntries().sortedBy { it.name }
 
@@ -148,19 +151,20 @@ class EndToEndSyncTest {
         val device = device()
         val store = openStore()
 
-        val (first, _) = connectAndSync(device, store)
+        val (first, firstSealed) = connectAndSync(device, store)
 
         // 7-line pages: 4 of file A, one spanning A and B, 4 more of B.
-        assertEquals(SyncReport(pagesPulled = 9, linesStored = 60, duplicates = 0, StopReason.CaughtUp, first.sealed), first)
-        assertEquals(2, first.sealed.size, "one batch per file")
+        assertEquals(SyncReport(pagesPulled = 9, linesStored = 60, duplicates = 0, StopReason.CaughtUp), first)
+        assertEquals(2, firstSealed.size, "one batch per file")
         assertDeliveredExactlyOnce()
         assertEquals(2, objects().size, "one object per file")
         val uploaded = upload.uploads
         val names = objects().map { it.name }
 
-        val (second, peripheral) = connectAndSync(device, store)
+        val (second, secondSealed, peripheral) = connectAndSync(device, store)
 
-        assertEquals(SyncReport(pagesPulled = 1, linesStored = 0, duplicates = 0, StopReason.CaughtUp, sealed = emptyList()), second)
+        assertEquals(SyncReport(pagesPulled = 1, linesStored = 0, duplicates = 0, StopReason.CaughtUp), second)
+        assertEquals(emptyList<String>(), secondSealed)
         val sizeB = rowsB.sumOf { it.length + 1 }
         assertTrue(peripheral.requests.any { it.path.endsWith("since=$epochB:$sizeB&limit=7") }, "resumed from the end")
         assertEquals(uploaded, upload.uploads, "nothing uploaded")
@@ -173,7 +177,7 @@ class EndToEndSyncTest {
         val device = device()
 
         // The link drops while the 4th page is in flight.
-        val (cut, _) = connectAndSync(device, openStore()) { n -> if (n == 3) inject(Fault.LinkLossAfter(1)) }
+        val (cut) = connectAndSync(device, openStore()) { n -> if (n == 3) inject(Fault.LinkLossAfter(1)) }
 
         assertTrue(cut.stoppedBecause is StopReason.LinkLost, "${cut.stoppedBecause}")
         assertEquals(3, cut.pagesPulled)
@@ -182,10 +186,10 @@ class EndToEndSyncTest {
         val persisted = store.cursor("wican")
         assertEquals("$epochA:${rowsA.take(21).sumOf { it.length + 1 }}", persisted)
 
-        val (resumed, peripheral) = connectAndSync(device, store)
+        val (resumed, resumedSealed, peripheral) = connectAndSync(device, store)
 
-        assertEquals(SyncReport(pagesPulled = 6, linesStored = 39, duplicates = 0, StopReason.CaughtUp, resumed.sealed), resumed)
-        assertEquals(2, resumed.sealed.size, "the rest of file A, then file B")
+        assertEquals(SyncReport(pagesPulled = 6, linesStored = 39, duplicates = 0, StopReason.CaughtUp), resumed)
+        assertEquals(2, resumedSealed.size, "the rest of file A, then file B")
         val firstExport = peripheral.requests.first { it.path.startsWith("/api/logger/export") }
         assertTrue(firstExport.path.contains("since=$persisted&"), firstExport.path)
         assertDeliveredExactlyOnce()
@@ -200,8 +204,8 @@ class EndToEndSyncTest {
         }
         val store = openStore()
 
-        val (first, _) = connectAndSync(device, store)
-        val (second, _) = connectAndSync(device, store)
+        val (first) = connectAndSync(device, store)
+        val (second) = connectAndSync(device, store)
 
         assertEquals(StopReason.CaughtUp, first.stoppedBecause)
         assertEquals(10, first.linesStored)
