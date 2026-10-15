@@ -43,11 +43,12 @@ internal class FilePersistence(
     /** Reads the committed index (creating the store if there is none) and deletes crash leftovers. */
     override fun load(): StoreSnapshot {
         Files.createDirectories(pagesDir)
-        val snapshot = if (Files.exists(index)) {
-            json.decodeFromString(StoreSnapshot.serializer(), Files.readAllBytes(index).decodeToString())
-        } else {
-            StoreSnapshot()
-        }
+        val snapshot =
+            if (Files.exists(index)) {
+                json.decodeFromString(StoreSnapshot.serializer(), Files.readAllBytes(index).decodeToString())
+            } else {
+                StoreSnapshot()
+            }
         val committed = snapshot.pages.mapTo(HashSet()) { pageFile(it.seq).fileName.toString() }
         listOf(dir, pagesDir).forEach { d ->
             Files.list(d).use { entries ->
@@ -60,25 +61,33 @@ internal class FilePersistence(
         return snapshot
     }
 
-    override suspend fun commit(next: StoreSnapshot, added: Map<Long, List<String>>, removed: Collection<Long>) =
-        withContext(Dispatchers.IO) {
-            for ((seq, lines) in added) {
-                writeAtomically(pageFile(seq), json.encodeToString(linesSerializer, lines))
-            }
-            fsyncDir(pagesDir)
-            writeAtomically(index, json.encodeToString(StoreSnapshot.serializer(), next), beforeCommit)
-            fsyncDir(dir)
-            // After the commit point; a crash here only leaves orphans that load() deletes.
-            removed.forEach { Files.deleteIfExists(pageFile(it)) }
+    override suspend fun commit(
+        next: StoreSnapshot,
+        added: Map<Long, List<String>>,
+        removed: Collection<Long>,
+    ) = withContext(Dispatchers.IO) {
+        for ((seq, lines) in added) {
+            writeAtomically(pageFile(seq), json.encodeToString(linesSerializer, lines))
         }
-
-    override suspend fun lines(seq: Long): List<String> = withContext(Dispatchers.IO) {
-        json.decodeFromString(linesSerializer, Files.readAllBytes(pageFile(seq)).decodeToString())
+        fsyncDir(pagesDir)
+        writeAtomically(index, json.encodeToString(StoreSnapshot.serializer(), next), beforeCommit)
+        fsyncDir(dir)
+        // After the commit point; a crash here only leaves orphans that load() deletes.
+        removed.forEach { Files.deleteIfExists(pageFile(it)) }
     }
+
+    override suspend fun lines(seq: Long): List<String> =
+        withContext(Dispatchers.IO) {
+            json.decodeFromString(linesSerializer, Files.readAllBytes(pageFile(seq)).decodeToString())
+        }
 
     private fun pageFile(seq: Long): Path = pagesDir.resolve("$seq.json")
 
-    private fun writeAtomically(target: Path, content: String, beforeRename: () -> Unit = {}) {
+    private fun writeAtomically(
+        target: Path,
+        content: String,
+        beforeRename: () -> Unit = {},
+    ) {
         val tmp = target.resolveSibling("${target.fileName}.tmp")
         FileChannel.open(tmp, CREATE, TRUNCATE_EXISTING, WRITE).use { ch ->
             val buf = ByteBuffer.wrap(content.encodeToByteArray())

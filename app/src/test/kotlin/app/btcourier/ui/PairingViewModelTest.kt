@@ -44,18 +44,19 @@ class PairingViewModelTest {
         var hangOpen = false
         val openCancelled = CompletableDeferred<Unit>()
 
-        private val links = LinkFactory { address, kind ->
-            opened += address to kind
-            if (failOpen) throw IOException("connect timed out")
-            if (hangOpen) {
-                try {
-                    awaitCancellation()
-                } finally {
-                    openCancelled.complete(Unit)
+        private val links =
+            LinkFactory { address, kind ->
+                opened += address to kind
+                if (failOpen) throw IOException("connect timed out")
+                if (hangOpen) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        openCancelled.complete(Unit)
+                    }
                 }
+                ring.link
             }
-            ring.link
-        }
 
         // The app's real probe, lock and kind lookup over the fake ring; only the link is faked.
         private val pairingProbe = PairingProbe(links, locks)
@@ -65,14 +66,21 @@ class PairingViewModelTest {
             return true
         }
 
-        override suspend fun probe(address: String, kind: DeviceKind): ProbeResult = pairingProbe.run(address, kind)
+        override suspend fun probe(
+            address: String,
+            kind: DeviceKind,
+        ): ProbeResult = pairingProbe.run(address, kind)
     }
 
     private val platform = RecordingPlatform()
     private val stores = VisitStores()
     private val vm = stores.viewModel("visit") { PairingViewModel(devices, platform) }
 
-    private fun pairUpToAssociation(kind: DeviceKind, address: String, name: String?) {
+    private fun pairUpToAssociation(
+        kind: DeviceKind,
+        address: String,
+        name: String?,
+    ) {
         assertEquals(PairingStep.ChooseKind, vm.state.value.step)
         vm.chooseKind(kind)
         assertEquals(PairingStep.Explain, vm.state.value.step)
@@ -83,104 +91,116 @@ class PairingViewModelTest {
     }
 
     @Test
-    fun `a ring skips bonding, starts presence and is stored as a ring`() = runTest {
-        pairUpToAssociation(DeviceKind.COLMI_RING, "aa:bb:cc:dd:ee:02", "R02_0000")
+    fun `a ring skips bonding, starts presence and is stored as a ring`() =
+        runTest {
+            pairUpToAssociation(DeviceKind.COLMI_RING, "aa:bb:cc:dd:ee:02", "R02_0000")
 
-        val s = vm.state.value
-        assertEquals(PairingStep.Test, s.step)
-        assertEquals("AA:BB:CC:DD:EE:02", s.address)
-        assertFalse(s.busy)
-        assertEquals(listOf(DeviceConfig("AA:BB:CC:DD:EE:02", DeviceKind.COLMI_RING, "R02_0000")), devices.remembered)
-        assertEquals(listOf("AA:BB:CC:DD:EE:02"), platform.observed)
-    }
-
-    @Test
-    fun `the ring's connection test reads its battery`() = runTest {
-        pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
-
-        vm.test()
-        testScheduler.advanceUntilIdle()
-
-        assertEquals(ProbeResult.Ring(Battery(42, charging = false)), vm.state.value.probe)
-        assertEquals(listOf("AA:BB:CC:DD:EE:02" to DeviceKind.COLMI_RING), platform.opened)
-        assertEquals(listOf(0x03), ring.commands.map { it[0].toInt() })
-        assertFalse(vm.state.value.busy)
-        assertTrue(ring.link.closed)
-        assertFalse(locks.of("AA:BB:CC:DD:EE:02").isLocked, "the lock is released for syncs")
-    }
+            val s = vm.state.value
+            assertEquals(PairingStep.Test, s.step)
+            assertEquals("AA:BB:CC:DD:EE:02", s.address)
+            assertFalse(s.busy)
+            assertEquals(
+                listOf(DeviceConfig("AA:BB:CC:DD:EE:02", DeviceKind.COLMI_RING, "R02_0000")),
+                devices.remembered,
+            )
+            assertEquals(listOf("AA:BB:CC:DD:EE:02"), platform.observed)
+        }
 
     @Test
-    fun `a connection test while a sync holds the device reports it busy and opens no link`() = runTest {
-        pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
-        val syncLock = locks.of("aa:bb:cc:dd:ee:02")
-        assertTrue(syncLock.tryLock())
+    fun `the ring's connection test reads its battery`() =
+        runTest {
+            pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
 
-        vm.test()
-        testScheduler.advanceUntilIdle()
+            vm.test()
+            testScheduler.advanceUntilIdle()
 
-        assertEquals(ProbeResult.Busy, vm.state.value.probe)
-        assertNull(vm.state.value.error)
-        assertFalse(vm.state.value.busy)
-        assertEquals(emptyList<Any>(), platform.opened)
-        assertEquals(emptyList<Any>(), ring.commands)
-        assertTrue(syncLock.isLocked, "the sync keeps its lock")
-
-        syncLock.unlock()
-        vm.test()
-        testScheduler.advanceUntilIdle()
-
-        assertEquals(ProbeResult.Ring(Battery(42, charging = false)), vm.state.value.probe)
-    }
+            assertEquals(ProbeResult.Ring(Battery(42, charging = false)), vm.state.value.probe)
+            assertEquals(listOf("AA:BB:CC:DD:EE:02" to DeviceKind.COLMI_RING), platform.opened)
+            assertEquals(listOf(0x03), ring.commands.map { it[0].toInt() })
+            assertFalse(vm.state.value.busy)
+            assertTrue(ring.link.closed)
+            assertFalse(locks.of("AA:BB:CC:DD:EE:02").isLocked, "the lock is released for syncs")
+        }
 
     @Test
-    fun `a WiCAN bonds first and only then starts presence`() = runTest {
-        pairUpToAssociation(DeviceKind.WICAN, "AA:BB:CC:DD:EE:01", "WiC_000000000000")
+    fun `a connection test while a sync holds the device reports it busy and opens no link`() =
+        runTest {
+            pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
+            val syncLock = locks.of("aa:bb:cc:dd:ee:02")
+            assertTrue(syncLock.tryLock())
 
-        assertEquals(PairingStep.Bond, vm.state.value.step)
-        assertEquals(listOf(DeviceConfig("AA:BB:CC:DD:EE:01", DeviceKind.WICAN, "WiC_000000000000")), devices.remembered)
-        assertEquals(emptyList<String>(), platform.observed, "presence waits for the bond")
+            vm.test()
+            testScheduler.advanceUntilIdle()
 
-        vm.bonding()
-        vm.failed("Bonding failed or was cancelled")
-        assertEquals(PairingStep.Bond, vm.state.value.step)
-        assertEquals("Bonding failed or was cancelled", vm.state.value.error)
-        vm.retryBond()
-        assertEquals(1, vm.state.value.bondAttempt)
+            assertEquals(ProbeResult.Busy, vm.state.value.probe)
+            assertNull(vm.state.value.error)
+            assertFalse(vm.state.value.busy)
+            assertEquals(emptyList<Any>(), platform.opened)
+            assertEquals(emptyList<Any>(), ring.commands)
+            assertTrue(syncLock.isLocked, "the sync keeps its lock")
 
-        vm.bonding()
-        vm.bonded()
+            syncLock.unlock()
+            vm.test()
+            testScheduler.advanceUntilIdle()
 
-        assertEquals(PairingStep.Test, vm.state.value.step)
-        assertNull(vm.state.value.error)
-        assertEquals(listOf("AA:BB:CC:DD:EE:01"), platform.observed)
-    }
-
-    @Test
-    fun `leaving the wizard cancels a connection test still running`() = runTest {
-        pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
-        platform.hangOpen = true
-        vm.test()
-        testScheduler.advanceUntilIdle()
-        assertTrue(vm.state.value.busy)
-
-        stores.keepOnly(null)
-        testScheduler.advanceUntilIdle()
-
-        assertTrue(platform.openCancelled.isCompleted)
-        assertFalse(locks.of("AA:BB:CC:DD:EE:02").isLocked, "a cancelled test releases the lock")
-    }
+            assertEquals(ProbeResult.Ring(Battery(42, charging = false)), vm.state.value.probe)
+        }
 
     @Test
-    fun `a failed connection test shows why and can be repeated`() = runTest {
-        pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
-        platform.failOpen = true
+    fun `a WiCAN bonds first and only then starts presence`() =
+        runTest {
+            pairUpToAssociation(DeviceKind.WICAN, "AA:BB:CC:DD:EE:01", "WiC_000000000000")
 
-        vm.test()
-        testScheduler.advanceUntilIdle()
+            assertEquals(PairingStep.Bond, vm.state.value.step)
+            assertEquals(
+                listOf(DeviceConfig("AA:BB:CC:DD:EE:01", DeviceKind.WICAN, "WiC_000000000000")),
+                devices.remembered,
+            )
+            assertEquals(emptyList<String>(), platform.observed, "presence waits for the bond")
 
-        assertEquals("Test connection failed: connect timed out", vm.state.value.error)
-        assertNull(vm.state.value.probe)
-        assertFalse(vm.state.value.busy)
-        assertFalse(locks.of("AA:BB:CC:DD:EE:02").isLocked, "a failed test releases the lock")
-    }
+            vm.bonding()
+            vm.failed("Bonding failed or was cancelled")
+            assertEquals(PairingStep.Bond, vm.state.value.step)
+            assertEquals("Bonding failed or was cancelled", vm.state.value.error)
+            vm.retryBond()
+            assertEquals(1, vm.state.value.bondAttempt)
+
+            vm.bonding()
+            vm.bonded()
+
+            assertEquals(PairingStep.Test, vm.state.value.step)
+            assertNull(vm.state.value.error)
+            assertEquals(listOf("AA:BB:CC:DD:EE:01"), platform.observed)
+        }
+
+    @Test
+    fun `leaving the wizard cancels a connection test still running`() =
+        runTest {
+            pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
+            platform.hangOpen = true
+            vm.test()
+            testScheduler.advanceUntilIdle()
+            assertTrue(vm.state.value.busy)
+
+            stores.keepOnly(null)
+            testScheduler.advanceUntilIdle()
+
+            assertTrue(platform.openCancelled.isCompleted)
+            assertFalse(locks.of("AA:BB:CC:DD:EE:02").isLocked, "a cancelled test releases the lock")
+        }
+
+    @Test
+    fun `a failed connection test shows why and can be repeated`() =
+        runTest {
+            pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
+            platform.failOpen = true
+
+            vm.test()
+            testScheduler.advanceUntilIdle()
+
+            assertEquals("Test connection failed: connect timed out", vm.state.value.error)
+            assertNull(vm.state.value.probe)
+            assertFalse(vm.state.value.busy)
+            assertFalse(locks.of("AA:BB:CC:DD:EE:02").isLocked, "a failed test releases the lock")
+        }
 }

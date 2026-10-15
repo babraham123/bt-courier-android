@@ -59,7 +59,11 @@ import kotlinx.coroutines.launch
  * request, the companion chooser, the bond dialog) and reports their outcomes to the view model.
  */
 @Composable
-fun PairingScreen(viewModel: PairingViewModel, onDone: () -> Unit, modifier: Modifier = Modifier) {
+fun PairingScreen(
+    viewModel: PairingViewModel,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -73,19 +77,21 @@ fun PairingScreen(viewModel: PairingViewModel, onDone: () -> Unit, modifier: Mod
     val permissionMessage = stringResource(R.string.pairing_error_permission)
     val noCdmMessage = stringResource(R.string.pairing_error_no_cdm)
 
-    val chooser = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        val picked = if (result.resultCode == Activity.RESULT_OK) associatedDevice(context, result.data) else null
-        if (picked == null) {
-            viewModel.failed(noDeviceMessage)
-        } else {
-            device = picked
-            viewModel.associated(picked.address, advertisedName(context, picked))
+    val chooser =
+        rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+            val picked = if (result.resultCode == Activity.RESULT_OK) associatedDevice(context, result.data) else null
+            if (picked == null) {
+                viewModel.failed(noDeviceMessage)
+            } else {
+                device = picked
+                viewModel.associated(picked.address, advertisedName(context, picked))
+            }
         }
-    }
 
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) viewModel.permissionGranted() else viewModel.failed(permissionMessage)
-    }
+    val permission =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) viewModel.permissionGranted() else viewModel.failed(permissionMessage)
+        }
 
     fun currentDevice(): BluetoothDevice? =
         device?.takeIf { it.address.equals(state.address, ignoreCase = true) }
@@ -119,7 +125,10 @@ fun PairingScreen(viewModel: PairingViewModel, onDone: () -> Unit, modifier: Mod
                     OutlinedButton(onClick = { viewModel.chooseKind(kind) }, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                             Text(stringResource(kind.support.label), style = MaterialTheme.typography.titleMedium)
-                            Text(stringResource(kind.support.pairingText.help), style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                stringResource(kind.support.pairingText.help),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
                         }
                     }
                 }
@@ -147,7 +156,8 @@ fun PairingScreen(viewModel: PairingViewModel, onDone: () -> Unit, modifier: Mod
                     viewModel.scanning()
                     scope.launch {
                         try {
-                            val sender = pairingStep("Scan") { cdm.requestAssociation(context, state.kind.support.filter) }
+                            val sender =
+                                pairingStep("Scan") { cdm.requestAssociation(context, state.kind.support.filter) }
                             chooser.launch(IntentSenderRequest.Builder(sender).build())
                         } catch (e: PairingException) {
                             viewModel.failed(e.message)
@@ -166,13 +176,29 @@ fun PairingScreen(viewModel: PairingViewModel, onDone: () -> Unit, modifier: Mod
             PairingStep.Test -> {
                 Text(stringResource(text.test))
                 when (val probe = state.probe) {
-                    is ProbeResult.Wican -> Text(stringResource(R.string.pairing_test_ok, probe.firmwareVersion, probe.mtu))
-                    is ProbeResult.Ring -> Text(stringResource(R.string.pairing_test_ok_ring, probe.battery.level))
-                    ProbeResult.Busy -> Text(stringResource(R.string.pairing_test_busy))
-                    null -> Unit
+                    is ProbeResult.Wican -> {
+                        Text(
+                            stringResource(R.string.pairing_test_ok, probe.firmwareVersion, probe.mtu),
+                        )
+                    }
+
+                    is ProbeResult.Ring -> {
+                        Text(stringResource(R.string.pairing_test_ok_ring, probe.battery.level))
+                    }
+
+                    ProbeResult.Busy -> {
+                        Text(stringResource(R.string.pairing_test_busy))
+                    }
+
+                    null -> {
+                        Unit
+                    }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(enabled = !state.busy, onClick = viewModel::test) { Text(stringResource(R.string.pairing_test)) }
+                    Button(
+                        enabled = !state.busy,
+                        onClick = viewModel::test,
+                    ) { Text(stringResource(R.string.pairing_test)) }
                     OutlinedButton(onClick = onDone) { Text(stringResource(R.string.pairing_done)) }
                 }
             }
@@ -197,11 +223,22 @@ private fun advertisedName(context: Context, device: BluetoothDevice): String? =
  * [PairingPlatform] over CDM presence and the app's [LinkFactory], under the process-wide
  * [DeviceLocks] that syncs take too.
  */
-class AndroidPairingPlatform(context: Context) : PairingPlatform {
+class AndroidPairingPlatform(
+    context: Context,
+) : PairingPlatform {
     private val appContext = context.applicationContext
 
     // Read per open, like the sync's, so a swapped factory applies to both.
-    private val pairingProbe = PairingProbe(LinkFactory { address, kind -> AppGraph.linkFactory.open(address, kind) }, DeviceLocks.process)
+    private val pairingProbe =
+        PairingProbe(
+            LinkFactory {
+                address,
+                kind,
+                ->
+                AppGraph.linkFactory.open(address, kind)
+            },
+            DeviceLocks.process,
+        )
 
     override fun observePresence(address: String): Boolean {
         val observing = DevicePresence.startObserving(appContext, address)
@@ -209,7 +246,10 @@ class AndroidPairingPlatform(context: Context) : PairingPlatform {
         return observing
     }
 
-    override suspend fun probe(address: String, kind: DeviceKind): ProbeResult = pairingProbe.run(address, kind)
+    override suspend fun probe(
+        address: String,
+        kind: DeviceKind,
+    ): ProbeResult = pairingProbe.run(address, kind)
 }
 
 @SuppressLint("MissingPermission") // Checked just above; the wizard cannot reach this step without it.

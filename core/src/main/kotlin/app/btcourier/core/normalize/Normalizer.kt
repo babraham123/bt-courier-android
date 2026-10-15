@@ -55,7 +55,9 @@ data class Anchor(
  * How a stored row's `ts` was derived, so receivers can weigh or filter rows. [wire] is the
  * `ts_quality` value written into the row.
  */
-enum class TsQuality(val wire: String) {
+enum class TsQuality(
+    val wire: String,
+) {
     /** Re-based by at least one journal clock set that the row was stamped before. */
     JOURNAL("journal"),
 

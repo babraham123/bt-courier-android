@@ -9,30 +9,43 @@ abstract class OidcServerTest : MockServerTest() {
     protected val issuer get() = server.url("/auth").toString()
 
     protected val provider
-        get() = OidcProviderMetadata(
-            issuer = issuer,
-            tokenEndpoint = server.url("/auth/api/oidc/token"),
-            deviceAuthorizationEndpoint = server.url("/auth/api/oidc/device-authorization"),
-        )
+        get() =
+            OidcProviderMetadata(
+                issuer = issuer,
+                tokenEndpoint = server.url("/auth/api/oidc/token"),
+                deviceAuthorizationEndpoint = server.url("/auth/api/oidc/device-authorization"),
+            )
 
     protected val publicClient = OidcClient("bt-courier")
 
-    protected fun respondJson(code: Int, json: String) = respond(code, json, "Content-Type" to "application/json")
+    protected fun respondJson(
+        code: Int,
+        json: String,
+    ) = respond(code, json, "Content-Type" to "application/json")
 
     /** RFC 6749 §5.2 error reply. */
-    protected fun respondError(error: String, description: String? = null, code: Int = 400) =
-        respondJson(code, """{"error":"$error"${description?.let { ""","error_description":"$it"""" }.orEmpty()}}""")
+    protected fun respondError(
+        error: String,
+        description: String? = null,
+        code: Int = 400,
+    ) = respondJson(code, """{"error":"$error"${description?.let { ""","error_description":"$it"""" }.orEmpty()}}""")
 
     /** RFC 6749 §5.1 token reply; null fields are left out. */
-    protected fun respondTokens(access: String, refresh: String?, expiresIn: Long?, scope: String? = null) {
-        val fields = listOfNotNull(
-            "\"access_token\":\"$access\"",
-            "\"token_type\":\"Bearer\"",
-            "\"id_token\":\"eyJhbGciOiJub25lIn0.e30.\"",
-            refresh?.let { "\"refresh_token\":\"$it\"" },
-            expiresIn?.let { "\"expires_in\":$it" },
-            scope?.let { "\"scope\":\"$it\"" },
-        )
+    protected fun respondTokens(
+        access: String,
+        refresh: String?,
+        expiresIn: Long?,
+        scope: String? = null,
+    ) {
+        val fields =
+            listOfNotNull(
+                "\"access_token\":\"$access\"",
+                "\"token_type\":\"Bearer\"",
+                "\"id_token\":\"eyJhbGciOiJub25lIn0.e30.\"",
+                refresh?.let { "\"refresh_token\":\"$it\"" },
+                expiresIn?.let { "\"expires_in\":$it" },
+                scope?.let { "\"scope\":\"$it\"" },
+            )
         respondJson(200, fields.joinToString(",", "{", "}"))
     }
 
@@ -52,7 +65,9 @@ abstract class OidcServerTest : MockServerTest() {
 }
 
 /** Records every save, as the Keystore-backed store would persist it. */
-class RecordingTokenStore(private var stored: TokenSet? = null) : TokenStore {
+class RecordingTokenStore(
+    private var stored: TokenSet? = null,
+) : TokenStore {
     val saves = mutableListOf<TokenSet?>()
 
     @Synchronized

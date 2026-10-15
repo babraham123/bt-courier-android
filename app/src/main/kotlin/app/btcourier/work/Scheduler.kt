@@ -35,14 +35,21 @@ object Scheduler {
      * carries no address, so each run fans out to every paired device ([SyncWorker]).
      */
     fun schedulePeriodicSync(context: Context) {
-        val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
-            .build()
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(SYNC_PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request)
+        val request =
+            PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
+                .build()
+        WorkManager
+            .getInstance(
+                context,
+            ).enqueueUniquePeriodicWork(SYNC_PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request)
     }
 
     /** Registers or cancels the periodic sync per the settings toggle. */
-    fun setPeriodicSync(context: Context, enabled: Boolean) {
+    fun setPeriodicSync(
+        context: Context,
+        enabled: Boolean,
+    ) {
         if (enabled) {
             schedulePeriodicSync(context)
         } else {
@@ -55,11 +62,15 @@ object Scheduler {
      * fan-out and the manual button. KEEP: a sync of that device already queued or running will
      * pull everything it has anyway.
      */
-    fun syncNow(context: Context, address: String) {
-        val request = OneTimeWorkRequestBuilder<SyncWorker>()
-            .setInputData(workDataOf(SyncWorker.KEY_ADDRESS to address.uppercase()))
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .build()
+    fun syncNow(
+        context: Context,
+        address: String,
+    ) {
+        val request =
+            OneTimeWorkRequestBuilder<SyncWorker>()
+                .setInputData(workDataOf(SyncWorker.KEY_ADDRESS to address.uppercase()))
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .build()
         WorkManager.getInstance(context).enqueueUniqueWork(syncNowName(address), ExistingWorkPolicy.KEEP, request)
     }
 
@@ -68,12 +79,20 @@ object Scheduler {
      * delivers whatever is pending when it runs. [replace] re-enqueues with new constraints, for a
      * changed network policy or sink.
      */
-    fun uploadNow(context: Context, allowCellular: Boolean, replace: Boolean = false) {
-        val request = OneTimeWorkRequestBuilder<UploadWorker>()
-            .setConstraints(uploadConstraints(allowCellular))
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.DEFAULT_BACKOFF_DELAY_MILLIS, TimeUnit.MILLISECONDS)
-            .build()
+    fun uploadNow(
+        context: Context,
+        allowCellular: Boolean,
+        replace: Boolean = false,
+    ) {
+        val request =
+            OneTimeWorkRequestBuilder<UploadWorker>()
+                .setConstraints(uploadConstraints(allowCellular))
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    WorkRequest.DEFAULT_BACKOFF_DELAY_MILLIS,
+                    TimeUnit.MILLISECONDS,
+                ).build()
         val policy = if (replace) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
         WorkManager.getInstance(context).enqueueUniqueWork(UPLOAD, policy, request)
     }
@@ -84,12 +103,20 @@ object Scheduler {
      * later round's (later) due time wins; the back-off is irrelevant since a deferred round's own
      * outcome decides the next one.
      */
-    fun uploadAt(context: Context, delayMs: Long, allowCellular: Boolean) {
-        val request = OneTimeWorkRequestBuilder<UploadWorker>()
-            .setConstraints(uploadConstraints(allowCellular))
-            .setInitialDelay(delayMs.coerceAtLeast(0), TimeUnit.MILLISECONDS)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.DEFAULT_BACKOFF_DELAY_MILLIS, TimeUnit.MILLISECONDS)
-            .build()
+    fun uploadAt(
+        context: Context,
+        delayMs: Long,
+        allowCellular: Boolean,
+    ) {
+        val request =
+            OneTimeWorkRequestBuilder<UploadWorker>()
+                .setConstraints(uploadConstraints(allowCellular))
+                .setInitialDelay(delayMs.coerceAtLeast(0), TimeUnit.MILLISECONDS)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    WorkRequest.DEFAULT_BACKOFF_DELAY_MILLIS,
+                    TimeUnit.MILLISECONDS,
+                ).build()
         WorkManager.getInstance(context).enqueueUniqueWork(UPLOAD_DEFERRED, ExistingWorkPolicy.REPLACE, request)
     }
 
@@ -101,20 +128,28 @@ object Scheduler {
     }
 
     fun uploadConstraints(allowCellular: Boolean): Constraints =
-        Constraints.Builder()
+        Constraints
+            .Builder()
             .setRequiredNetworkType(if (allowCellular) NetworkType.CONNECTED else NetworkType.UNMETERED)
             .build()
 }
 
 /** Re-registers the periodic sync and presence observation after a reboot ([restoreSchedules]). */
 class BootReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
+    override fun onReceive(
+        context: Context,
+        intent: Intent,
+    ) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         val app = context.applicationContext
         val pending = goAsync()
         AppGraph.scope.launch {
             try {
-                restoreSchedules(AppGraph.settings, AppGraph.pairedDevices, AppGraph.work) { DevicePresence.startObserving(app, it) }
+                restoreSchedules(
+                    AppGraph.settings,
+                    AppGraph.pairedDevices,
+                    AppGraph.work,
+                ) { DevicePresence.startObserving(app, it) }
             } finally {
                 pending.finish()
             }

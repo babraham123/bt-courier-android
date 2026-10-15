@@ -24,24 +24,32 @@ import org.junit.jupiter.api.extension.ExtensionContext
 
 /** `viewModelScope` runs on `Dispatchers.Main`, which the JVM lacks. */
 @OptIn(ExperimentalCoroutinesApi::class)
-class MainDispatcherExtension : BeforeEachCallback, AfterEachCallback {
+class MainDispatcherExtension :
+    BeforeEachCallback,
+    AfterEachCallback {
     override fun beforeEach(context: ExtensionContext) = Dispatchers.setMain(UnconfinedTestDispatcher())
 
     override fun afterEach(context: ExtensionContext) = Dispatchers.resetMain()
 }
 
 /** Gets [visit]'s view model of type [VM] from its store, created by [create], as MainActivity does. */
-inline fun <reified VM : ViewModel> VisitStores.viewModel(visit: String, noinline create: () -> VM): VM =
-    ViewModelProvider(owner(visit), viewModelFactory { initializer { create() } })[VM::class.java]
+inline fun <reified VM : ViewModel> VisitStores.viewModel(
+    visit: String,
+    noinline create: () -> VM,
+): VM = ViewModelProvider(owner(visit), viewModelFactory { initializer { create() } })[VM::class.java]
 
-class FakeSettings(initial: AppSettings = AppSettings()) : SettingsRepository {
+class FakeSettings(
+    initial: AppSettings = AppSettings(),
+) : SettingsRepository {
     override val settings = MutableStateFlow(initial)
 
     override suspend fun update(transform: (AppSettings) -> AppSettings) = settings.update(transform)
 }
 
 /** Paired devices in a list; [remember] records configs without changing [devices]. */
-class FakePairedDevices(vararg devices: PairedDevice) : PairedDeviceRepository {
+class FakePairedDevices(
+    vararg devices: PairedDevice,
+) : PairedDeviceRepository {
     var devices: List<PairedDevice> = devices.toList()
     val remembered = mutableListOf<DeviceConfig>()
     val forgotten = mutableListOf<PairedDevice>()
@@ -62,5 +70,8 @@ class FakePairedDevices(vararg devices: PairedDevice) : PairedDeviceRepository {
 object NoDiagnostics : DiagnosticsExport {
     override suspend fun text() = "log"
 
-    override suspend fun save(target: Uri, text: String) = Unit
+    override suspend fun save(
+        target: Uri,
+        text: String,
+    ) = Unit
 }

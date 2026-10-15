@@ -12,27 +12,79 @@ import org.junit.jupiter.api.assertThrows
 
 class SinkConfigTest {
     /** One sink per transport variant and per auth variant, every field off its default. */
-    private val everyVariant = listOf(
-        SinkConfig("put1", "Put", enabled = false, TransportConfig.HttpPut("https://sink.invalid/up/", compress = false), FormatKind.CSV, AuthConfig.Basic("courier")),
-        SinkConfig("post1", "Post", transport = TransportConfig.HttpPost("https://sink.invalid/import?x=1", PostEncoding.CONTENT_ENCODING_GZIP, nameQuery = true), format = FormatKind.PROMETHEUS, auth = AuthConfig.Bearer),
-        SinkConfig(
-            "oidc1",
-            "Oidc",
-            transport = TransportConfig.HttpPost("https://sink.invalid/", PostEncoding.IDENTITY),
-            auth = AuthConfig.Oidc(
-                issuer = "https://auth.invalid",
-                clientId = "bt-courier",
-                clientAuthMethod = OidcClientAuth.SECRET_POST,
-                tokenEndpoint = "https://auth.invalid/token",
-                deviceAuthorizationEndpoint = "https://auth.invalid/device",
+    private val everyVariant =
+        listOf(
+            SinkConfig(
+                "put1",
+                "Put",
+                enabled = false,
+                TransportConfig.HttpPut("https://sink.invalid/up/", compress = false),
+                FormatKind.CSV,
+                AuthConfig.Basic("courier"),
             ),
-        ),
-        SinkConfig("oidc2", "Oidc unsigned", transport = TransportConfig.HttpPut("https://sink.invalid/"), auth = AuthConfig.Oidc("https://auth.invalid", "c")),
-        SinkConfig("sftp1", "Sftp", transport = TransportConfig.Sftp("sftp.invalid", 2222, "courier", "uploads", "SHA256:abc")),
-        SinkConfig("sftp2", "Sftp unpinned", transport = TransportConfig.Sftp("sftp.invalid", username = "u", remoteDir = "")),
-        SinkConfig("mqtt1", "Mqtt", transport = TransportConfig.Mqtt("mqtt.invalid", 1883, tls = false, clientId = "btcourier-x", baseTopic = "car/obd"), auth = AuthConfig.Basic("broker")),
-        SinkConfig("dir1", "Folder", transport = TransportConfig.LocalFolder("content://com.android.externalstorage.documents/tree/primary%3ABT")),
-    )
+            SinkConfig(
+                "post1",
+                "Post",
+                transport =
+                    TransportConfig.HttpPost(
+                        "https://sink.invalid/import?x=1",
+                        PostEncoding.CONTENT_ENCODING_GZIP,
+                        nameQuery = true,
+                    ),
+                format = FormatKind.PROMETHEUS,
+                auth = AuthConfig.Bearer,
+            ),
+            SinkConfig(
+                "oidc1",
+                "Oidc",
+                transport = TransportConfig.HttpPost("https://sink.invalid/", PostEncoding.IDENTITY),
+                auth =
+                    AuthConfig.Oidc(
+                        issuer = "https://auth.invalid",
+                        clientId = "bt-courier",
+                        clientAuthMethod = OidcClientAuth.SECRET_POST,
+                        tokenEndpoint = "https://auth.invalid/token",
+                        deviceAuthorizationEndpoint = "https://auth.invalid/device",
+                    ),
+            ),
+            SinkConfig(
+                "oidc2",
+                "Oidc unsigned",
+                transport = TransportConfig.HttpPut("https://sink.invalid/"),
+                auth = AuthConfig.Oidc("https://auth.invalid", "c"),
+            ),
+            SinkConfig(
+                "sftp1",
+                "Sftp",
+                transport = TransportConfig.Sftp("sftp.invalid", 2222, "courier", "uploads", "SHA256:abc"),
+            ),
+            SinkConfig(
+                "sftp2",
+                "Sftp unpinned",
+                transport = TransportConfig.Sftp("sftp.invalid", username = "u", remoteDir = ""),
+            ),
+            SinkConfig(
+                "mqtt1",
+                "Mqtt",
+                transport =
+                    TransportConfig.Mqtt(
+                        "mqtt.invalid",
+                        1883,
+                        tls = false,
+                        clientId = "btcourier-x",
+                        baseTopic = "car/obd",
+                    ),
+                auth = AuthConfig.Basic("broker"),
+            ),
+            SinkConfig(
+                "dir1",
+                "Folder",
+                transport =
+                    TransportConfig.LocalFolder(
+                        "content://com.android.externalstorage.documents/tree/primary%3ABT",
+                    ),
+            ),
+        )
 
     @Test
     fun `every transport and auth variant survives a JSON round trip`() {
@@ -42,31 +94,54 @@ class SinkConfigTest {
     @Test
     fun `variants are tagged with stable type names, not class names`() {
         val array = Json.parseToJsonElement(encodeSinks(everyVariant)).jsonArray.map { it.jsonObject }
-        fun JsonObject.type(key: String) = getValue(key).jsonObject.getValue("type").jsonPrimitive.content
+
+        fun JsonObject.type(key: String) =
+            getValue(key)
+                .jsonObject
+                .getValue("type")
+                .jsonPrimitive.content
 
         assertEquals(
             listOf("http_put", "http_post", "http_post", "http_put", "sftp", "sftp", "mqtt", "local_folder"),
             array.map { it.type("transport") },
         )
-        assertEquals(listOf("basic", "bearer", "oidc", "oidc", "none", "none", "basic", "none"), array.map { it.type("auth") })
+        assertEquals(
+            listOf("basic", "bearer", "oidc", "oidc", "none", "none", "basic", "none"),
+            array.map { it.type("auth") },
+        )
     }
 
     @Test
     fun `defaults are written out and missing optional fields read as their defaults`() {
-        val stored = """[{"id":"a","name":"A","transport":{"type":"mqtt","host":"m.invalid","clientId":"c","baseTopic":"t"}}]"""
+        val stored =
+            """[{"id":"a","name":"A","transport":{"type":"mqtt","host":"m.invalid","clientId":"c","baseTopic":"t"}}]"""
 
         val sink = decodeSinks(stored).single()
 
-        assertEquals(SinkConfig("a", "A", true, TransportConfig.Mqtt("m.invalid", 8883, true, "c", "t"), FormatKind.JSONL, AuthConfig.None), sink)
+        assertEquals(
+            SinkConfig(
+                "a",
+                "A",
+                true,
+                TransportConfig.Mqtt("m.invalid", 8883, true, "c", "t"),
+                FormatKind.JSONL,
+                AuthConfig.None,
+            ),
+            sink,
+        )
         assertTrue(encodeSinks(listOf(sink)).contains("\"port\":8883"))
     }
 
     @Test
     fun `unknown fields from a newer version are ignored, unknown transports are an error`() {
-        val withExtra = """[{"id":"a","name":"A","future":1,"transport":{"type":"local_folder","treeUri":"content://x","future":2}}]"""
+        val withExtra =
+            """[{"id":"a","name":"A","future":1,""" +
+                """"transport":{"type":"local_folder","treeUri":"content://x","future":2}}]"""
         assertEquals(TransportConfig.LocalFolder("content://x"), decodeSinks(withExtra).single().transport)
 
-        assertThrows<IllegalArgumentException> { decodeSinks("""[{"id":"a","name":"A","transport":{"type":"carrier_pigeon"}}]""") }
+        assertThrows<IllegalArgumentException> {
+            decodeSinks("""[{"id":"a","name":"A","transport":{"type":"carrier_pigeon"}}]""")
+        }
     }
 
     @Test

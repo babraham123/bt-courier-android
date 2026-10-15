@@ -26,7 +26,10 @@ object DevicePresence {
      * bonding, for a device that bonds); the system keeps observing across app restarts. Returns
      * false if [address] is not associated.
      */
-    fun startObserving(context: Context, address: String): Boolean {
+    fun startObserving(
+        context: Context,
+        address: String,
+    ): Boolean {
         val cdm = context.getSystemService(CompanionDeviceManager::class.java)
         return try {
             if (Build.VERSION.SDK_INT >= 36) {
@@ -44,8 +47,10 @@ object DevicePresence {
     }
 
     @RequiresApi(33)
-    private fun associationId(cdm: CompanionDeviceManager, address: String): Int? =
-        cdm.myAssociations.firstOrNull { it.deviceMacAddress?.toString().equals(address, ignoreCase = true) }?.id
+    private fun associationId(
+        cdm: CompanionDeviceManager,
+        address: String,
+    ): Int? = cdm.myAssociations.firstOrNull { it.deviceMacAddress?.toString().equals(address, ignoreCase = true) }?.id
 }
 
 /**
@@ -64,7 +69,8 @@ class PresenceService : CompanionDeviceService() {
 
     @Suppress("OVERRIDE_DEPRECATION")
     @RequiresApi(33)
-    override fun onDeviceAppeared(associationInfo: AssociationInfo) = appeared(associationInfo.deviceMacAddress?.toString())
+    override fun onDeviceAppeared(associationInfo: AssociationInfo) =
+        appeared(associationInfo.deviceMacAddress?.toString())
 
     @Suppress("OVERRIDE_DEPRECATION")
     @RequiresApi(33)
@@ -72,9 +78,17 @@ class PresenceService : CompanionDeviceService() {
 
     @RequiresApi(36)
     override fun onDevicePresenceEvent(event: DevicePresenceEvent) {
-        if (event.event == DevicePresenceEvent.EVENT_BLE_APPEARED || event.event == DevicePresenceEvent.EVENT_BT_CONNECTED) {
+        if (event.event == DevicePresenceEvent.EVENT_BLE_APPEARED ||
+            event.event == DevicePresenceEvent.EVENT_BT_CONNECTED
+        ) {
             val cdm = getSystemService(CompanionDeviceManager::class.java)
-            appeared(cdm?.myAssociations?.firstOrNull { it.id == event.associationId }?.deviceMacAddress?.toString())
+            appeared(
+                cdm
+                    ?.myAssociations
+                    ?.firstOrNull { it.id == event.associationId }
+                    ?.deviceMacAddress
+                    ?.toString(),
+            )
         }
     }
 

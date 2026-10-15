@@ -1,11 +1,11 @@
 package app.btcourier.core.normalize
 
+import app.btcourier.core.lines.StoredLine
+import app.btcourier.core.lines.walkFiles
 import app.btcourier.core.normalize.TsQuality.ANCHOR
 import app.btcourier.core.normalize.TsQuality.DEVICE
 import app.btcourier.core.normalize.TsQuality.JOURNAL
 import app.btcourier.core.normalize.TsQuality.UNKNOWN
-import app.btcourier.core.lines.StoredLine
-import app.btcourier.core.lines.walkFiles
 import app.btcourier.core.source.ClockEvent
 import app.btcourier.core.testing.WicanLines.boot
 import app.btcourier.core.testing.WicanLines.clockSet
@@ -16,10 +16,10 @@ import app.btcourier.core.testing.WicanLines.rotate
 import app.btcourier.core.testing.WicanLines.row
 import app.btcourier.core.testing.WicanLines.storedRow
 import app.btcourier.core.wican.ExportPageParser
-import org.junit.jupiter.api.Assertions.assertArrayEquals
-import org.junit.jupiter.api.Assertions.assertEquals
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import org.junit.jupiter.api.Assertions.assertArrayEquals
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 /**
@@ -32,7 +32,12 @@ class JournalNormalizerTest {
     private val normalizer = JournalNormalizer()
 
     /** (file, raw stamp, repaired stamp, quality) per stored row: what each scenario asserts. */
-    private data class Fixed(val file: String?, val raw: Long?, val ts: Long?, val quality: TsQuality)
+    private data class Fixed(
+        val file: String?,
+        val raw: Long?,
+        val ts: Long?,
+        val quality: TsQuality,
+    )
 
     private fun fix(
         lines: List<String>,
@@ -42,10 +47,14 @@ class JournalNormalizerTest {
     ) = storedRows(normalizer.fix(lines, journal, anchor, openFile), openFile)
 
     /** Reads the stored rows back, each attributed to its file by the markers kept in the output. */
-    private fun storedRows(normalized: Normalized, openFile: String?): List<Fixed> {
+    private fun storedRows(
+        normalized: Normalized,
+        openFile: String?,
+    ): List<Fixed> {
         val rows = mutableListOf<Fixed>()
         walkFiles(normalized.lines, openFile) { _, kind, file ->
             if (kind !is StoredLine.Row) return@walkFiles
+
             fun long(key: String) = (kind.fields[key] as? JsonPrimitive)?.longOrNull
             val quality = (kind.fields["ts_quality"] as JsonPrimitive).content
             rows += Fixed(file, long("ts_raw"), long("ts"), TsQuality.entries.single { it.wire == quality })
@@ -59,23 +68,25 @@ class JournalNormalizerTest {
     private val synced = "dl_1784000060.jsonl"
     private val syncAt = 1_784_000_060_000L
     private val syncDelta = syncAt - 60_000
-    private val unsyncedBootLines = arrayOf(
-        boot(1, ts = 20_000, upMs = 20_000, valid = false, source = "none"),
-        clockSet("valid", 1, tsBefore = 60_000, tsAfter = syncAt, source = "sntp", unsynced),
-        rotate(1, ts = syncAt, from = unsynced, to = synced),
-    )
+    private val unsyncedBootLines =
+        arrayOf(
+            boot(1, ts = 20_000, upMs = 20_000, valid = false, source = "none"),
+            clockSet("valid", 1, tsBefore = 60_000, tsAfter = syncAt, source = "sntp", unsynced),
+            rotate(1, ts = syncAt, from = unsynced, to = synced),
+        )
     private val unsyncedBoot = journal(*unsyncedBootLines)
 
     @Test
     fun `boot with an invalid clock then an SNTP set re-bases rows at or before ts_before`() {
-        val lines = listOf(
-            fileMarker(unsynced),
-            row(25_000),
-            row(59_000),
-            row(60_000),
-            // Queued before the set, written after it: the device already stamped it on the new clock.
-            row(syncAt + 200),
-        )
+        val lines =
+            listOf(
+                fileMarker(unsynced),
+                row(25_000),
+                row(59_000),
+                row(60_000),
+                // Queued before the set, written after it: the device already stamped it on the new clock.
+                row(syncAt + 200),
+            )
 
         assertEquals(
             listOf(
@@ -90,13 +101,14 @@ class JournalNormalizerTest {
 
     @Test
     fun `markers are stored in place and rows in the file rotated to by the clock are untouched`() {
-        val lines = listOf(
-            fileMarker(unsynced),
-            row(30_000),
-            fileMarker(synced),
-            row(syncAt + 1_000),
-            row(syncAt + 2_000),
-        )
+        val lines =
+            listOf(
+                fileMarker(unsynced),
+                row(30_000),
+                fileMarker(synced),
+                row(syncAt + 1_000),
+                row(syncAt + 2_000),
+            )
 
         assertEquals(
             Normalized(
@@ -137,7 +149,10 @@ class JournalNormalizerTest {
             Normalized(emptyList(), rows = 0, lastFile = synced),
             normalizer.fix(listOf(fileMarker(unsynced), fileMarker(synced)), unsyncedBoot, anchor = null),
         )
-        assertEquals(Normalized(emptyList(), rows = 0, lastFile = unsynced), normalizer.fix(emptyList(), unsyncedBoot, null, unsynced))
+        assertEquals(
+            Normalized(emptyList(), rows = 0, lastFile = unsynced),
+            normalizer.fix(emptyList(), unsyncedBoot, null, unsynced),
+        )
     }
 
     @Test
@@ -146,7 +161,11 @@ class JournalNormalizerTest {
         val hr = """{"ts":1760400000000,"param":"colmi.hr","value":61}"""
 
         assertEquals(
-            Normalized(listOf(day, storedRow(1_760_400_000_000, 1_760_400_000_000, "device", "colmi.hr", "61")), 1, "colmi/2026-10-14"),
+            Normalized(
+                listOf(day, storedRow(1_760_400_000_000, 1_760_400_000_000, "device", "colmi.hr", "61")),
+                1,
+                "colmi/2026-10-14",
+            ),
             normalizer.fix(listOf(day, hr), journal = emptyList(), anchor = null),
         )
     }
@@ -155,20 +174,30 @@ class JournalNormalizerTest {
     private val b0 = 1_784_100_000_000L
     private val stepped = "dl_1784099990.jsonl"
     private val openedBetween = "dl_1784100095.jsonl"
-    private val twoStepBoot = journal(
-        boot(2, ts = b0, upMs = 10_000, valid = true, source = "rtc"),
-        clockSet("step", 2, tsBefore = b0 + 60_000, tsAfter = b0 + 90_000, source = "sntp", stepped),
-        clockSet("step", 2, tsBefore = b0 + 120_000, tsAfter = b0 + 100_000, source = "sntp", stepped, openedBetween),
-    )
+    private val twoStepBoot =
+        journal(
+            boot(2, ts = b0, upMs = 10_000, valid = true, source = "rtc"),
+            clockSet("step", 2, tsBefore = b0 + 60_000, tsAfter = b0 + 90_000, source = "sntp", stepped),
+            clockSet(
+                "step",
+                2,
+                tsBefore = b0 + 120_000,
+                tsAfter = b0 + 100_000,
+                source = "sntp",
+                stepped,
+                openedBetween,
+            ),
+        )
 
     @Test
     fun `multiple steps in one boot compound in journal order`() {
-        val lines = listOf(
-            fileMarker(stepped),
-            row(b0 + 30_000), // before both: +30 s puts it at b0+60 s, still before the second
-            row(b0 + 100_000), // between them, on the once-corrected clock
-            row(b0 + 125_000), // after both
-        )
+        val lines =
+            listOf(
+                fileMarker(stepped),
+                row(b0 + 30_000), // before both: +30 s puts it at b0+60 s, still before the second
+                row(b0 + 100_000), // between them, on the once-corrected clock
+                row(b0 + 125_000), // after both
+            )
 
         assertEquals(
             listOf(
@@ -183,13 +212,14 @@ class JournalNormalizerTest {
     @Test
     fun `rows from an earlier boot in a resumed file keep their stamp, against the origin moved by earlier sets`() {
         // Origin = b0 - 10 s; after the +30 s step it is b0 + 20 s, so the cut-off is b0 + 15 s.
-        val lines = listOf(
-            fileMarker(stepped),
-            row(b0 - 16_000),
-            fileMarker(openedBetween),
-            row(b0 + 14_000),
-            row(b0 + 110_000),
-        )
+        val lines =
+            listOf(
+                fileMarker(stepped),
+                row(b0 - 16_000),
+                fileMarker(openedBetween),
+                row(b0 + 14_000),
+                row(b0 + 110_000),
+            )
 
         assertEquals(
             listOf(
@@ -206,11 +236,12 @@ class JournalNormalizerTest {
     private val beforeBack = "dl_1784199995.jsonl"
     private val afterBack = "dl_1784193400.jsonl"
     private val backAt = c0 + 600_000 - 7_200_000
-    private val backwardBoot = journal(
-        boot(3, ts = c0, upMs = 5_000, valid = true, source = "rtc"),
-        clockSet("step", 3, tsBefore = c0 + 600_000, tsAfter = backAt, source = "manual", beforeBack),
-        rotate(3, ts = backAt, from = beforeBack, to = afterBack),
-    )
+    private val backwardBoot =
+        journal(
+            boot(3, ts = c0, upMs = 5_000, valid = true, source = "rtc"),
+            clockSet("step", 3, tsBefore = c0 + 600_000, tsAfter = backAt, source = "manual", beforeBack),
+            rotate(3, ts = backAt, from = beforeBack, to = afterBack),
+        )
 
     @Test
     fun `after a backward step only files the step lists are shifted`() {
@@ -309,11 +340,16 @@ class JournalNormalizerTest {
 
     @Test
     fun `odd lines are stored without a timestamp, blank lines and a stray cursor line are dropped`() {
-        val lines = listOf("not json", "", """{"param":"autopid.TEST","value":2}""", meta("1:10", more = false), "[1,2]")
+        val lines =
+            listOf("not json", "", """{"param":"autopid.TEST","value":2}""", meta("1:10", more = false), "[1,2]")
 
         assertEquals(
             Normalized(
-                listOf("not json", """{"param":"autopid.TEST","value":2,"ts_raw":null,"ts_quality":"unknown"}""", "[1,2]"),
+                listOf(
+                    "not json",
+                    """{"param":"autopid.TEST","value":2,"ts_raw":null,"ts_quality":"unknown"}""",
+                    "[1,2]",
+                ),
                 rows = 3,
                 lastFile = null,
             ),
@@ -323,21 +359,25 @@ class JournalNormalizerTest {
 
     @Test
     fun `identical input gives identical output bytes`() {
-        val body = listOf(
-            fileMarker(unsynced),
-            row(25_000, value = "1.25"),
-            """{"ts":26000,"value":3,"param":"autopid.é","x":{"b":1,"a":[2,1]}}""",
-            fileMarker(synced),
-            row(syncAt + 1_000),
-            row(7_000),
-            meta("1784000060:512", more = false),
-        ).joinToString("\n")
+        val body =
+            listOf(
+                fileMarker(unsynced),
+                row(25_000, value = "1.25"),
+                """{"ts":26000,"value":3,"param":"autopid.é","x":{"b":1,"a":[2,1]}}""",
+                fileMarker(synced),
+                row(syncAt + 1_000),
+                row(7_000),
+                meta("1784000060:512", more = false),
+            ).joinToString("\n")
         val anchor = Anchor(phoneEpochMs = 1_784_400_000_000, deviceEpochMs = 90_000)
 
         // Fresh parser output and normalizer each run, as a re-sync after a restart would have.
-        fun run() = JournalNormalizer().fix(ExportPageParser.parse(body).lines, journal(*unsyncedBootLines), anchor)
-            .lines.joinToString("\n")
-            .encodeToByteArray()
+        fun run() =
+            JournalNormalizer()
+                .fix(ExportPageParser.parse(body).lines, journal(*unsyncedBootLines), anchor)
+                .lines
+                .joinToString("\n")
+                .encodeToByteArray()
 
         assertArrayEquals(run(), run())
     }

@@ -20,17 +20,26 @@ class WicanGattTest {
 
     @Test
     fun `request frames are written to FFF4 with response`() {
-        assertEquals(GattProfile.WriteRoute(WicanGatt.HTTP_IN, WriteType.WithResponse), WicanGatt.PROFILE.routeWrite(true))
+        assertEquals(
+            GattProfile.WriteRoute(WicanGatt.HTTP_IN, WriteType.WithResponse),
+            WicanGatt.PROFILE.routeWrite(true),
+        )
     }
 
     @Test
     fun `credit and abort frames are written to FFF4 without response`() {
-        assertEquals(GattProfile.WriteRoute(WicanGatt.HTTP_IN, WriteType.WithoutResponse), WicanGatt.PROFILE.routeWrite(false))
+        assertEquals(
+            GattProfile.WriteRoute(WicanGatt.HTTP_IN, WriteType.WithoutResponse),
+            WicanGatt.PROFILE.routeWrite(false),
+        )
     }
 
     @Test
     fun `nothing is ever written to the notify characteristic`() {
-        listOf(true, false).forEach { assertTrue(WicanGatt.PROFILE.routeWrite(it).characteristic != WicanGatt.HTTP_OUT) }
+        listOf(
+            true,
+            false,
+        ).forEach { assertTrue(WicanGatt.PROFILE.routeWrite(it).characteristic != WicanGatt.HTTP_OUT) }
     }
 
     @Test

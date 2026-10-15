@@ -20,14 +20,23 @@ import java.security.spec.ECPublicKeySpec
 import java.util.Base64
 
 class SshKeysTest {
-    private val p256: ECParameterSpec = AlgorithmParameters.getInstance("EC")
-        .apply { init(ECGenParameterSpec("secp256r1")) }
-        .getParameterSpec(ECParameterSpec::class.java)
+    private val p256: ECParameterSpec =
+        AlgorithmParameters
+            .getInstance("EC")
+            .apply { init(ECGenParameterSpec("secp256r1")) }
+            .getParameterSpec(ECParameterSpec::class.java)
 
-    private fun publicKey(x: BigInteger, y: BigInteger) =
-        KeyFactory.getInstance("EC").generatePublic(ECPublicKeySpec(ECPoint(x, y), p256)) as ECPublicKey
+    private fun publicKey(
+        x: BigInteger,
+        y: BigInteger,
+    ) = KeyFactory.getInstance("EC").generatePublic(ECPublicKeySpec(ECPoint(x, y), p256)) as ECPublicKey
 
-    private fun hex(s: String): ByteArray = s.replace(" ", "").chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    private fun hex(s: String): ByteArray =
+        s
+            .replace(" ", "")
+            .chunked(2)
+            .map { it.toInt(16).toByte() }
+            .toByteArray()
 
     private fun blobOf(line: String) = Base64.getDecoder().decode(line.split(' ')[1])
 
@@ -38,29 +47,36 @@ class SshKeysTest {
         val gy = "4FE342E2 FE1A7F9B 8EE7EB4A 7C0F9E16 2BCE3357 6B315ECE CBB64068 37BF51F5"
         val key = publicKey(BigInteger(gx.replace(" ", ""), 16), BigInteger(gy.replace(" ", ""), 16))
         // string "ecdsa-sha2-nistp256" || string "nistp256" || string (0x04 || X || Y), each uint32-length-prefixed.
-        val expected = hex("00000013") + "ecdsa-sha2-nistp256".toByteArray() +
-            hex("00000008") + "nistp256".toByteArray() +
-            hex("00000041 04") + hex(gx) + hex(gy)
+        val expected =
+            hex("00000013") + "ecdsa-sha2-nistp256".toByteArray() +
+                hex("00000008") + "nistp256".toByteArray() +
+                hex("00000041 04") + hex(gx) + hex(gy)
 
         val line = openSshPublicKey(key, comment = "btcourier-test")
 
         assertEquals("ecdsa-sha2-nistp256 " + Base64.getEncoder().encodeToString(expected) + " btcourier-test", line)
         // Every OpenSSH nistp256 key starts with this; a quick sanity check against real-world output.
-        assertEquals(true, line.startsWith("ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBGsX0fLhLEJH"))
+        assertEquals(
+            true,
+            line.startsWith("ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBGsX0fLhLEJH"),
+        )
     }
 
     @Test
     fun `coordinates with leading zero bytes are padded to 32 bytes, and the blob matches the SFTP transport's`() {
         val generator = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }
         // About 1 in 128 keys has a coordinate below 2^248.
-        val key = generateSequence { generator.generateKeyPair().public as ECPublicKey }
-            .take(20_000)
-            .first { it.w.affineX.bitLength() <= 248 || it.w.affineY.bitLength() <= 248 }
+        val key =
+            generateSequence { generator.generateKeyPair().public as ECPublicKey }
+                .take(20_000)
+                .first { it.w.affineX.bitLength() <= 248 || it.w.affineY.bitLength() <= 248 }
 
         val blob = blobOf(openSshPublicKey(key))
 
         assertEquals(4 + 19 + 4 + 8 + 4 + 65, blob.size)
-        val fingerprint = "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(blob))
+        val fingerprint =
+            "SHA256:" +
+                Base64.getEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(blob))
         assertEquals(SftpUploadTransport.fingerprintOf(key), fingerprint, "same key blob as sshj builds")
     }
 

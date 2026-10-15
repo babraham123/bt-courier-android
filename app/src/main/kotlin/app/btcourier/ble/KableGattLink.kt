@@ -28,17 +28,23 @@ import kotlin.uuid.toKotlinUuid
 /** Connection state of a [KableGattLink], without Kable or Android types. */
 sealed interface LinkState {
     data object Connecting : LinkState
+
     data object Connected : LinkState
+
     data object Disconnecting : LinkState
-    data class Disconnected(val reason: String? = null) : LinkState
+
+    data class Disconnected(
+        val reason: String? = null,
+    ) : LinkState
 }
 
-internal fun State.toLinkState(): LinkState = when (this) {
-    is State.Connecting -> LinkState.Connecting
-    is State.Connected -> LinkState.Connected
-    State.Disconnecting -> LinkState.Disconnecting
-    is State.Disconnected -> LinkState.Disconnected(status?.toString())
-}
+internal fun State.toLinkState(): LinkState =
+    when (this) {
+        is State.Connecting -> LinkState.Connecting
+        is State.Connected -> LinkState.Connected
+        State.Disconnecting -> LinkState.Disconnecting
+        is State.Disconnected -> LinkState.Disconnected(status?.toString())
+    }
 
 /**
  * [GattLink] over Kable to the characteristics of a [GattProfile]: notifications from
@@ -88,7 +94,8 @@ class KableGattLink private constructor(
         connection.launch {
             var failure: Throwable? = null
             try {
-                peripheral.observe(characteristic(profile.notify)) { subscribed.complete(Unit) }
+                peripheral
+                    .observe(characteristic(profile.notify)) { subscribed.complete(Unit) }
                     .collect { pending.send(it) }
             } catch (e: CancellationException) {
                 throw e
@@ -104,7 +111,10 @@ class KableGattLink private constructor(
         subscribed.await()
     }
 
-    override suspend fun write(bytes: ByteArray, withResponse: Boolean) {
+    override suspend fun write(
+        bytes: ByteArray,
+        withResponse: Boolean,
+    ) {
         if (closed.get()) throw IOException("link closed")
         require(bytes.size <= mtu - 3) { "PDU of ${bytes.size} bytes exceeds MTU payload ${mtu - 3}" }
         val route = profile.routeWrite(withResponse)
@@ -134,8 +144,7 @@ class KableGattLink private constructor(
         peripheral.close()
     }
 
-    private fun characteristic(uuid: UUID) =
-        characteristicOf(profile.service.toKotlinUuid(), uuid.toKotlinUuid())
+    private fun characteristic(uuid: UUID) = characteristicOf(profile.service.toKotlinUuid(), uuid.toKotlinUuid())
 
     companion object {
         /**
@@ -144,23 +153,28 @@ class KableGattLink private constructor(
          *
          * @throws IOException if the link cannot be established within [connectTimeout].
          */
-        suspend fun connect(address: String, profile: GattProfile, connectTimeout: Duration = 30.seconds): KableGattLink {
-            val peripheral = Peripheral(address.toIdentifier()) {
-                transport = Transport.Le
-                if (profile.mtu > GattProfile.DEFAULT_MTU) {
-                    onServicesDiscovered {
-                        // Before observations start, so the first notification already uses the
-                        // large MTU. A refusal leaves the default 23, which the codec still handles.
-                        try {
-                            requestMtu(profile.mtu)
-                        } catch (e: IOException) {
-                            // Keep the default MTU.
-                        } catch (e: IllegalStateException) {
-                            // GattRequestRejectedException: keep the default MTU.
+        suspend fun connect(
+            address: String,
+            profile: GattProfile,
+            connectTimeout: Duration = 30.seconds,
+        ): KableGattLink {
+            val peripheral =
+                Peripheral(address.toIdentifier()) {
+                    transport = Transport.Le
+                    if (profile.mtu > GattProfile.DEFAULT_MTU) {
+                        onServicesDiscovered {
+                            // Before observations start, so the first notification already uses the
+                            // large MTU. A refusal leaves the default 23, which the codec still handles.
+                            try {
+                                requestMtu(profile.mtu)
+                            } catch (e: IOException) {
+                                // Keep the default MTU.
+                            } catch (e: IllegalStateException) {
+                                // GattRequestRejectedException: keep the default MTU.
+                            }
                         }
                     }
-                }
-            } as AndroidPeripheral
+                } as AndroidPeripheral
             // Kable writes ENABLE_NOTIFICATION_VALUE (0x0001) when a characteristic offers notify,
             // which both profiles' characteristics do; for the WiCAN's FFF3 that is the fast
             // credit-based mode BleHttpTransport implements.

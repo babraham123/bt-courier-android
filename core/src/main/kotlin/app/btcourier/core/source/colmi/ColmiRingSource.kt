@@ -76,7 +76,10 @@ class ColmiRingSource(
     override suspend fun pull(cursor: String?): Page {
         val last = cursor?.let(::parseCursor)
         if (!clockSet) {
-            link.write(ColmiPacketCodec.setTime(LocalDateTime.ofInstant(Instant.ofEpochMilli(phoneClock()), zone)), WITHOUT_RESPONSE)
+            link.write(
+                ColmiPacketCodec.setTime(LocalDateTime.ofInstant(Instant.ofEpochMilli(phoneClock()), zone)),
+                WITHOUT_RESPONSE,
+            )
             clockSet = true
         }
         val today = Instant.ofEpochMilli(phoneClock()).atZone(zone).toLocalDate()
@@ -86,15 +89,19 @@ class ColmiRingSource(
         if (!day.isBefore(today)) return Page(emptyList(), checkNotNull(cursor), more = false)
 
         val rows = (heartRateRows(day) + stepsRows(day, today)).sortedBy { it.ts }
-        val lines = buildList {
-            add(StoredLine.marker("$FILE_PREFIX$day"))
-            rows.forEach { add(it.json()) }
-            if (!batteryReported) {
-                val battery = link.colmiRequest(ColmiPacketCodec.batteryRequest(), responseTimeout) { ColmiPacketCodec.parseBattery(it) }
-                add(Row(phoneClock(), PARAM_BATTERY, battery.level).json())
-                batteryReported = true
+        val lines =
+            buildList {
+                add(StoredLine.marker("$FILE_PREFIX$day"))
+                rows.forEach { add(it.json()) }
+                if (!batteryReported) {
+                    val battery =
+                        link.colmiRequest(ColmiPacketCodec.batteryRequest(), responseTimeout) {
+                            ColmiPacketCodec.parseBattery(it)
+                        }
+                    add(Row(phoneClock(), PARAM_BATTERY, battery.level).json())
+                    batteryReported = true
+                }
             }
-        }
         return Page(lines, day.toString(), more = day.plusDays(1).isBefore(today))
     }
 
@@ -102,13 +109,21 @@ class ColmiRingSource(
 
     private suspend fun heartRateRows(day: LocalDate): List<Row> {
         val start = day.atStartOfDay()
-        val log = link.colmiRequest(ColmiPacketCodec.heartRateLogRequest(ringEpochSeconds(start)), responseTimeout, HeartRateLogAssembler())
+        val log =
+            link.colmiRequest(
+                ColmiPacketCodec.heartRateLogRequest(ringEpochSeconds(start)),
+                responseTimeout,
+                HeartRateLogAssembler(),
+            )
         return log.values.mapIndexedNotNull { slot, bpm ->
             if (bpm == 0) null else Row(epochMs(start.plusMinutes(slot.toLong() * log.intervalMinutes)), PARAM_HR, bpm)
         }
     }
 
-    private suspend fun stepsRows(day: LocalDate, today: LocalDate): List<Row> {
+    private suspend fun stepsRows(
+        day: LocalDate,
+        today: LocalDate,
+    ): List<Row> {
         val offset = ChronoUnit.DAYS.between(day, today).toInt()
         return link.colmiRequest(ColmiPacketCodec.stepsLogRequest(offset), responseTimeout, StepsLogAssembler()).map {
             Row(epochMs(it.date.atStartOfDay().plusMinutes(it.quarter * 15L)), PARAM_STEPS, it.steps)
@@ -127,7 +142,11 @@ class ColmiRingSource(
             throw IllegalArgumentException("not a Colmi cursor (YYYY-MM-DD): $cursor", e)
         }
 
-    private class Row(val ts: Long, val param: String, val value: Int) {
+    private class Row(
+        val ts: Long,
+        val param: String,
+        val value: Int,
+    ) {
         fun json() = """{"ts":$ts,"param":"$param","value":$value}"""
     }
 

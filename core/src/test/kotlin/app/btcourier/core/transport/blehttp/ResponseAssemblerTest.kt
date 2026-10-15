@@ -9,14 +9,24 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 class ResponseAssemblerTest {
-    private fun started(length: Long, seq: Int = 5, step: Int = BleHttpWire.CLIENT_CREDIT_STEP) =
-        ResponseAssembler(seq, step).also { it.accept(Frame.responseHead(seq, ResponseHead(200, "application/octet-stream", length))) }
+    private fun started(
+        length: Long,
+        seq: Int = 5,
+        step: Int = BleHttpWire.CLIENT_CREDIT_STEP,
+    ) = ResponseAssembler(seq, step).also {
+        it.accept(Frame.responseHead(seq, ResponseHead(200, "application/octet-stream", length)))
+    }
 
     @Test
     fun `a counter gap is a lost frame`() {
         val a = started(2000)
         a.accept(Frame.responseBody(5, 0, last = false, ByteArray(482)))
-        val e = assertThrows<BleHttpException.FrameLost> { a.accept(Frame.responseBody(5, 2, last = false, ByteArray(482))) }
+        val e =
+            assertThrows<BleHttpException.FrameLost> {
+                a.accept(
+                    Frame.responseBody(5, 2, last = false, ByteArray(482)),
+                )
+            }
         assertEquals(1, e.expectedCounter)
         assertEquals(2, e.actualCounter)
         assertEquals(482L, e.bytesReceived)

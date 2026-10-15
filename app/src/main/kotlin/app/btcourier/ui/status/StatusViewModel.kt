@@ -34,15 +34,28 @@ data class LastSync(
     val stoppedBecause: SyncStopKind?,
 )
 
-data class LastUpload(val atMs: Long, val result: UploadResultKind)
+data class LastUpload(
+    val atMs: Long,
+    val result: UploadResultKind,
+)
 
-data class LastError(val message: String, val atMs: Long?)
+data class LastError(
+    val message: String,
+    val atMs: Long?,
+)
 
 /** A paired device with its latest sync; [lastSync] and [cursor] are null before its first sync. */
-data class DeviceRow(val device: PairedDevice, val lastSync: LastSync?, val cursor: String?)
+data class DeviceRow(
+    val device: PairedDevice,
+    val lastSync: LastSync?,
+    val cursor: String?,
+)
 
 /** A sink's last outcome under its current name; its id when the sink has been deleted since. */
-data class SinkRow(val name: String, val upload: SinkUpload)
+data class SinkRow(
+    val name: String,
+    val upload: SinkUpload,
+)
 
 data class StatusUiState(
     val loading: Boolean = true,
@@ -67,7 +80,10 @@ enum class ExportResult { SAVED, FAILED }
 interface DiagnosticsExport {
     suspend fun text(): String
 
-    suspend fun save(target: Uri, text: String)
+    suspend fun save(
+        target: Uri,
+        text: String,
+    )
 }
 
 private val REACHED_DEVICE = setOf(SyncResultKind.CAUGHT_UP, SyncResultKind.INTERRUPTED, SyncResultKind.DEVICE_ERROR)
@@ -84,13 +100,18 @@ private fun DeviceSync.toLastSync(): LastSync {
 }
 
 /** Pure mapping from the persisted sources to what the status screen shows. */
-fun statusUiState(status: SyncStatus, settings: AppSettings, devices: List<PairedDevice>): StatusUiState =
+fun statusUiState(
+    status: SyncStatus,
+    settings: AppSettings,
+    devices: List<PairedDevice>,
+): StatusUiState =
     StatusUiState(
         loading = false,
-        devices = devices.map { device ->
-            val sync = status.syncOf(device.address)
-            DeviceRow(device, sync?.toLastSync(), sync?.cursor)
-        },
+        devices =
+            devices.map { device ->
+                val sync = status.syncOf(device.address)
+                DeviceRow(device, sync?.toLastSync(), sync?.cursor)
+            },
         pendingBatches = status.pendingBatches,
         bytesStored = status.bytesStored,
         cacheCapBytes = settings.cacheCapBytes,
@@ -98,9 +119,11 @@ fun statusUiState(status: SyncStatus, settings: AppSettings, devices: List<Paire
         droppedBytes = status.droppedBytes,
         sinkConfigured = configuredSinkIds(settings).isNotEmpty(),
         lastUpload = status.lastUpload?.let { LastUpload(status.lastUploadAtMs ?: 0, it) },
-        sinks = status.lastUploadBySink.map { (id, upload) ->
-            SinkRow(settings.sinks.firstOrNull { it.id == id }?.name ?: id, upload)
-        }.sortedBy { it.name },
+        sinks =
+            status.lastUploadBySink
+                .map { (id, upload) ->
+                    SinkRow(settings.sinks.firstOrNull { it.id == id }?.name ?: id, upload)
+                }.sortedBy { it.name },
         lastError = status.lastError?.let { LastError(it, status.lastErrorAtMs) },
     )
 
@@ -152,16 +175,17 @@ class StatusViewModel(
 
     fun saveExport(target: Uri) {
         viewModelScope.launch {
-            export.value = try {
-                diagnostics.save(target, diagnostics.text())
-                ExportResult.SAVED
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: IOException) {
-                ExportResult.FAILED
-            } catch (_: SecurityException) {
-                ExportResult.FAILED
-            }
+            export.value =
+                try {
+                    diagnostics.save(target, diagnostics.text())
+                    ExportResult.SAVED
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: IOException) {
+                    ExportResult.FAILED
+                } catch (_: SecurityException) {
+                    ExportResult.FAILED
+                }
         }
     }
 

@@ -19,8 +19,7 @@ internal fun parseObjectOrNull(line: String): JsonObject? =
 internal fun JsonObject.primitive(key: String): JsonPrimitive? = get(key) as? JsonPrimitive
 
 /** A whole number however the device wrote it (`5`, `5.0`, `"5"`), or null. */
-internal fun JsonObject.long(key: String): Long? =
-    primitive(key)?.let { it.longOrNull ?: it.doubleOrNull?.toLong() }
+internal fun JsonObject.long(key: String): Long? = primitive(key)?.let { it.longOrNull ?: it.doubleOrNull?.toLong() }
 
 internal fun JsonObject.string(key: String): String? = primitive(key)?.takeIf { it.isString }?.content
 

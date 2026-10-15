@@ -64,7 +64,10 @@ data class Batch(
  * and object stores. The hash covers the uncompressed encoding, so the name stays stable even if
  * a zlib upgrade changes the compressed bytes between a failed upload and its retry.
  */
-fun encodeBatch(batch: SealedBatch, format: Format): Batch {
+fun encodeBatch(
+    batch: SealedBatch,
+    format: Format,
+): Batch {
     val content = format.encode(batch.lines, batch.sourceId)
     val hash = MessageDigest.getInstance("SHA-256").digest(content).joinToString("") { "%02x".format(it) }
     val name = "${sanitise(batch.sourceId)}-${sanitise(batch.firstCursor)}-${hash.take(16)}.${format.extension}.gz"

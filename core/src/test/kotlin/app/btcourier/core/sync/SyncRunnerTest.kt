@@ -67,25 +67,33 @@ class SyncRunnerTest {
     private val tsBefore = 95_000L
     private val tsAfter = 1_784_000_000_000L
     private val delta = tsAfter - tsBefore
-    private val clockJournal = journal(
-        boot(1, ts = 20_000, upMs = 20_000, valid = false, source = "none"),
-        clockSet("valid", 1, tsBefore, tsAfter, "sntp", fileA),
-    )
+    private val clockJournal =
+        journal(
+            boot(1, ts = 20_000, upMs = 20_000, valid = false, source = "none"),
+            clockSet("valid", 1, tsBefore, tsAfter, "sntp", fileA),
+        )
 
     // Each page restates the marker of the file it starts in, as the WiCAN export does.
-    private val pages = mapOf(
-        null to Page(listOf(fileMarker(fileA), row(30_000), row(60_000)), "1:100", more = true),
-        "1:100" to Page(listOf(fileMarker(fileA), row(90_000), fileMarker(fileB), row(tsAfter + 1_000)), "1784000000:60", more = true),
-        "1784000000:60" to Page(listOf(fileMarker(fileB), row(tsAfter + 2_000)), "1784000000:120", more = false),
-    )
+    private val pages =
+        mapOf(
+            null to Page(listOf(fileMarker(fileA), row(30_000), row(60_000)), "1:100", more = true),
+            "1:100" to
+                Page(
+                    listOf(fileMarker(fileA), row(90_000), fileMarker(fileB), row(tsAfter + 1_000)),
+                    "1784000000:60",
+                    more = true,
+                ),
+            "1784000000:60" to Page(listOf(fileMarker(fileB), row(tsAfter + 2_000)), "1784000000:120", more = false),
+        )
 
-    private val expectedRows = listOf(
-        storedRow(30_000, 30_000 + delta, "journal"),
-        storedRow(60_000, 60_000 + delta, "journal"),
-        storedRow(90_000, 90_000 + delta, "journal"),
-        storedRow(tsAfter + 1_000, tsAfter + 1_000, "device"),
-        storedRow(tsAfter + 2_000, tsAfter + 2_000, "device"),
-    )
+    private val expectedRows =
+        listOf(
+            storedRow(30_000, 30_000 + delta, "journal"),
+            storedRow(60_000, 60_000 + delta, "journal"),
+            storedRow(90_000, 90_000 + delta, "journal"),
+            storedRow(tsAfter + 1_000, tsAfter + 1_000, "device"),
+            storedRow(tsAfter + 2_000, tsAfter + 2_000, "device"),
+        )
 
     private val store = DefaultStore.inMemory(clock = { 0 }, sinkIds = { setOf("sink") })
 
@@ -93,159 +101,234 @@ class SyncRunnerTest {
 
     /** Runs one sync, then seals everything, so pending batches show what was stored. */
     private suspend fun sync(source: Source): SyncReport =
-        SyncRunner("wican", source, store, busyBackoff = busyBackoff).run().also { store.seal(SealPolicy(maxBatchAgeMs = 0), 0) }
-
-    @Test
-    fun `pulls from the stored cursor until more is false, journal first, rows re-based per file`() = runTest {
-        val source = ScriptedSource(pages, clockJournal)
-
-        val report = sync(source)
-
-        assertEquals(SyncReport(pagesPulled = 3, linesStored = 5, duplicates = 0, StopReason.CaughtUp), report)
-        assertEquals(listOf("status", "journal", "pull null", "pull 1:100", "pull 1784000000:60"), source.calls)
-        assertEquals("1784000000:120", store.cursor("wican"))
-        val batches = store.pendingRows("sink")
-        assertEquals(2, batches.size, "sealed at the file boundary")
-        assertEquals(expectedRows, batches.flatten())
-        assertEquals(listOf(fileMarker(fileA), fileMarker(fileB)), store.pending("sink").map { it.lines.first() })
-    }
-
-    @Test
-    fun `a page that starts mid-file is normalised as the file the previous page left open`() = runTest {
-        val resumed = pages + ("1:100" to Page(listOf(row(90_000), fileMarker(fileB), row(tsAfter + 1_000)), "1784000000:60", more = true))
-
-        sync(ScriptedSource(resumed, clockJournal))
-
-        assertEquals(expectedRows, store.pendingRows("sink").flatten())
-    }
-
-    @Test
-    fun `a sync whose first page resumes mid-file without a marker re-bases it as the file the store left open`() = runTest {
-        val firstSync = mapOf<String?, Page>(null to Page(listOf(fileMarker(fileA), row(30_000), row(60_000)), "1:100", more = false))
-        sync(ScriptedSource(firstSync, clockJournal))
-
-        val resumed = mapOf<String?, Page>("1:100" to Page(listOf(row(90_000)), "1:130", more = false))
-        sync(ScriptedSource(resumed, clockJournal))
-
-        assertEquals(expectedRows.take(3), store.pendingRows("sink").flatten())
-    }
-
-    @Test
-    fun `the device status becomes the anchor for rows the journal cannot place`() = runTest {
-        // Clock never set this boot: rows are 1970 + uptime and no journal event names the file.
-        val unset = mapOf<String?, Page>(null to Page(listOf(fileMarker("dl_2.jsonl"), row(50_000)), "2:40", more = false))
-        val status = DeviceStatus(deviceEpochMs = 100_000, phoneEpochMs = 1_784_000_100_000, clockValid = false)
-
-        sync(ScriptedSource(unset, status = status))
-
-        val offset = 1_784_000_100_000 - 100_000
-        assertEquals(listOf(storedRow(50_000, 50_000 + offset, "anchor")), store.pendingRows("sink").flatten())
-    }
-
-    @Test
-    fun `link loss stops cleanly at the last persisted page and the next run resumes there`() = runTest {
-        val source = ScriptedSource(pages, clockJournal)
-        source.failPull = { cursor, attempt -> if (cursor == "1:100" && attempt == 1) IOException("link lost") else null }
-
-        val first = sync(source)
-
-        assertTrue(first.stoppedBecause is StopReason.LinkLost)
-        assertEquals(1, first.pagesPulled)
-        assertEquals(2, first.linesStored)
-        assertEquals("1:100", store.cursor("wican"))
-        assertEquals(expectedRows.take(2), store.pendingRows("sink").flatten())
-
-        source.calls.clear()
-        val second = sync(source)
-
-        assertEquals(StopReason.CaughtUp, second.stoppedBecause)
-        assertEquals("pull 1:100", source.calls[2])
-        assertEquals(expectedRows, store.pendingRows("sink").flatten())
-    }
-
-    @Test
-    fun `a truncated page is not stored and the cursor stays`() = runTest {
-        val failure = SourceException.Truncated("/api/logger/export")
-        val source = ScriptedSource(pages, clockJournal).apply { failPull = { c, _ -> failure.takeIf { c == "1:100" } } }
-
-        val report = sync(source)
-
-        assertEquals(StopReason.Truncated(failure), report.stoppedBecause)
-        assertEquals("1:100", store.cursor("wican"))
-    }
-
-    @Test
-    fun `429 is retried after each back-off wait, then the sync stops as Busy`() = runTest {
-        val flaky = ScriptedSource(pages, clockJournal).apply {
-            failPull = { c, attempt -> SourceException.Busy("export").takeIf { c == null && attempt <= 2 } }
+        SyncRunner("wican", source, store, busyBackoff = busyBackoff).run().also {
+            store.seal(SealPolicy(maxBatchAgeMs = 0), 0)
         }
-        assertEquals(StopReason.CaughtUp, sync(flaky).stoppedBecause)
-        assertEquals(3_000, currentTime)
-
-        val stuck = ScriptedSource(pages, clockJournal).apply { failPull = { _, _ -> SourceException.Busy("export") } }
-        val report = SyncRunner("wican", stuck, DefaultStore.inMemory(sinkIds = { emptySet() }), busyBackoff = busyBackoff).run()
-        assertEquals(StopReason.Busy, report.stoppedBecause)
-        assertEquals(4, stuck.calls.count { it.startsWith("pull") })
-        assertEquals(3_000 + 7_000, currentTime)
-
-        val impatient = ScriptedSource(pages, clockJournal).apply { failPull = { _, _ -> SourceException.Busy("export") } }
-        assertEquals(StopReason.Busy, SyncRunner("wican", impatient, store).run().stoppedBecause)
-        assertEquals(1, impatient.calls.count { it.startsWith("pull") }, "no waits, no retries")
-    }
 
     @Test
-    fun `a journal the device refuses stops the sync before anything is pulled`() = runTest {
-        // Rows stored without the journal would keep un-re-based stamps for good.
-        val source = ScriptedSource(pages, clockJournal).apply { failJournal = SourceException.DeviceError(409, "journal", "file in use") }
+    fun `pulls from the stored cursor until more is false, journal first, rows re-based per file`() =
+        runTest {
+            val source = ScriptedSource(pages, clockJournal)
 
-        val report = sync(source)
+            val report = sync(source)
 
-        assertTrue(report.stoppedBecause is StopReason.DeviceError)
-        assertEquals(0, report.pagesPulled)
-        assertEquals(listOf("status", "journal"), source.calls)
-        assertEquals(null, store.cursor("wican"))
-    }
-
-    @Test
-    fun `a caught-up device stores nothing and counts no duplicates`() = runTest {
-        sync(ScriptedSource(pages, clockJournal))
-        val caughtUp = mapOf<String?, Page>("1784000000:120" to Page(listOf(fileMarker(fileB)), "1784000000:120", more = false))
-
-        val report = sync(ScriptedSource(caughtUp, clockJournal))
-
-        assertEquals(SyncReport(pagesPulled = 1, linesStored = 0, duplicates = 0, StopReason.CaughtUp), report)
-        assertEquals(expectedRows, store.pendingRows("sink").flatten())
-    }
+            assertEquals(SyncReport(pagesPulled = 3, linesStored = 5, duplicates = 0, StopReason.CaughtUp), report)
+            assertEquals(listOf("status", "journal", "pull null", "pull 1:100", "pull 1784000000:60"), source.calls)
+            assertEquals("1784000000:120", store.cursor("wican"))
+            val batches = store.pendingRows("sink")
+            assertEquals(2, batches.size, "sealed at the file boundary")
+            assertEquals(expectedRows, batches.flatten())
+            assertEquals(listOf(fileMarker(fileA), fileMarker(fileB)), store.pending("sink").map { it.lines.first() })
+        }
 
     @Test
-    fun `a device that promises more without moving its cursor is not polled forever`() = runTest {
-        val stuck = pages + ("1:100" to Page(listOf(fileMarker(fileA), row(60_000)), "1:100", more = true))
+    fun `a page that starts mid-file is normalised as the file the previous page left open`() =
+        runTest {
+            val resumed =
+                pages +
+                    (
+                        "1:100" to
+                            Page(
+                                listOf(row(90_000), fileMarker(fileB), row(tsAfter + 1_000)),
+                                "1784000000:60",
+                                more = true,
+                            )
+                    )
 
-        val report = sync(ScriptedSource(stuck, clockJournal))
+            sync(ScriptedSource(resumed, clockJournal))
 
-        assertEquals(SyncReport(pagesPulled = 2, linesStored = 2, duplicates = 1, StopReason.NoProgress("1:100")), report)
-    }
-
-    @Test
-    fun `a page of markers only advances the cursor without storing a page`() = runTest {
-        val empty = mapOf<String?, Page>(
-            null to Page(listOf(fileMarker("dl_5.jsonl")), "6:0", more = true),
-            "6:0" to Page(listOf(fileMarker("dl_6.jsonl"), row(tsAfter)), "6:30", more = false),
-        )
-
-        val report = sync(ScriptedSource(empty))
-
-        val batches = store.pending("sink")
-        assertEquals(SyncReport(pagesPulled = 2, linesStored = 1, duplicates = 0, StopReason.CaughtUp), report)
-        assertEquals(listOf(listOf(fileMarker("dl_6.jsonl"), storedRow(tsAfter, tsAfter, "device"))), batches.map { it.lines })
-    }
+            assertEquals(expectedRows, store.pendingRows("sink").flatten())
+        }
 
     @Test
-    fun `other link failures are reported as link loss`() = runTest {
-        val source = ScriptedSource(pages, clockJournal).apply { failPull = { _, _ -> IOException("socket closed") } }
+    fun `a sync whose first page resumes mid-file without a marker re-bases it as the file the store left open`() =
+        runTest {
+            val firstSync =
+                mapOf<String?, Page>(
+                    null to Page(listOf(fileMarker(fileA), row(30_000), row(60_000)), "1:100", more = false),
+                )
+            sync(ScriptedSource(firstSync, clockJournal))
 
-        val report = sync(source)
+            val resumed = mapOf<String?, Page>("1:100" to Page(listOf(row(90_000)), "1:130", more = false))
+            sync(ScriptedSource(resumed, clockJournal))
 
-        assertEquals("socket closed", (report.stoppedBecause as StopReason.LinkLost).cause.message)
-    }
+            assertEquals(expectedRows.take(3), store.pendingRows("sink").flatten())
+        }
+
+    @Test
+    fun `the device status becomes the anchor for rows the journal cannot place`() =
+        runTest {
+            // Clock never set this boot: rows are 1970 + uptime and no journal event names the file.
+            val unset =
+                mapOf<String?, Page>(null to Page(listOf(fileMarker("dl_2.jsonl"), row(50_000)), "2:40", more = false))
+            val status = DeviceStatus(deviceEpochMs = 100_000, phoneEpochMs = 1_784_000_100_000, clockValid = false)
+
+            sync(ScriptedSource(unset, status = status))
+
+            val offset = 1_784_000_100_000 - 100_000
+            assertEquals(listOf(storedRow(50_000, 50_000 + offset, "anchor")), store.pendingRows("sink").flatten())
+        }
+
+    @Test
+    fun `link loss stops cleanly at the last persisted page and the next run resumes there`() =
+        runTest {
+            val source = ScriptedSource(pages, clockJournal)
+            source.failPull =
+                { cursor, attempt -> if (cursor == "1:100" && attempt == 1) IOException("link lost") else null }
+
+            val first = sync(source)
+
+            assertTrue(first.stoppedBecause is StopReason.LinkLost)
+            assertEquals(1, first.pagesPulled)
+            assertEquals(2, first.linesStored)
+            assertEquals("1:100", store.cursor("wican"))
+            assertEquals(expectedRows.take(2), store.pendingRows("sink").flatten())
+
+            source.calls.clear()
+            val second = sync(source)
+
+            assertEquals(StopReason.CaughtUp, second.stoppedBecause)
+            assertEquals("pull 1:100", source.calls[2])
+            assertEquals(expectedRows, store.pendingRows("sink").flatten())
+        }
+
+    @Test
+    fun `a truncated page is not stored and the cursor stays`() =
+        runTest {
+            val failure = SourceException.Truncated("/api/logger/export")
+            val source =
+                ScriptedSource(pages, clockJournal).apply {
+                    failPull = {
+                        c,
+                        _,
+                        ->
+                        failure.takeIf { c == "1:100" }
+                    }
+                }
+
+            val report = sync(source)
+
+            assertEquals(StopReason.Truncated(failure), report.stoppedBecause)
+            assertEquals("1:100", store.cursor("wican"))
+        }
+
+    @Test
+    fun `429 is retried after each back-off wait, then the sync stops as Busy`() =
+        runTest {
+            val flaky =
+                ScriptedSource(pages, clockJournal).apply {
+                    failPull = { c, attempt -> SourceException.Busy("export").takeIf { c == null && attempt <= 2 } }
+                }
+            assertEquals(StopReason.CaughtUp, sync(flaky).stoppedBecause)
+            assertEquals(3_000, currentTime)
+
+            val stuck =
+                ScriptedSource(pages, clockJournal).apply {
+                    failPull =
+                        { _, _ -> SourceException.Busy("export") }
+                }
+            val report =
+                SyncRunner(
+                    "wican",
+                    stuck,
+                    DefaultStore.inMemory(sinkIds = {
+                        emptySet()
+                    }),
+                    busyBackoff = busyBackoff,
+                ).run()
+            assertEquals(StopReason.Busy, report.stoppedBecause)
+            assertEquals(4, stuck.calls.count { it.startsWith("pull") })
+            assertEquals(3_000 + 7_000, currentTime)
+
+            val impatient =
+                ScriptedSource(pages, clockJournal).apply {
+                    failPull =
+                        { _, _ -> SourceException.Busy("export") }
+                }
+            assertEquals(StopReason.Busy, SyncRunner("wican", impatient, store).run().stoppedBecause)
+            assertEquals(1, impatient.calls.count { it.startsWith("pull") }, "no waits, no retries")
+        }
+
+    @Test
+    fun `a journal the device refuses stops the sync before anything is pulled`() =
+        runTest {
+            // Rows stored without the journal would keep un-re-based stamps for good.
+            val source =
+                ScriptedSource(pages, clockJournal).apply {
+                    failJournal =
+                        SourceException.DeviceError(409, "journal", "file in use")
+                }
+
+            val report = sync(source)
+
+            assertTrue(report.stoppedBecause is StopReason.DeviceError)
+            assertEquals(0, report.pagesPulled)
+            assertEquals(listOf("status", "journal"), source.calls)
+            assertEquals(null, store.cursor("wican"))
+        }
+
+    @Test
+    fun `a caught-up device stores nothing and counts no duplicates`() =
+        runTest {
+            sync(ScriptedSource(pages, clockJournal))
+            val caughtUp =
+                mapOf<String?, Page>(
+                    "1784000000:120" to Page(listOf(fileMarker(fileB)), "1784000000:120", more = false),
+                )
+
+            val report = sync(ScriptedSource(caughtUp, clockJournal))
+
+            assertEquals(SyncReport(pagesPulled = 1, linesStored = 0, duplicates = 0, StopReason.CaughtUp), report)
+            assertEquals(expectedRows, store.pendingRows("sink").flatten())
+        }
+
+    @Test
+    fun `a device that promises more without moving its cursor is not polled forever`() =
+        runTest {
+            val stuck = pages + ("1:100" to Page(listOf(fileMarker(fileA), row(60_000)), "1:100", more = true))
+
+            val report = sync(ScriptedSource(stuck, clockJournal))
+
+            assertEquals(
+                SyncReport(pagesPulled = 2, linesStored = 2, duplicates = 1, StopReason.NoProgress("1:100")),
+                report,
+            )
+        }
+
+    @Test
+    fun `a page of markers only advances the cursor without storing a page`() =
+        runTest {
+            val empty =
+                mapOf<String?, Page>(
+                    null to Page(listOf(fileMarker("dl_5.jsonl")), "6:0", more = true),
+                    "6:0" to Page(listOf(fileMarker("dl_6.jsonl"), row(tsAfter)), "6:30", more = false),
+                )
+
+            val report = sync(ScriptedSource(empty))
+
+            val batches = store.pending("sink")
+            assertEquals(SyncReport(pagesPulled = 2, linesStored = 1, duplicates = 0, StopReason.CaughtUp), report)
+            assertEquals(
+                listOf(listOf(fileMarker("dl_6.jsonl"), storedRow(tsAfter, tsAfter, "device"))),
+                batches.map { it.lines },
+            )
+        }
+
+    @Test
+    fun `other link failures are reported as link loss`() =
+        runTest {
+            val source =
+                ScriptedSource(pages, clockJournal).apply {
+                    failPull = {
+                        _,
+                        _,
+                        ->
+                        IOException("socket closed")
+                    }
+                }
+
+            val report = sync(source)
+
+            assertEquals("socket closed", (report.stoppedBecause as StopReason.LinkLost).cause.message)
+        }
 }

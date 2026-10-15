@@ -16,11 +16,14 @@ class RefreshingTokenSourceTest : OidcServerTest() {
     private var now = t0
     private val skew = RefreshingTokenSource.DEFAULT_SKEW_MS
 
-    private fun source(store: TokenStore, client: OidcClient = publicClient) =
-        RefreshingTokenSource(provider, client, this.client, store, nowMs = { now })
+    private fun source(
+        store: TokenStore,
+        client: OidcClient = publicClient,
+    ) = RefreshingTokenSource(provider, client, this.client, store, nowMs = { now })
 
     /** A set whose access token is inside the refresh window but not yet expired. */
-    private fun nearlyExpired(refresh: String? = "rt-old") = TokenSet("at-old", refresh, t0 + skew - 1, "openid offline_access")
+    private fun nearlyExpired(refresh: String? = "rt-old") =
+        TokenSet("at-old", refresh, t0 + skew - 1, "openid offline_access")
 
     private fun refreshForm(refreshToken: String) =
         mapOf("grant_type" to "refresh_token", "refresh_token" to refreshToken, "client_id" to "bt-courier")
@@ -39,7 +42,14 @@ class RefreshingTokenSourceTest : OidcServerTest() {
         val source = source(store)
         respondTokens("at-2", "rt-2", expiresIn = 3600)
 
-        val header = Request.Builder().url(server.url("/")).also(Auth.Bearer(source)::applyTo).build().header("Authorization")
+        val header =
+            Request
+                .Builder()
+                .url(
+                    server.url("/"),
+                ).also(Auth.Bearer(source)::applyTo)
+                .build()
+                .header("Authorization")
 
         assertEquals("Bearer at-2", header)
         assertEquals(refreshForm("rt-old"), takeRequest().form())
@@ -62,21 +72,32 @@ class RefreshingTokenSourceTest : OidcServerTest() {
         val source = source(store)
         // A slow reply keeps the refresh in flight while every caller arrives.
         server.enqueue(
-            MockResponse.Builder().code(200).setHeader("Content-Type", "application/json")
+            MockResponse
+                .Builder()
+                .code(200)
+                .setHeader("Content-Type", "application/json")
                 .body("""{"access_token":"at-2","token_type":"Bearer","refresh_token":"rt-2","expires_in":3600}""")
-                .headersDelay(300, TimeUnit.MILLISECONDS).build(),
+                .headersDelay(300, TimeUnit.MILLISECONDS)
+                .build(),
         )
         val callers = 8
         val pool = Executors.newFixedThreadPool(callers)
         val go = CountDownLatch(1)
 
-        val results = try {
-            val futures = (1..callers).map { pool.submit<String> { go.await(); source.token() } }
-            go.countDown()
-            futures.map { it.get(10, TimeUnit.SECONDS) }
-        } finally {
-            pool.shutdownNow()
-        }
+        val results =
+            try {
+                val futures =
+                    (1..callers).map {
+                        pool.submit<String> {
+                            go.await()
+                            source.token()
+                        }
+                    }
+                go.countDown()
+                futures.map { it.get(10, TimeUnit.SECONDS) }
+            } finally {
+                pool.shutdownNow()
+            }
 
         assertEquals(List(callers) { "at-2" }, results)
         assertEquals(1, server.requestCount)
@@ -100,7 +121,9 @@ class RefreshingTokenSourceTest : OidcServerTest() {
     @Test
     fun `no stored tokens, or an expired token without a refresh token, requires sign-in`() {
         assertThrows<OidcException.ReauthorizationRequired> { source(RecordingTokenStore()).token() }
-        assertThrows<OidcException.ReauthorizationRequired> { source(RecordingTokenStore(nearlyExpired(refresh = null))).token() }
+        assertThrows<OidcException.ReauthorizationRequired> {
+            source(RecordingTokenStore(nearlyExpired(refresh = null))).token()
+        }
         assertEquals(0, server.requestCount)
     }
 
@@ -131,16 +154,18 @@ class RefreshingTokenSourceTest : OidcServerTest() {
     fun `a store that fails to save is retried before the next token is handed out`() {
         var failNext = true
         val saved = mutableListOf<TokenSet?>()
-        val flaky = object : TokenStore {
-            override fun load() = nearlyExpired()
-            override fun save(tokens: TokenSet?) {
-                if (failNext) {
-                    failNext = false
-                    throw IOException("keystore busy")
+        val flaky =
+            object : TokenStore {
+                override fun load() = nearlyExpired()
+
+                override fun save(tokens: TokenSet?) {
+                    if (failNext) {
+                        failNext = false
+                        throw IOException("keystore busy")
+                    }
+                    saved += tokens
                 }
-                saved += tokens
             }
-        }
         val source = source(flaky)
         respondTokens("at-2", "rt-2", expiresIn = 3600)
 
@@ -159,7 +184,12 @@ class RefreshingTokenSourceTest : OidcServerTest() {
         val e = assertThrows<OidcException.Rejected> { source.token() }
 
         assertEquals(
-            mapOf("grant_type" to "refresh_token", "refresh_token" to "rt-s3cret", "client_id" to "bt-courier", "client_secret" to "s3cret-client"),
+            mapOf(
+                "grant_type" to "refresh_token",
+                "refresh_token" to "rt-s3cret",
+                "client_id" to "bt-courier",
+                "client_secret" to "s3cret-client",
+            ),
             takeRequest().form(),
         )
         for (s in listOf(client.toString(), source.toString(), e.message.orEmpty(), nearlyExpired().toString())) {

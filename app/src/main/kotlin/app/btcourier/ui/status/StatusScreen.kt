@@ -52,7 +52,11 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StatusScreen(viewModel: StatusViewModel, onPair: () -> Unit, onSettings: () -> Unit) {
+fun StatusScreen(
+    viewModel: StatusViewModel,
+    onPair: () -> Unit,
+    onSettings: () -> Unit,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -64,9 +68,10 @@ fun StatusScreen(viewModel: StatusViewModel, onPair: () -> Unit, onSettings: () 
         onPauseOrDispose {}
     }
 
-    val saveLog = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
-        uri?.let(viewModel::saveExport)
-    }
+    val saveLog =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+            uri?.let(viewModel::saveExport)
+        }
     val savedMessage = stringResource(R.string.status_export_saved)
     val failedMessage = stringResource(R.string.status_export_failed)
     LaunchedEffect(state.export) {
@@ -102,25 +107,39 @@ fun StatusScreen(viewModel: StatusViewModel, onPair: () -> Unit, onSettings: () 
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = onPair) { Text(stringResource(R.string.status_repair)) }
                         if (state.devices.size > 1) {
-                            OutlinedButton(onClick = viewModel::syncAll) { Text(stringResource(R.string.status_sync_all)) }
+                            OutlinedButton(
+                                onClick = viewModel::syncAll,
+                            ) { Text(stringResource(R.string.status_sync_all)) }
                         }
                     }
                 }
             }
 
-            state.devices.forEach { row -> DeviceCard(row, onSync = { viewModel.syncNow(row.device) }, onForget = { viewModel.forget(row.device) }) }
+            state.devices.forEach { row ->
+                DeviceCard(row, onSync = {
+                    viewModel.syncNow(row.device)
+                }, onForget = { viewModel.forget(row.device) })
+            }
 
             Section(R.string.status_cache) {
                 InfoRow(R.string.status_pending_batches, state.pendingBatches.toString())
                 InfoRow(
                     R.string.status_stored,
-                    stringResource(R.string.status_of_cap, formatBytes(state.bytesStored), formatBytes(state.cacheCapBytes)),
+                    stringResource(
+                        R.string.status_of_cap,
+                        formatBytes(state.bytesStored),
+                        formatBytes(state.cacheCapBytes),
+                    ),
                 )
                 InfoRow(
                     R.string.status_dropped,
                     stringResource(
                         R.string.status_two_values,
-                        pluralStringResource(R.plurals.status_dropped_lines, state.droppedLines.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), state.droppedLines),
+                        pluralStringResource(
+                            R.plurals.status_dropped_lines,
+                            state.droppedLines.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                            state.droppedLines,
+                        ),
                         formatBytes(state.droppedBytes),
                     ),
                     highlight = state.droppedLines > 0,
@@ -138,7 +157,11 @@ fun StatusScreen(viewModel: StatusViewModel, onPair: () -> Unit, onSettings: () 
                 state.sinks.forEach { (name, sink) ->
                     InfoRow(
                         stringResource(R.string.status_sink, name),
-                        stringResource(R.string.status_two_values, stringResource(uploadLabel(sink.result)), formatTime(sink.atMs)),
+                        stringResource(
+                            R.string.status_two_values,
+                            stringResource(uploadLabel(sink.result)),
+                            formatTime(sink.atMs),
+                        ),
                     )
                 }
                 if (!state.sinkConfigured) Text(stringResource(R.string.status_no_sink_hint))
@@ -157,13 +180,16 @@ fun StatusScreen(viewModel: StatusViewModel, onPair: () -> Unit, onSettings: () 
             Section(R.string.status_diagnostics) {
                 Text(stringResource(R.string.status_diagnostics_body))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { saveLog.launch(exportFileName) }) { Text(stringResource(R.string.status_export_save)) }
+                    OutlinedButton(
+                        onClick = { saveLog.launch(exportFileName) },
+                    ) { Text(stringResource(R.string.status_export_save)) }
                     OutlinedButton(onClick = {
                         scope.launch {
-                            val send = Intent(Intent.ACTION_SEND)
-                                .setType("text/plain")
-                                .putExtra(Intent.EXTRA_SUBJECT, exportFileName)
-                                .putExtra(Intent.EXTRA_TEXT, viewModel.exportText())
+                            val send =
+                                Intent(Intent.ACTION_SEND)
+                                    .setType("text/plain")
+                                    .putExtra(Intent.EXTRA_SUBJECT, exportFileName)
+                                    .putExtra(Intent.EXTRA_TEXT, viewModel.exportText())
                             context.startActivity(Intent.createChooser(send, shareTitle))
                         }
                     }) { Text(stringResource(R.string.status_export_share)) }
@@ -174,7 +200,11 @@ fun StatusScreen(viewModel: StatusViewModel, onPair: () -> Unit, onSettings: () 
 }
 
 @Composable
-private fun DeviceCard(row: DeviceRow, onSync: () -> Unit, onForget: () -> Unit) {
+private fun DeviceCard(
+    row: DeviceRow,
+    onSync: () -> Unit,
+    onForget: () -> Unit,
+) {
     val kind = stringResource(row.device.kind.support.label)
     Section(row.device.displayName ?: kind) {
         InfoRow(R.string.status_device_kind, kind)
@@ -186,7 +216,10 @@ private fun DeviceCard(row: DeviceRow, onSync: () -> Unit, onForget: () -> Unit)
             InfoRow(R.string.status_sync, formatTime(sync.atMs))
             InfoRow(R.string.status_result, stringResource(syncLabel(sync.result)))
             if (sync.pages != null && sync.lines != null) {
-                InfoRow(R.string.status_pages_lines, stringResource(R.string.status_pages_lines_value, sync.pages, sync.lines))
+                InfoRow(
+                    R.string.status_pages_lines,
+                    stringResource(R.string.status_pages_lines_value, sync.pages, sync.lines),
+                )
             }
             sync.stoppedBecause?.let { InfoRow(R.string.status_stopped_because, stringResource(stopLabel(it))) }
         }
@@ -199,10 +232,16 @@ private fun DeviceCard(row: DeviceRow, onSync: () -> Unit, onForget: () -> Unit)
 }
 
 @Composable
-private fun Section(@StringRes title: Int, content: @Composable ColumnScope.() -> Unit) = Section(stringResource(title), content)
+private fun Section(
+    @StringRes title: Int,
+    content: @Composable ColumnScope.() -> Unit,
+) = Section(stringResource(title), content)
 
 @Composable
-private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun Section(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
@@ -212,10 +251,18 @@ private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) 
 }
 
 @Composable
-private fun InfoRow(@StringRes label: Int, value: String, highlight: Boolean = false) = InfoRow(stringResource(label), value, highlight)
+private fun InfoRow(
+    @StringRes label: Int,
+    value: String,
+    highlight: Boolean = false,
+) = InfoRow(stringResource(label), value, highlight)
 
 @Composable
-private fun InfoRow(label: String, value: String, highlight: Boolean = false) {
+private fun InfoRow(
+    label: String,
+    value: String,
+    highlight: Boolean = false,
+) {
     // One node, so a screen reader reads the label with its value rather than as two stray texts.
     Row(
         Modifier
@@ -248,29 +295,32 @@ private fun formatTime(ms: Long): String {
 private fun formatBytes(bytes: Long): String = Formatter.formatShortFileSize(LocalContext.current, bytes)
 
 @StringRes
-private fun syncLabel(kind: SyncResultKind): Int = when (kind) {
-    SyncResultKind.CAUGHT_UP -> R.string.sync_caught_up
-    SyncResultKind.INTERRUPTED -> R.string.sync_interrupted
-    SyncResultKind.DEVICE_ERROR -> R.string.sync_device_error
-    SyncResultKind.UNREACHABLE -> R.string.sync_unreachable
-    SyncResultKind.NOT_PAIRED -> R.string.sync_not_paired
-}
+private fun syncLabel(kind: SyncResultKind): Int =
+    when (kind) {
+        SyncResultKind.CAUGHT_UP -> R.string.sync_caught_up
+        SyncResultKind.INTERRUPTED -> R.string.sync_interrupted
+        SyncResultKind.DEVICE_ERROR -> R.string.sync_device_error
+        SyncResultKind.UNREACHABLE -> R.string.sync_unreachable
+        SyncResultKind.NOT_PAIRED -> R.string.sync_not_paired
+    }
 
 @StringRes
-private fun stopLabel(kind: SyncStopKind): Int = when (kind) {
-    SyncStopKind.CAUGHT_UP -> R.string.stop_caught_up
-    SyncStopKind.NO_PROGRESS -> R.string.stop_no_progress
-    SyncStopKind.LINK_LOST -> R.string.stop_link_lost
-    SyncStopKind.TRUNCATED -> R.string.stop_truncated
-    SyncStopKind.BUSY -> R.string.stop_busy
-    SyncStopKind.DEVICE_ERROR -> R.string.stop_device_error
-}
+private fun stopLabel(kind: SyncStopKind): Int =
+    when (kind) {
+        SyncStopKind.CAUGHT_UP -> R.string.stop_caught_up
+        SyncStopKind.NO_PROGRESS -> R.string.stop_no_progress
+        SyncStopKind.LINK_LOST -> R.string.stop_link_lost
+        SyncStopKind.TRUNCATED -> R.string.stop_truncated
+        SyncStopKind.BUSY -> R.string.stop_busy
+        SyncStopKind.DEVICE_ERROR -> R.string.stop_device_error
+    }
 
 @StringRes
-private fun uploadLabel(kind: UploadResultKind): Int = when (kind) {
-    UploadResultKind.DELIVERED -> R.string.upload_delivered
-    UploadResultKind.RETRYING -> R.string.upload_retrying
-    UploadResultKind.GAVE_UP -> R.string.upload_gave_up
-    UploadResultKind.FAILED -> R.string.upload_failed
-    UploadResultKind.NO_SINK -> R.string.upload_no_sink
-}
+private fun uploadLabel(kind: UploadResultKind): Int =
+    when (kind) {
+        UploadResultKind.DELIVERED -> R.string.upload_delivered
+        UploadResultKind.RETRYING -> R.string.upload_retrying
+        UploadResultKind.GAVE_UP -> R.string.upload_gave_up
+        UploadResultKind.FAILED -> R.string.upload_failed
+        UploadResultKind.NO_SINK -> R.string.upload_no_sink
+    }

@@ -69,33 +69,52 @@ object BleHttpWire {
     fun notifyPayloadMax(mtu: Int): Int = attUnit(mtu) - HEADER_SIZE
 
     /** Flags of a REQ_BODY / RSP_BODY frame: counter in bits 7..4 (mod 16), LAST in bit 0 (§2). */
-    fun bodyFlags(counter: Int, last: Boolean): Int =
-        ((counter and COUNTER_MASK) shl COUNTER_SHIFT) or (if (last) FLAG_LAST else 0)
+    fun bodyFlags(
+        counter: Int,
+        last: Boolean,
+    ): Int = ((counter and COUNTER_MASK) shl COUNTER_SHIFT) or (if (last) FLAG_LAST else 0)
 
     internal fun counterOf(flags: Int): Int = (flags ushr COUNTER_SHIFT) and COUNTER_MASK
 
     /** Splits an encoded frame into ATT writes; a frame may span several units (§2, §7). */
-    fun attUnits(encodedFrame: ByteArray, mtu: Int): List<ByteArray> {
+    fun attUnits(
+        encodedFrame: ByteArray,
+        mtu: Int,
+    ): List<ByteArray> {
         val unit = attUnit(mtu)
-        return (encodedFrame.indices step unit).map { encodedFrame.copyOfRange(it, minOf(it + unit, encodedFrame.size)) }
+        return (encodedFrame.indices step unit).map {
+            encodedFrame.copyOfRange(
+                it,
+                minOf(it + unit, encodedFrame.size),
+            )
+        }
     }
 
     /**
      * The frames of one request (§3 steps 1-2): the REQ head, then the body in REQ_BODY frames of
      * up to 4096 bytes with counters 0, 1, 2, ... (mod 16) and LAST on the final one.
      */
-    fun requestFrames(seq: Int, method: String, path: String, body: ByteArray, contentType: String = ""): List<Frame> {
+    fun requestFrames(
+        seq: Int,
+        method: String,
+        path: String,
+        body: ByteArray,
+        contentType: String = "",
+    ): List<Frame> {
         val head = Frame.requestHead(seq, RequestHead(method, path, contentType, body.size.toLong()))
-        val bodyFrames = (body.indices step MAX_FRAME_PAYLOAD).mapIndexed { n, offset ->
-            val end = minOf(offset + MAX_FRAME_PAYLOAD, body.size)
-            Frame.requestBody(seq, n, last = end == body.size, body.copyOfRange(offset, end))
-        }
+        val bodyFrames =
+            (body.indices step MAX_FRAME_PAYLOAD).mapIndexed { n, offset ->
+                val end = minOf(offset + MAX_FRAME_PAYLOAD, body.size)
+                Frame.requestBody(seq, n, last = end == body.size, body.copyOfRange(offset, end))
+            }
         return listOf(head) + bodyFrames
     }
 }
 
 /** Frame types (§2). */
-enum class FrameType(val code: Int) {
+enum class FrameType(
+    val code: Int,
+) {
     /** app → device: JSON request head. */
     REQ(1),
 
@@ -174,19 +193,36 @@ class Frame(
     companion object {
         private val EMPTY = ByteArray(0)
 
-        fun requestHead(seq: Int, head: RequestHead) = Frame(FrameType.REQ, 0, seq, head.encode())
+        fun requestHead(
+            seq: Int,
+            head: RequestHead,
+        ) = Frame(FrameType.REQ, 0, seq, head.encode())
 
-        fun requestBody(seq: Int, counter: Int, last: Boolean, bytes: ByteArray) =
-            Frame(FrameType.REQ_BODY, BleHttpWire.bodyFlags(counter, last), seq, bytes)
+        fun requestBody(
+            seq: Int,
+            counter: Int,
+            last: Boolean,
+            bytes: ByteArray,
+        ) = Frame(FrameType.REQ_BODY, BleHttpWire.bodyFlags(counter, last), seq, bytes)
 
-        fun responseHead(seq: Int, head: ResponseHead) = Frame(FrameType.RSP, 0, seq, head.encode())
+        fun responseHead(
+            seq: Int,
+            head: ResponseHead,
+        ) = Frame(FrameType.RSP, 0, seq, head.encode())
 
-        fun responseBody(seq: Int, counter: Int, last: Boolean, bytes: ByteArray = EMPTY) =
-            Frame(FrameType.RSP_BODY, BleHttpWire.bodyFlags(counter, last), seq, bytes)
+        fun responseBody(
+            seq: Int,
+            counter: Int,
+            last: Boolean,
+            bytes: ByteArray = EMPTY,
+        ) = Frame(FrameType.RSP_BODY, BleHttpWire.bodyFlags(counter, last), seq, bytes)
 
         fun abort(seq: Int) = Frame(FrameType.ABORT, 0, seq)
 
-        fun credit(seq: Int, cumulativeBytes: Long): Frame {
+        fun credit(
+            seq: Int,
+            cumulativeBytes: Long,
+        ): Frame {
             require(cumulativeBytes in 0..0xFFFF_FFFFL) { "credit is a u32: $cumulativeBytes" }
             val v = cumulativeBytes
             val payload = byteArrayOf(v.toByte(), (v ushr 8).toByte(), (v ushr 16).toByte(), (v ushr 24).toByte())
@@ -221,8 +257,9 @@ class FrameParser {
         while (size - pos >= BleHttpWire.HEADER_SIZE) {
             val type = FrameType.of(buf[pos + 2].u())
             val len = buf[pos + 6].u() or (buf[pos + 7].u() shl 8)
-            val validHeader = buf[pos].u() == BleHttpWire.MAGIC && buf[pos + 1].u() == BleHttpWire.VERSION &&
-                type != null && len <= BleHttpWire.MAX_FRAME_PAYLOAD
+            val validHeader =
+                buf[pos].u() == BleHttpWire.MAGIC && buf[pos + 1].u() == BleHttpWire.VERSION &&
+                    type != null && len <= BleHttpWire.MAX_FRAME_PAYLOAD
             if (!validHeader) {
                 pos++
                 resyncedBytes++
@@ -253,27 +290,30 @@ data class RequestHead(
     val contentType: String = "",
     val length: Long = 0,
 ) {
-    fun encode(): ByteArray = json.encodeToString(
-        JsonObject.serializer(),
-        buildJsonObject {
-            put("m", method)
-            put("p", path)
-            if (contentType.isNotEmpty()) put("ct", contentType)
-            if (length > 0) put("len", length)
-        },
-    ).encodeToByteArray()
+    fun encode(): ByteArray =
+        json
+            .encodeToString(
+                JsonObject.serializer(),
+                buildJsonObject {
+                    put("m", method)
+                    put("p", path)
+                    if (contentType.isNotEmpty()) put("ct", contentType)
+                    if (length > 0) put("len", length)
+                },
+            ).encodeToByteArray()
 
     companion object {
         /** Parses a REQ head; null when it is not what §3 describes (the device answers 400). */
-        fun decode(bytes: ByteArray): RequestHead? = runCatching {
-            val o = json.parseToJsonElement(bytes.decodeToString()).jsonObject
-            RequestHead(
-                method = (o["m"] as JsonPrimitive).content,
-                path = (o["p"] as JsonPrimitive).content,
-                contentType = (o["ct"] as? JsonPrimitive)?.contentOrNull ?: "",
-                length = (o["len"] as? JsonPrimitive)?.longOrNull ?: 0,
-            )
-        }.getOrNull()
+        fun decode(bytes: ByteArray): RequestHead? =
+            runCatching {
+                val o = json.parseToJsonElement(bytes.decodeToString()).jsonObject
+                RequestHead(
+                    method = (o["m"] as JsonPrimitive).content,
+                    path = (o["p"] as JsonPrimitive).content,
+                    contentType = (o["ct"] as? JsonPrimitive)?.contentOrNull ?: "",
+                    length = (o["len"] as? JsonPrimitive)?.longOrNull ?: 0,
+                )
+            }.getOrNull()
     }
 }
 
@@ -293,25 +333,29 @@ data class ResponseHead(
     val tunnelError: TunnelError? get() = error?.let(TunnelError::of)
 
     /** Same key order as the firmware's `bleh_rsp_head`. */
-    fun encode(): ByteArray = json.encodeToString(
-        JsonObject.serializer(),
-        buildJsonObject {
-            put("s", status)
-            if (error != null) {
-                put("err", error)
-            } else {
-                put("ct", contentType)
-                put("len", length)
-            }
-        },
-    ).encodeToByteArray()
+    fun encode(): ByteArray =
+        json
+            .encodeToString(
+                JsonObject.serializer(),
+                buildJsonObject {
+                    put("s", status)
+                    if (error != null) {
+                        put("err", error)
+                    } else {
+                        put("ct", contentType)
+                        put("len", length)
+                    }
+                },
+            ).encodeToByteArray()
 
     companion object {
         fun decode(bytes: ByteArray): ResponseHead {
-            val o = runCatching { json.parseToJsonElement(bytes.decodeToString()).jsonObject }
-                .getOrElse { throw BleHttpException.Protocol("RSP head is not a JSON object", it) }
-            val status = (o["s"] as? JsonPrimitive)?.let { runCatching { it.int }.getOrNull() }
-                ?: throw BleHttpException.Protocol("RSP head has no numeric \"s\"")
+            val o =
+                runCatching { json.parseToJsonElement(bytes.decodeToString()).jsonObject }
+                    .getOrElse { throw BleHttpException.Protocol("RSP head is not a JSON object", it) }
+            val status =
+                (o["s"] as? JsonPrimitive)?.let { runCatching { it.int }.getOrNull() }
+                    ?: throw BleHttpException.Protocol("RSP head has no numeric \"s\"")
             val error = (o["err"] as? JsonPrimitive)?.contentOrNull
             return ResponseHead(
                 status = status,
@@ -325,7 +369,10 @@ data class ResponseHead(
 }
 
 /** The `err` codes of responses the tunnel generates itself (§5). */
-enum class TunnelError(val code: String, val status: Int) {
+enum class TunnelError(
+    val code: String,
+    val status: Int,
+) {
     BAD_REQUEST("bad_request", 400),
     METHOD("method", 400),
     PATH("path", 403),

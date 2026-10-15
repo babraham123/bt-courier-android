@@ -20,7 +20,11 @@ enum class WorkVerdict { SUCCESS, RETRY }
  * - Whether to run again is the outcome's [SyncOutcome.retryWorthwhile] ([SyncRetryPolicy] says
  *   when), which the worker turns into WorkManager's back-off.
  */
-class SyncWork(private val job: SyncJob, private val fanOut: SyncFanOut, private val work: WorkControl) {
+class SyncWork(
+    private val job: SyncJob,
+    private val fanOut: SyncFanOut,
+    private val work: WorkControl,
+) {
     /**
      * @param address the device to sync; null fans out.
      * @param attempt WorkManager's `runAttemptCount`, see [SyncJob.run].
@@ -47,16 +51,30 @@ class SyncWork(private val job: SyncJob, private val fanOut: SyncFanOut, private
  * [UploadOutcome.Deferred] enqueues the follow-up for when the waiting sink is due
  * ([WorkControl.uploadAt]) and ends this work, so the attempt budget is spent on attempts only.
  */
-class UploadWork(private val job: UploadJob, private val work: WorkControl) {
+class UploadWork(
+    private val job: UploadJob,
+    private val work: WorkControl,
+) {
     /** @param attempt WorkManager's `runAttemptCount`; the rest as [UploadJob.run]. */
-    suspend fun run(attempt: Int, sealPolicy: SealPolicy, uploadOverCellular: Boolean, onLargeBacklog: suspend () -> Unit = {}): WorkVerdict =
+    suspend fun run(
+        attempt: Int,
+        sealPolicy: SealPolicy,
+        uploadOverCellular: Boolean,
+        onLargeBacklog: suspend () -> Unit = {},
+    ): WorkVerdict =
         when (val outcome = job.run(attempt, sealPolicy, onLargeBacklog)) {
-            UploadOutcome.Retry -> WorkVerdict.RETRY
+            UploadOutcome.Retry -> {
+                WorkVerdict.RETRY
+            }
+
             is UploadOutcome.Deferred -> {
                 work.uploadAt(outcome.delayMs, uploadOverCellular)
                 WorkVerdict.SUCCESS
             }
-            else -> WorkVerdict.SUCCESS
+
+            else -> {
+                WorkVerdict.SUCCESS
+            }
         }
 }
 

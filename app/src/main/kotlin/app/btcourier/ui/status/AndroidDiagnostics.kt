@@ -16,11 +16,15 @@ class AndroidDiagnostics(
 ) : DiagnosticsExport {
     private val resolver = context.applicationContext.contentResolver
 
-    override suspend fun text(): String = withContext(Dispatchers.IO) {
-        diagnosticsText(log, storeDir, System.currentTimeMillis())
-    }
+    override suspend fun text(): String =
+        withContext(Dispatchers.IO) {
+            diagnosticsText(log, storeDir, System.currentTimeMillis())
+        }
 
-    override suspend fun save(target: Uri, text: String) = withContext(Dispatchers.IO) {
+    override suspend fun save(
+        target: Uri,
+        text: String,
+    ) = withContext(Dispatchers.IO) {
         val out = resolver.openOutputStream(target, "wt") ?: throw IOException("cannot open export target")
         out.use { it.write(text.encodeToByteArray()) }
     }

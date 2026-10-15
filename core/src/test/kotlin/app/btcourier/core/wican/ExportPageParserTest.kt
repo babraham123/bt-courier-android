@@ -12,13 +12,14 @@ import org.junit.jupiter.api.assertThrows
 class ExportPageParserTest {
     @Test
     fun `rows and file markers are kept verbatim with marker positions and the trailing cursor`() {
-        val lines = listOf(
-            fileMarker("dl_0000000001.jsonl"),
-            row(25_000, value = "0.500000"),
-            row(26_000),
-            fileMarker("dl_1784000060.jsonl"),
-            row(1_784_000_061_000),
-        )
+        val lines =
+            listOf(
+                fileMarker("dl_0000000001.jsonl"),
+                row(25_000, value = "0.500000"),
+                row(26_000),
+                fileMarker("dl_1784000060.jsonl"),
+                row(1_784_000_061_000),
+            )
         val body = (lines + meta("1784000060:4096", more = true)).joinToString("\n", postfix = "\n")
 
         val page = ExportPageParser.parse(body)

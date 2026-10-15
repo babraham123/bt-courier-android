@@ -46,7 +46,10 @@ object ColmiPacketCodec {
     // (probably a quarter-hour range 0x0F..0x5F and a format flag) is not documented.
     private val STEPS_REQUEST_TAIL = byteArrayOf(0x0F, 0x00, 0x5F, 0x01)
 
-    fun packet(command: Int, payload: ByteArray = ByteArray(0)): ByteArray {
+    fun packet(
+        command: Int,
+        payload: ByteArray = ByteArray(0),
+    ): ByteArray {
         require(command in 0..0xFF) { "command must be one byte, got $command" }
         require(payload.size <= PAYLOAD_MAX) { "payload of ${payload.size} bytes exceeds $PAYLOAD_MAX" }
         val p = ByteArray(SIZE)
@@ -73,8 +76,11 @@ object ColmiPacketCodec {
      * is not this protocol and yields nothing.
      */
     fun packets(pdu: ByteArray): List<ByteArray> =
-        if (pdu.isEmpty() || pdu.size % SIZE != 0) emptyList()
-        else (0 until pdu.size / SIZE).map { pdu.copyOfRange(it * SIZE, (it + 1) * SIZE) }
+        if (pdu.isEmpty() || pdu.size % SIZE != 0) {
+            emptyList()
+        } else {
+            (0 until pdu.size / SIZE).map { pdu.copyOfRange(it * SIZE, (it + 1) * SIZE) }
+        }
 
     /** `0x01`: sets the ring's clock to [wall], BCD `yy MM dd HH mm ss`, then the language byte. */
     fun setTime(wall: LocalDateTime): ByteArray {
@@ -104,12 +110,18 @@ object ColmiPacketCodec {
         return Battery(level = u8(packet, 1), charging = u8(packet, 2) != 0)
     }
 
-    internal fun requireAnswer(packet: ByteArray, command: Int) {
+    internal fun requireAnswer(
+        packet: ByteArray,
+        command: Int,
+    ) {
         require(isValid(packet)) { "not a valid packet" }
         require(u8(packet, 0) == command) { "expected command 0x%02x, got 0x%02x".format(command, u8(packet, 0)) }
     }
 
-    internal fun u8(packet: ByteArray, index: Int): Int = packet[index].toInt() and 0xFF
+    internal fun u8(
+        packet: ByteArray,
+        index: Int,
+    ): Int = packet[index].toInt() and 0xFF
 
     internal fun toBcd(value: Int): Byte {
         require(value in 0..99) { "BCD holds 0..99, got $value" }
@@ -119,7 +131,10 @@ object ColmiPacketCodec {
     internal fun fromBcd(b: Int): Int = (b shr 4) * 10 + (b and 0x0F)
 }
 
-data class Battery(val level: Int, val charging: Boolean)
+data class Battery(
+    val level: Int,
+    val charging: Boolean,
+)
 
 /** Collects the packets of one multi-packet answer; [feed] returns the result once it is whole. */
 fun interface ColmiAssembler<T : Any> {
@@ -133,7 +148,10 @@ fun interface ColmiAssembler<T : Any> {
  * @property values one reading per [intervalMinutes] from the start of the requested day, in
  *   the ring's wall clock; 0 means no reading in that slot.
  */
-data class HeartRateLog(val intervalMinutes: Int, val values: List<Int>) {
+data class HeartRateLog(
+    val intervalMinutes: Int,
+    val values: List<Int>,
+) {
     companion object {
         val EMPTY = HeartRateLog(DEFAULT_INTERVAL_MINUTES, emptyList())
         const val DEFAULT_INTERVAL_MINUTES: Int = 5
@@ -194,7 +212,11 @@ class HeartRateLogAssembler : ColmiAssembler<HeartRateLog> {
  *
  * @property quarter 0..95, the quarter hour of [date] the steps were counted in.
  */
-data class StepsSample(val date: LocalDate, val quarter: Int, val steps: Int)
+data class StepsSample(
+    val date: LocalDate,
+    val quarter: Int,
+    val steps: Int,
+)
 
 /**
  * The `0x43` answer, by byte 1:
@@ -224,11 +246,17 @@ class StepsLogAssembler : ColmiAssembler<List<StepsSample>> {
         val index = u(5)
         val count = u(6)
         if (index >= count) return null
-        samples[index] = StepsSample(
-            date = LocalDate.of(2000 + ColmiPacketCodec.fromBcd(b1), ColmiPacketCodec.fromBcd(u(2)), ColmiPacketCodec.fromBcd(u(3))),
-            quarter = u(4),
-            steps = u(9) or (u(10) shl 8),
-        )
+        samples[index] =
+            StepsSample(
+                date =
+                    LocalDate.of(
+                        2000 + ColmiPacketCodec.fromBcd(b1),
+                        ColmiPacketCodec.fromBcd(u(2)),
+                        ColmiPacketCodec.fromBcd(u(3)),
+                    ),
+                quarter = u(4),
+                steps = u(9) or (u(10) shl 8),
+            )
         return if ((0 until count).all { it in samples }) samples.values.toList() else null
     }
 

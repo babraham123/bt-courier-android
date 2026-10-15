@@ -44,7 +44,11 @@ interface DeviceSupport {
      * source needs for its lifetime (the WiCAN tunnel's notification reader) lives exactly as
      * long as [block]. Closes nothing: the caller owns [link].
      */
-    suspend fun <T> withSource(link: GattLink, options: SourceOptions, block: suspend (Source) -> T): T
+    suspend fun <T> withSource(
+        link: GattLink,
+        options: SourceOptions,
+        block: suspend (Source) -> T,
+    ): T
 
     /**
      * The pair wizard's "test connection" on the connected [link]: one cheap read that proves
@@ -62,7 +66,11 @@ interface DeviceSupport {
  * @property zone the phone's zone, which the ring's clock is set to and its days are counted in.
  * @property pageLimit most rows per page the WiCAN logger is asked for.
  */
-data class SourceOptions(val clock: () -> Long, val zone: ZoneId, val pageLimit: Int)
+data class SourceOptions(
+    val clock: () -> Long,
+    val zone: ZoneId,
+    val pageLimit: Int,
+)
 
 /** The pair wizard's per-kind copy, as string resources. */
 data class PairingText(
@@ -76,9 +84,14 @@ data class PairingText(
 
 /** What a "test connection" learned. */
 sealed interface ProbeResult {
-    data class Wican(val firmwareVersion: String, val mtu: Int) : ProbeResult
+    data class Wican(
+        val firmwareVersion: String,
+        val mtu: Int,
+    ) : ProbeResult
 
-    data class Ring(val battery: Battery) : ProbeResult
+    data class Ring(
+        val battery: Battery,
+    ) : ProbeResult
 
     /** A sync (or another probe) holds the device's link; nothing was opened. */
     data object Busy : ProbeResult
@@ -86,7 +99,8 @@ sealed interface ProbeResult {
 
 /** The one place that maps a kind to its implementation. */
 val DeviceKind.support: DeviceSupport
-    get() = when (this) {
-        DeviceKind.WICAN -> WicanSupport
-        DeviceKind.COLMI_RING -> ColmiRingSupport
-    }
+    get() =
+        when (this) {
+            DeviceKind.WICAN -> WicanSupport
+            DeviceKind.COLMI_RING -> ColmiRingSupport
+        }

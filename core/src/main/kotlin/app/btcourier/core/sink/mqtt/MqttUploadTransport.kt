@@ -83,7 +83,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * [close] aborts an in-flight upload (it returns [UploadResult.Retry]) and makes later uploads
  * return [UploadResult.Failed]. It is idempotent.
  */
-class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Closeable {
+class MqttUploadTransport(
+    private val config: MqttConfig,
+) : UploadTransport,
+    Closeable {
     private val mutex = Mutex()
     private val closed = AtomicBoolean(false)
 
@@ -91,9 +94,10 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
 
     @Volatile private var version = config.version
 
-    override suspend fun upload(batch: Batch): UploadResult = mutex.withLock {
-        if (closed.get()) UploadResult.Failed("MQTT transport is closed") else deliver(batch)
-    }
+    override suspend fun upload(batch: Batch): UploadResult =
+        mutex.withLock {
+            if (closed.get()) UploadResult.Failed("MQTT transport is closed") else deliver(batch)
+        }
 
     override fun close() {
         if (closed.compareAndSet(false, true)) active?.disconnect()
@@ -110,9 +114,17 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
         return v3.result
     }
 
-    private class Attempt(val result: UploadResult, val connected: Boolean, val protocolRejected: Boolean = false)
+    private class Attempt(
+        val result: UploadResult,
+        val connected: Boolean,
+        val protocolRejected: Boolean = false,
+    )
 
-    private suspend fun session(newConnection: () -> Connection, topic: String, batch: Batch): Attempt {
+    private suspend fun session(
+        newConnection: () -> Connection,
+        topic: String,
+        batch: Batch,
+    ): Attempt {
         val conn: Connection
         val connecting: CompletableFuture<*>
         try {
@@ -123,7 +135,12 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
             return Attempt(rejectedConfig(e, batch.name), connected = false)
         }
         try {
-            if (closed.get()) return Attempt(UploadResult.Retry("MQTT transport closed during upload"), connected = false)
+            if (closed.get()) {
+                return Attempt(
+                    UploadResult.Retry("MQTT transport closed during upload"),
+                    connected = false,
+                )
+            }
             try {
                 // A copy, so the guard timeout never completes the client's own future (see release()).
                 connecting.copy().orTimeout(connectGuardMs, MILLISECONDS).await()
@@ -131,13 +148,23 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
                 if (e is CancellationException) throw e
                 return Attempt(classify(e, batch.name), connected = false, protocolRejected = isProtocolRejection(e))
             }
-            if (closed.get()) return Attempt(UploadResult.Retry("MQTT transport closed during upload"), connected = true)
-            val result = try {
-                conn.publish(topic, batch).copy().orTimeout(config.publishTimeoutMs, MILLISECONDS).await()
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                classify(e, batch.name)
+            if (closed.get()) {
+                return Attempt(
+                    UploadResult.Retry("MQTT transport closed during upload"),
+                    connected = true,
+                )
             }
+            val result =
+                try {
+                    conn
+                        .publish(topic, batch)
+                        .copy()
+                        .orTimeout(config.publishTimeoutMs, MILLISECONDS)
+                        .await()
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    classify(e, batch.name)
+                }
             return Attempt(result, connected = true)
         } finally {
             active = null
@@ -151,9 +178,14 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
      * same way every time, so this sink fails instead of aborting the upload round. The client's
      * message is left out: it can quote the rejected username or a 64 KB client id.
      */
-    private fun rejectedConfig(e: RuntimeException, name: String): UploadResult {
+    private fun rejectedConfig(
+        e: RuntimeException,
+        name: String,
+    ): UploadResult {
         if (e is CancellationException || (e !is IllegalArgumentException && e !is IllegalStateException)) throw e
-        return UploadResult.Failed("MQTT upload of $name: client rejected the client id or credentials (${e.javaClass.simpleName})")
+        return UploadResult.Failed(
+            "MQTT upload of $name: client rejected the client id or credentials (${e.javaClass.simpleName})",
+        )
     }
 
     /**
@@ -161,7 +193,10 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
      * let a late CONNACK leave an orphaned connection open; waiting on the client's own future
      * (not the timed-out copy) closes it whenever the attempt ends.
      */
-    private suspend fun release(conn: Connection, connecting: CompletableFuture<*>) {
+    private suspend fun release(
+        conn: Connection,
+        connecting: CompletableFuture<*>,
+    ) {
         val disconnected = connecting.handle { _, _ -> }.thenCompose { conn.disconnect() }
         if (!connecting.isDone) return
         try {
@@ -175,32 +210,88 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
     // guards against the client never settling the attempt.
     private val connectGuardMs = 3 * config.connectTimeoutMs + DISCONNECT_TIMEOUT_MS
 
-    private fun classify(error: Throwable, name: String): UploadResult {
+    private fun classify(
+        error: Throwable,
+        name: String,
+    ): UploadResult {
         val e = unwrap(error)
         val what = "MQTT upload of $name"
         return when (e) {
-            is TimeoutException -> UploadResult.Retry("$what timed out")
-            is Mqtt5ConnAckException -> e.mqttMessage.reasonCode.let {
-                if (it in transientConnAck) UploadResult.Retry("$what: CONNACK $it") else UploadResult.Failed("$what: CONNACK $it")
+            is TimeoutException -> {
+                UploadResult.Retry("$what timed out")
             }
-            is Mqtt3ConnAckException -> e.mqttMessage.returnCode.let {
-                if (it == Mqtt3ConnAckReturnCode.SERVER_UNAVAILABLE) UploadResult.Retry("$what: CONNACK $it") else UploadResult.Failed("$what: CONNACK $it")
+
+            is Mqtt5ConnAckException -> {
+                e.mqttMessage.reasonCode.let {
+                    if (it in
+                        transientConnAck
+                    ) {
+                        UploadResult.Retry("$what: CONNACK $it")
+                    } else {
+                        UploadResult.Failed("$what: CONNACK $it")
+                    }
+                }
             }
-            is Mqtt5PubAckException -> e.mqttMessage.reasonCode.let {
-                if (it in permanentPubAck) UploadResult.Failed("$what: PUBACK $it") else UploadResult.Retry("$what: PUBACK $it")
+
+            is Mqtt3ConnAckException -> {
+                e.mqttMessage.returnCode.let {
+                    if (it ==
+                        Mqtt3ConnAckReturnCode.SERVER_UNAVAILABLE
+                    ) {
+                        UploadResult.Retry("$what: CONNACK $it")
+                    } else {
+                        UploadResult.Failed("$what: CONNACK $it")
+                    }
+                }
             }
-            is Mqtt5DisconnectException if e.sentByServer -> e.mqttMessage.reasonCode.let {
-                val reason = e.mqttMessage.reasonString.map { s -> " ($s)" }.orElse("")
-                if (it in permanentDisconnect) UploadResult.Failed("$what: DISCONNECT $it$reason") else UploadResult.Retry("$what: DISCONNECT $it$reason")
+
+            is Mqtt5PubAckException -> {
+                e.mqttMessage.reasonCode.let {
+                    if (it in
+                        permanentPubAck
+                    ) {
+                        UploadResult.Failed("$what: PUBACK $it")
+                    } else {
+                        UploadResult.Retry("$what: PUBACK $it")
+                    }
+                }
             }
+
+            is Mqtt5DisconnectException if e.sentByServer -> {
+                e.mqttMessage.reasonCode.let {
+                    val reason =
+                        e.mqttMessage.reasonString
+                            .map { s -> " ($s)" }
+                            .orElse("")
+                    if (it in
+                        permanentDisconnect
+                    ) {
+                        UploadResult.Failed("$what: DISCONNECT $it$reason")
+                    } else {
+                        UploadResult.Retry("$what: DISCONNECT $it$reason")
+                    }
+                }
+            }
+
             // The broker answered with bytes that aren't valid in the negotiated protocol (e.g. a
             // 3.1.1 broker's CONNACK to an MQTT 5 CONNECT); it will do so again.
-            is Exception if e.cause is MqttDecodeException -> UploadResult.Failed("$what: ${e.message}")
+            is Exception if e.cause is MqttDecodeException -> {
+                UploadResult.Failed("$what: ${e.message}")
+            }
+
             // The client refuses to encode a PUBLISH above the broker's maximum packet size; the
             // same bytes will be refused again.
-            is MqttEncodeException -> UploadResult.Failed("$what: ${e.message}")
-            is IllegalArgumentException -> UploadResult.Failed("$what: ${e.message}")
-            else -> UploadResult.Retry("$what: ${e.javaClass.simpleName}: ${e.message}")
+            is MqttEncodeException -> {
+                UploadResult.Failed("$what: ${e.message}")
+            }
+
+            is IllegalArgumentException -> {
+                UploadResult.Failed("$what: ${e.message}")
+            }
+
+            else -> {
+                UploadResult.Retry("$what: ${e.javaClass.simpleName}: ${e.message}")
+            }
         }
     }
 
@@ -224,21 +315,26 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
     /** Futures wrap the real error, and in-flight publishes report a lost connection as an expired session. */
     private fun unwrap(error: Throwable): Throwable {
         var e = error
-        while ((e is CompletionException || e is ExecutionException || e is MqttSessionExpiredException) && e.cause != null) {
+        while ((e is CompletionException || e is ExecutionException || e is MqttSessionExpiredException) &&
+            e.cause != null
+        ) {
             e = e.cause!!
         }
         return e
     }
 
     private fun transportConfig(): MqttClientTransportConfig {
-        val builder = MqttClientTransportConfig.builder()
-            .serverHost(config.host)
-            .serverPort(config.port)
-            .socketConnectTimeout(config.connectTimeoutMs, MILLISECONDS)
-            .mqttConnectTimeout(config.connectTimeoutMs, MILLISECONDS)
+        val builder =
+            MqttClientTransportConfig
+                .builder()
+                .serverHost(config.host)
+                .serverPort(config.port)
+                .socketConnectTimeout(config.connectTimeoutMs, MILLISECONDS)
+                .mqttConnectTimeout(config.connectTimeoutMs, MILLISECONDS)
         if (config.tls) {
             builder.sslConfig(
-                MqttClientSslConfig.builder()
+                MqttClientSslConfig
+                    .builder()
                     .trustManagerFactory(config.trustManagerFactory)
                     .handshakeTimeout(config.connectTimeoutMs, MILLISECONDS)
                     .build(),
@@ -247,25 +343,36 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
         return builder.build()
     }
 
-    private fun contentTypeOf(name: String) = if (name.endsWith(".gz")) "application/gzip" else "application/octet-stream"
+    private fun contentTypeOf(name: String) =
+        if (name.endsWith(".gz")) "application/gzip" else "application/octet-stream"
 
     /** One broker connection in one protocol version; used for a single upload, then disconnected. */
     private interface Connection {
         fun connect(): CompletableFuture<*>
 
-        fun publish(topic: String, batch: Batch): CompletableFuture<UploadResult>
+        fun publish(
+            topic: String,
+            batch: Batch,
+        ): CompletableFuture<UploadResult>
 
         fun disconnect(): CompletableFuture<Void>
     }
 
     private inner class V5Connection : Connection {
-        private val client = Mqtt5Client.builder()
-            .identifier(config.clientId)
-            .transportConfig(transportConfig())
-            .buildAsync()
+        private val client =
+            Mqtt5Client
+                .builder()
+                .identifier(config.clientId)
+                .transportConfig(transportConfig())
+                .buildAsync()
 
         override fun connect(): CompletableFuture<*> {
-            val connect = Mqtt5Connect.builder().cleanStart(true).sessionExpiryInterval(0).keepAlive(KEEP_ALIVE_S)
+            val connect =
+                Mqtt5Connect
+                    .builder()
+                    .cleanStart(true)
+                    .sessionExpiryInterval(0)
+                    .keepAlive(KEEP_ALIVE_S)
             config.credentials?.let { c ->
                 val auth = Mqtt5SimpleAuth.builder().username(c.username)
                 c.password?.let { auth.password(it.encodeToByteArray()) }
@@ -274,19 +381,27 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
             return client.connect(connect.build())
         }
 
-        override fun publish(topic: String, batch: Batch): CompletableFuture<UploadResult> {
-            val publish = Mqtt5Publish.builder()
-                .topic(topic)
-                .qos(MqttQos.AT_LEAST_ONCE)
-                .retain(false)
-                .payload(batch.bytes)
-                .contentType(contentTypeOf(batch.name))
-                .userProperties(Mqtt5UserProperties.of(Mqtt5UserProperty.of("name", batch.name)))
-                .build()
+        override fun publish(
+            topic: String,
+            batch: Batch,
+        ): CompletableFuture<UploadResult> {
+            val publish =
+                Mqtt5Publish
+                    .builder()
+                    .topic(topic)
+                    .qos(MqttQos.AT_LEAST_ONCE)
+                    .retain(false)
+                    .payload(batch.bytes)
+                    .contentType(contentTypeOf(batch.name))
+                    .userProperties(Mqtt5UserProperties.of(Mqtt5UserProperty.of("name", batch.name)))
+                    .build()
             return client.publish(publish).thenApply { result -> resultOf(result, batch.name) }
         }
 
-        private fun resultOf(result: Mqtt5PublishResult, name: String): UploadResult {
+        private fun resultOf(
+            result: Mqtt5PublishResult,
+            name: String,
+        ): UploadResult {
             result.error.orElse(null)?.let { return classify(it, name) }
             val code = (result as? Mqtt5PublishResult.Mqtt5Qos1Result)?.pubAck?.reasonCode
             return if (code == Mqtt5PubAckReasonCode.NO_MATCHING_SUBSCRIBERS) {
@@ -300,10 +415,12 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
     }
 
     private inner class V3Connection : Connection {
-        private val client = Mqtt3Client.builder()
-            .identifier(config.clientId)
-            .transportConfig(transportConfig())
-            .buildAsync()
+        private val client =
+            Mqtt3Client
+                .builder()
+                .identifier(config.clientId)
+                .transportConfig(transportConfig())
+                .buildAsync()
 
         override fun connect(): CompletableFuture<*> {
             val connect = Mqtt3Connect.builder().cleanSession(true).keepAlive(KEEP_ALIVE_S)
@@ -315,13 +432,18 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
             return client.connect(connect.build())
         }
 
-        override fun publish(topic: String, batch: Batch): CompletableFuture<UploadResult> {
-            val publish = Mqtt3Publish.builder()
-                .topic(topic)
-                .qos(MqttQos.AT_LEAST_ONCE)
-                .retain(false)
-                .payload(batch.bytes)
-                .build()
+        override fun publish(
+            topic: String,
+            batch: Batch,
+        ): CompletableFuture<UploadResult> {
+            val publish =
+                Mqtt3Publish
+                    .builder()
+                    .topic(topic)
+                    .qos(MqttQos.AT_LEAST_ONCE)
+                    .retain(false)
+                    .payload(batch.bytes)
+                    .build()
             return client.publish(publish).thenApply { UploadResult.Acked }
         }
 
@@ -332,34 +454,37 @@ class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Clo
         const val KEEP_ALIVE_S = 60
         const val DISCONNECT_TIMEOUT_MS = 5_000L
 
-        val transientConnAck = setOf(
-            Mqtt5ConnAckReasonCode.UNSPECIFIED_ERROR,
-            Mqtt5ConnAckReasonCode.IMPLEMENTATION_SPECIFIC_ERROR,
-            Mqtt5ConnAckReasonCode.SERVER_UNAVAILABLE,
-            Mqtt5ConnAckReasonCode.SERVER_BUSY,
-            Mqtt5ConnAckReasonCode.QUOTA_EXCEEDED,
-            Mqtt5ConnAckReasonCode.CONNECTION_RATE_EXCEEDED,
-        )
+        val transientConnAck =
+            setOf(
+                Mqtt5ConnAckReasonCode.UNSPECIFIED_ERROR,
+                Mqtt5ConnAckReasonCode.IMPLEMENTATION_SPECIFIC_ERROR,
+                Mqtt5ConnAckReasonCode.SERVER_UNAVAILABLE,
+                Mqtt5ConnAckReasonCode.SERVER_BUSY,
+                Mqtt5ConnAckReasonCode.QUOTA_EXCEEDED,
+                Mqtt5ConnAckReasonCode.CONNECTION_RATE_EXCEEDED,
+            )
 
-        val permanentPubAck = setOf(
-            Mqtt5PubAckReasonCode.NOT_AUTHORIZED,
-            Mqtt5PubAckReasonCode.TOPIC_NAME_INVALID,
-            Mqtt5PubAckReasonCode.PAYLOAD_FORMAT_INVALID,
-        )
+        val permanentPubAck =
+            setOf(
+                Mqtt5PubAckReasonCode.NOT_AUTHORIZED,
+                Mqtt5PubAckReasonCode.TOPIC_NAME_INVALID,
+                Mqtt5PubAckReasonCode.PAYLOAD_FORMAT_INVALID,
+            )
 
-        val permanentDisconnect = setOf(
-            Mqtt5DisconnectReasonCode.MALFORMED_PACKET,
-            Mqtt5DisconnectReasonCode.PROTOCOL_ERROR,
-            Mqtt5DisconnectReasonCode.NOT_AUTHORIZED,
-            Mqtt5DisconnectReasonCode.BAD_AUTHENTICATION_METHOD,
-            Mqtt5DisconnectReasonCode.TOPIC_NAME_INVALID,
-            Mqtt5DisconnectReasonCode.TOPIC_ALIAS_INVALID,
-            Mqtt5DisconnectReasonCode.PACKET_TOO_LARGE,
-            Mqtt5DisconnectReasonCode.PAYLOAD_FORMAT_INVALID,
-            Mqtt5DisconnectReasonCode.RETAIN_NOT_SUPPORTED,
-            Mqtt5DisconnectReasonCode.QOS_NOT_SUPPORTED,
-            Mqtt5DisconnectReasonCode.USE_ANOTHER_SERVER,
-            Mqtt5DisconnectReasonCode.SERVER_MOVED,
-        )
+        val permanentDisconnect =
+            setOf(
+                Mqtt5DisconnectReasonCode.MALFORMED_PACKET,
+                Mqtt5DisconnectReasonCode.PROTOCOL_ERROR,
+                Mqtt5DisconnectReasonCode.NOT_AUTHORIZED,
+                Mqtt5DisconnectReasonCode.BAD_AUTHENTICATION_METHOD,
+                Mqtt5DisconnectReasonCode.TOPIC_NAME_INVALID,
+                Mqtt5DisconnectReasonCode.TOPIC_ALIAS_INVALID,
+                Mqtt5DisconnectReasonCode.PACKET_TOO_LARGE,
+                Mqtt5DisconnectReasonCode.PAYLOAD_FORMAT_INVALID,
+                Mqtt5DisconnectReasonCode.RETAIN_NOT_SUPPORTED,
+                Mqtt5DisconnectReasonCode.QOS_NOT_SUPPORTED,
+                Mqtt5DisconnectReasonCode.USE_ANOTHER_SERVER,
+                Mqtt5DisconnectReasonCode.SERVER_MOVED,
+            )
     }
 }

@@ -33,11 +33,14 @@ import kotlin.coroutines.resumeWithException
 fun DeviceFilterSpec.toAssociationRequest(): AssociationRequest {
     // One filter carrying both conditions: the service UUID sits in the advertising PDU and the
     // name in the scan response (legacy advertising), which the system's active scan merges.
-    val filter = BluetoothLeDeviceFilter.Builder()
-        .setNamePattern(Pattern.compile(namePattern.pattern))
-        .setScanFilter(ScanFilter.Builder().setServiceUuid(ParcelUuid(serviceUuid)).build())
-        .build()
-    return AssociationRequest.Builder()
+    val filter =
+        BluetoothLeDeviceFilter
+            .Builder()
+            .setNamePattern(Pattern.compile(namePattern.pattern))
+            .setScanFilter(ScanFilter.Builder().setServiceUuid(ParcelUuid(serviceUuid)).build())
+            .build()
+    return AssociationRequest
+        .Builder()
         .addDeviceFilter(filter)
         // A list rather than a single-device prompt: a household may have more than one device.
         .setSingleDevice(false)
@@ -45,7 +48,10 @@ fun DeviceFilterSpec.toAssociationRequest(): AssociationRequest {
 }
 
 /** Failure of the association or bonding step, with a message fit to show the user. */
-class PairingException(message: String, cause: Throwable? = null) : IOException(message, cause)
+class PairingException(
+    message: String,
+    cause: Throwable? = null,
+) : IOException(message, cause)
 
 /**
  * Asks the system to scan for the device and returns the chooser to launch with
@@ -54,32 +60,38 @@ class PairingException(message: String, cause: Throwable? = null) : IOException(
 suspend fun CompanionDeviceManager.requestAssociation(
     context: Context,
     spec: DeviceFilterSpec,
-): IntentSender = suspendCancellableCoroutine { cont ->
-    val callback = object : CompanionDeviceManager.Callback() {
-        // Deprecated on API 33 for onAssociationPending, but the only callback below it.
-        @Suppress("OVERRIDE_DEPRECATION")
-        override fun onDeviceFound(intentSender: IntentSender) {
-            if (cont.isActive) cont.resume(intentSender)
-        }
+): IntentSender =
+    suspendCancellableCoroutine { cont ->
+        val callback =
+            object : CompanionDeviceManager.Callback() {
+                // Deprecated on API 33 for onAssociationPending, but the only callback below it.
+                @Suppress("OVERRIDE_DEPRECATION")
+                override fun onDeviceFound(intentSender: IntentSender) {
+                    if (cont.isActive) cont.resume(intentSender)
+                }
 
-        override fun onAssociationPending(intentSender: IntentSender) {
-            if (cont.isActive) cont.resume(intentSender)
-        }
+                override fun onAssociationPending(intentSender: IntentSender) {
+                    if (cont.isActive) cont.resume(intentSender)
+                }
 
-        override fun onAssociationCreated(associationInfo: AssociationInfo) = Unit
+                override fun onAssociationCreated(associationInfo: AssociationInfo) = Unit
 
-        override fun onFailure(error: CharSequence?) {
-            if (cont.isActive) cont.resumeWithException(PairingException(error?.toString() ?: "No device found"))
+                override fun onFailure(error: CharSequence?) {
+                    if (cont.isActive) {
+                        cont.resumeWithException(
+                            PairingException(error?.toString() ?: "No device found"),
+                        )
+                    }
+                }
+            }
+        val request = spec.toAssociationRequest()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            associate(request, ContextCompat.getMainExecutor(context), callback)
+        } else {
+            @Suppress("DEPRECATION")
+            associate(request, callback, null)
         }
     }
-    val request = spec.toAssociationRequest()
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        associate(request, ContextCompat.getMainExecutor(context), callback)
-    } else {
-        @Suppress("DEPRECATION")
-        associate(request, callback, null)
-    }
-}
 
 /**
  * The device the user picked in the companion chooser, from its result intent. Prefers the
@@ -87,26 +99,29 @@ suspend fun CompanionDeviceManager.requestAssociation(
  * the association's address.
  */
 @SuppressLint("MissingPermission") // getRemoteDevice needs no permission; it only builds a handle.
-fun associatedDevice(context: Context, result: Intent?): BluetoothDevice? {
+fun associatedDevice(
+    context: Context,
+    result: Intent?,
+): BluetoothDevice? {
     if (result == null) return null
     @Suppress("DEPRECATION")
     val extra = CompanionDeviceManager.EXTRA_DEVICE
     IntentCompat.getParcelableExtra(result, extra, ScanResult::class.java)?.let { return it.device }
     IntentCompat.getParcelableExtra(result, extra, BluetoothDevice::class.java)?.let { return it }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        val info = IntentCompat.getParcelableExtra(
-            result,
-            CompanionDeviceManager.EXTRA_ASSOCIATION,
-            AssociationInfo::class.java,
-        )
+        val info =
+            IntentCompat.getParcelableExtra(
+                result,
+                CompanionDeviceManager.EXTRA_ASSOCIATION,
+                AssociationInfo::class.java,
+            )
         val mac = info?.deviceMacAddress ?: return null
         return adapter(context)?.getRemoteDevice(mac.toString().uppercase())
     }
     return null
 }
 
-fun adapter(context: Context): BluetoothAdapter? =
-    context.getSystemService(BluetoothManager::class.java)?.adapter
+fun adapter(context: Context): BluetoothAdapter? = context.getSystemService(BluetoothManager::class.java)?.adapter
 
 /**
  * Bonds with [device], suspending until the bond is made or refused. The system shows the
@@ -116,31 +131,40 @@ fun adapter(context: Context): BluetoothAdapter? =
  * Returns at once if already bonded.
  */
 @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
-suspend fun bond(context: Context, device: BluetoothDevice) {
+suspend fun bond(
+    context: Context,
+    device: BluetoothDevice,
+) {
     if (device.bondState == BluetoothDevice.BOND_BONDED) return
     suspendCancellableCoroutine { cont ->
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context, intent: Intent) {
-                val changed = IntentCompat.getParcelableExtra(
-                    intent,
-                    BluetoothDevice.EXTRA_DEVICE,
-                    BluetoothDevice::class.java,
-                )
-                if (changed?.address != device.address) return
-                when (intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)) {
-                    BluetoothDevice.BOND_BONDED -> finish(null)
-                    // BONDING → NONE: wrong passkey, dialog dismissed, or the dongle's pairing
-                    // window is closed (it opens at boot).
-                    BluetoothDevice.BOND_NONE -> finish(PairingException("Bonding failed or was cancelled"))
+        val receiver =
+            object : BroadcastReceiver() {
+                override fun onReceive(
+                    ctx: Context,
+                    intent: Intent,
+                ) {
+                    val changed =
+                        IntentCompat.getParcelableExtra(
+                            intent,
+                            BluetoothDevice.EXTRA_DEVICE,
+                            BluetoothDevice::class.java,
+                        )
+                    if (changed?.address != device.address) return
+                    when (intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)) {
+                        BluetoothDevice.BOND_BONDED -> finish(null)
+
+                        // BONDING → NONE: wrong passkey, dialog dismissed, or the dongle's pairing
+                        // window is closed (it opens at boot).
+                        BluetoothDevice.BOND_NONE -> finish(PairingException("Bonding failed or was cancelled"))
+                    }
+                }
+
+                fun finish(error: Throwable?) {
+                    runCatching { context.unregisterReceiver(this) }
+                    if (!cont.isActive) return
+                    if (error == null) cont.resume(Unit) else cont.resumeWithException(error)
                 }
             }
-
-            fun finish(error: Throwable?) {
-                runCatching { context.unregisterReceiver(this) }
-                if (!cont.isActive) return
-                if (error == null) cont.resume(Unit) else cont.resumeWithException(error)
-            }
-        }
         ContextCompat.registerReceiver(
             context,
             receiver,
@@ -151,12 +175,13 @@ suspend fun bond(context: Context, device: BluetoothDevice) {
             ContextCompat.RECEIVER_EXPORTED,
         )
         cont.invokeOnCancellation { runCatching { context.unregisterReceiver(receiver) } }
-        val started = try {
-            device.createBond()
-        } catch (e: SecurityException) {
-            receiver.finish(PairingException("Bluetooth permission missing", e))
-            return@suspendCancellableCoroutine
-        }
+        val started =
+            try {
+                device.createBond()
+            } catch (e: SecurityException) {
+                receiver.finish(PairingException("Bluetooth permission missing", e))
+                return@suspendCancellableCoroutine
+            }
         // false also covers "bonding already in progress"; then the broadcast still arrives.
         if (!started && device.bondState == BluetoothDevice.BOND_NONE) {
             receiver.finish(PairingException("Android refused to start bonding"))
@@ -167,15 +192,19 @@ suspend fun bond(context: Context, device: BluetoothDevice) {
 }
 
 /** Rethrows coroutine cancellation; everything else becomes a [PairingException]. */
-internal inline fun <T> pairingStep(what: String, block: () -> T): T = try {
-    block()
-} catch (e: CancellationException) {
-    throw e
-} catch (e: PairingException) {
-    throw e
-} catch (e: Exception) {
-    throw PairingException("$what failed: ${e.message ?: e::class.java.simpleName}", e)
-}
+internal inline fun <T> pairingStep(
+    what: String,
+    block: () -> T,
+): T =
+    try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: PairingException) {
+        throw e
+    } catch (e: Exception) {
+        throw PairingException("$what failed: ${e.message ?: e::class.java.simpleName}", e)
+    }
 
 /** BLUETOOTH_CONNECT gates bonding, GATT, the bonded-device list and car ACL broadcasts (API 31+). */
 fun hasBluetoothConnectPermission(context: Context): Boolean =

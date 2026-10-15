@@ -58,14 +58,21 @@ class DeviceAuthorization(
         val fields = if (scopes.isEmpty()) emptyMap() else mapOf("scope" to scopes.joinToString(" "))
         val requestedAt = nowMs()
         val endpoint = "device authorization endpoint"
-        val reply = http.newCall(client.post(provider.deviceAuthorizationEndpoint, fields)).await().toOAuthReply(endpoint)
-        val body = when (reply) {
-            is OAuthReply.Ok -> reply.body
-            is OAuthReply.Error -> throw reply.rejected()
-        }
+        val reply =
+            http
+                .newCall(
+                    client.post(provider.deviceAuthorizationEndpoint, fields),
+                ).await()
+                .toOAuthReply(endpoint)
+        val body =
+            when (reply) {
+                is OAuthReply.Ok -> reply.body
+                is OAuthReply.Error -> throw reply.rejected()
+            }
         val what = "device authorization response"
-        val expiresIn = body.long("expires_in")?.takeIf { it > 0 }
-            ?: throw OidcException.InvalidResponse("$what has no positive expires_in")
+        val expiresIn =
+            body.long("expires_in")?.takeIf { it > 0 }
+                ?: throw OidcException.InvalidResponse("$what has no positive expires_in")
         return DeviceCodeGrant(
             deviceCode = body.requireString("device_code", what),
             userCode = body.requireString("user_code", what),
@@ -98,20 +105,26 @@ class DeviceAuthorization(
             sleep(intervalMs)
             if (nowMs() >= grant.expiresAtMs) throw OidcException.DeviceCodeExpired()
             val requestedAt = nowMs()
-            val reply = try {
-                http.newCall(client.post(provider.tokenEndpoint, fields)).await().toOAuthReply("token endpoint")
-            } catch (_: IOException) {
-                intervalMs *= 2
-                continue
-            }
+            val reply =
+                try {
+                    http.newCall(client.post(provider.tokenEndpoint, fields)).await().toOAuthReply("token endpoint")
+                } catch (_: IOException) {
+                    intervalMs *= 2
+                    continue
+                }
             when (reply) {
-                is OAuthReply.Ok -> return reply.body.toTokenSet(requestedAt)
-                is OAuthReply.Error -> when (reply.error) {
-                    "authorization_pending" -> Unit
-                    "slow_down" -> intervalMs += SLOW_DOWN_STEP_MS
-                    "access_denied" -> throw OidcException.AccessDenied()
-                    "expired_token" -> throw OidcException.DeviceCodeExpired()
-                    else -> throw reply.rejected()
+                is OAuthReply.Ok -> {
+                    return reply.body.toTokenSet(requestedAt)
+                }
+
+                is OAuthReply.Error -> {
+                    when (reply.error) {
+                        "authorization_pending" -> Unit
+                        "slow_down" -> intervalMs += SLOW_DOWN_STEP_MS
+                        "access_denied" -> throw OidcException.AccessDenied()
+                        "expired_token" -> throw OidcException.DeviceCodeExpired()
+                        else -> throw reply.rejected()
+                    }
                 }
             }
         }

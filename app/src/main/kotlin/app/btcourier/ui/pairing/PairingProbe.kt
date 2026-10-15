@@ -12,14 +12,20 @@ import app.btcourier.work.LinkFactory
  * observation starts before the test, so a sync can be triggered meanwhile; whichever comes second
  * backs off instead of opening a second link to the device.
  */
-class PairingProbe(private val links: LinkFactory, private val locks: DeviceLocks) {
+class PairingProbe(
+    private val links: LinkFactory,
+    private val locks: DeviceLocks,
+) {
     /**
      * Connects to [address], runs [kind]'s probe and closes the link. [ProbeResult.Busy] without
      * opening anything when the device's lock is held.
      *
      * @throws java.io.IOException when the device cannot be reached or does not answer as expected.
      */
-    suspend fun run(address: String, kind: DeviceKind): ProbeResult {
+    suspend fun run(
+        address: String,
+        kind: DeviceKind,
+    ): ProbeResult {
         val lock = locks.of(address)
         if (!lock.tryLock()) return ProbeResult.Busy
         try {

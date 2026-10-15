@@ -37,7 +37,12 @@ class ScriptedPeripheral(
     constructor(routes: Map<String, Reply>, mtu: Int = 517, scope: CoroutineScope? = null) :
         this({ routes[it.path] }, mtu, scope)
 
-    class Request(val method: String, val path: String, val contentType: String, val body: ByteArray)
+    class Request(
+        val method: String,
+        val path: String,
+        val contentType: String,
+        val body: ByteArray,
+    )
 
     class Reply(
         val status: Int,
@@ -53,10 +58,14 @@ class ScriptedPeripheral(
     /** A failure applied to the next request. */
     sealed interface Fault {
         /** The [index]th RSP_BODY frame (0-based) is counted as sent but never delivered. */
-        data class DropFrame(val index: Int) : Fault
+        data class DropFrame(
+            val index: Int,
+        ) : Fault
 
         /** The link drops once at least [bytes] body bytes have been delivered. */
-        data class LinkLossAfter(val bytes: Int) : Fault
+        data class LinkLossAfter(
+            val bytes: Int,
+        ) : Fault
 
         /** Answer `{"s":429,"err":"busy"}` as if another request were still in flight. */
         data object Busy : Fault
@@ -65,13 +74,16 @@ class ScriptedPeripheral(
         data object Hang : Fault
 
         /** The route stops producing body after at least [bytes] bytes without closing; ABORT ends it. */
-        data class StallAfter(val bytes: Int) : Fault
+        data class StallAfter(
+            val bytes: Int,
+        ) : Fault
     }
 
-    val link: FakeGattLink = FakeGattLink(mtu) { bytes, _ ->
-        if (writeDelay > Duration.ZERO) delay(writeDelay)
-        receive(bytes)
-    }
+    val link: FakeGattLink =
+        FakeGattLink(mtu) { bytes, _ ->
+            if (writeDelay > Duration.ZERO) delay(writeDelay)
+            receive(bytes)
+        }
 
     private val frameMax = BleHttpWire.notifyPayloadMax(mtu)
     private val parser = FrameParser()
@@ -80,7 +92,7 @@ class ScriptedPeripheral(
 
     private val _requests = mutableListOf<Request>()
     private val _credits = mutableListOf<Long>()
-    private val _frames = mutableListOf<Frame>()
+    private val _delivered = mutableListOf<Frame>()
 
     /** Requests answered by the table, in order. */
     val requests: List<Request> get() = _requests.toList()
@@ -89,7 +101,7 @@ class ScriptedPeripheral(
     val credits: List<Long> get() = _credits.toList()
 
     /** Every frame delivered to the app, in order. */
-    val delivered: List<Frame> get() = _frames.toList()
+    val delivered: List<Frame> get() = _delivered.toList()
 
     /** Most RSP_BODY bytes ever uncredited at once. */
     var maxUncredited: Int = 0
@@ -110,13 +122,21 @@ class ScriptedPeripheral(
     private sealed interface State {
         data object Idle : State
 
-        class Uploading(val seq: Int, val head: RequestHead, val fault: Fault?) : State {
+        class Uploading(
+            val seq: Int,
+            val head: RequestHead,
+            val fault: Fault?,
+        ) : State {
             val body = ByteArrayOutputStream()
             var counter = 0
             var lastCredit = 0
         }
 
-        class Responding(val seq: Int, val body: ByteArray, val fault: Fault?) : State {
+        class Responding(
+            val seq: Int,
+            val body: ByteArray,
+            val fault: Fault?,
+        ) : State {
             var sent = 0
             var acked = 0
             var counter = 0
@@ -168,7 +188,10 @@ class ScriptedPeripheral(
         }
     }
 
-    private fun failUpload(up: State.Uploading, error: TunnelError) {
+    private fun failUpload(
+        up: State.Uploading,
+        error: TunnelError,
+    ) {
         state = State.Idle
         sendError(up.seq, error)
     }
@@ -194,7 +217,11 @@ class ScriptedPeripheral(
         }
     }
 
-    private fun respond(seq: Int, request: Request, fault: Fault?) {
+    private fun respond(
+        seq: Int,
+        request: Request,
+        fault: Fault?,
+    ) {
         _requests += request
         if (fault == Fault.Hang) {
             state = State.Responding(seq, ByteArray(0), fault)
@@ -236,13 +263,14 @@ class ScriptedPeripheral(
     private fun stall(r: State.Responding) {
         stalls++
         if (scope == null || r.watchdog != null) return
-        r.watchdog = scope.launch {
-            delay(BleHttpWire.CREDIT_TIMEOUT)
-            if (state === r) {
-                creditTimeouts++
-                finish(r)
+        r.watchdog =
+            scope.launch {
+                delay(BleHttpWire.CREDIT_TIMEOUT)
+                if (state === r) {
+                    creditTimeouts++
+                    finish(r)
+                }
             }
-        }
     }
 
     /** Closes the response with its LAST frame, short of the body when timed out or aborted. */
@@ -252,14 +280,17 @@ class ScriptedPeripheral(
         deliver(Frame.responseBody(r.seq, r.counter, last = true))
     }
 
-    private fun sendError(seq: Int, error: TunnelError) {
+    private fun sendError(
+        seq: Int,
+        error: TunnelError,
+    ) {
         deliver(Frame.responseHead(seq, ResponseHead(error.status, error = error.code)))
         deliver(Frame.responseBody(seq, 0, last = true))
     }
 
     /** Body frames fit one notification by construction; heads may span several (§2). */
     private fun deliver(frame: Frame) {
-        _frames += frame
+        _delivered += frame
         BleHttpWire.attUnits(frame.encode(), mtu).forEach(link::notify)
     }
 }

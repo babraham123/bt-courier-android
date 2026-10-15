@@ -38,11 +38,12 @@ class WorkRulesTest {
 
     private val store by lazy { openStore(dir, setOf("sink")) }
     private val epoch = NOW / 1000 - 3600
-    private val logger = FakeWicanLogger().apply {
-        append(epoch, (0 until 20).map { row(ts = epoch * 1000 + it * 1_000L, value = it) })
-        rtcEpochSeconds = NOW / 1000
-        clockValid = true
-    }
+    private val logger =
+        FakeWicanLogger().apply {
+            append(epoch, (0 until 20).map { row(ts = epoch * 1000 + it * 1_000L, value = it) })
+            rtcEpochSeconds = NOW / 1000
+            clockValid = true
+        }
 
     private val dongle = PairedDevice("AA:BB:CC:DD:EE:01", null, 1, DeviceKind.WICAN)
     private val ring = PairedDevice("AA:BB:CC:DD:EE:02", null, 2, DeviceKind.COLMI_RING)
@@ -53,126 +54,176 @@ class WorkRulesTest {
     private val unreachable = LinkFactory { _, _ -> throw IOException("connect timed out") }
 
     /** Links to [logger]; with [loseLink] each link drops during its second export page. */
-    private fun TestScope.loggerLinks(loseLink: Boolean = false) = LinkFactory { _, _ ->
-        var exports = 0
-        lateinit var peripheral: ScriptedPeripheral
-        peripheral = ScriptedPeripheral({ r ->
-            if (loseLink && r.path.startsWith("/api/logger/export") && ++exports == 2) peripheral.inject(Fault.LinkLossAfter(1))
-            logger.handle(r)
-        }, scope = backgroundScope)
-        peripheral.link
-    }
+    private fun TestScope.loggerLinks(loseLink: Boolean = false) =
+        LinkFactory { _, _ ->
+            var exports = 0
+            lateinit var peripheral: ScriptedPeripheral
+            peripheral =
+                ScriptedPeripheral({ r ->
+                    if (loseLink && r.path.startsWith("/api/logger/export") &&
+                        ++exports == 2
+                    ) {
+                        peripheral.inject(Fault.LinkLossAfter(1))
+                    }
+                    logger.handle(r)
+                }, scope = backgroundScope)
+            peripheral.link
+        }
 
     private fun syncWork(links: LinkFactory): SyncWork {
-        val job = SyncJob(devices, links, store, InMemorySyncStatus(), clock = { NOW }, locks = DeviceLocks(), pageLimit = 7, zone = { ZoneOffset.UTC })
+        val job =
+            SyncJob(devices, links, store, InMemorySyncStatus(), clock = {
+                NOW
+            }, locks = DeviceLocks(), pageLimit = 7, zone = { ZoneOffset.UTC })
         return SyncWork(job, SyncFanOut(devices, work::syncNow), work)
     }
 
     @Test
-    fun `a periodic run enqueues one sync per paired device and does no sync itself`() = runTest {
-        devices.devices = listOf(dongle, ring)
+    fun `a periodic run enqueues one sync per paired device and does no sync itself`() =
+        runTest {
+            devices.devices = listOf(dongle, ring)
 
-        val verdict = syncWork(noLink).run(address = null, attempt = 0, sealEverything, uploadOverCellular = false)
+            val verdict = syncWork(noLink).run(address = null, attempt = 0, sealEverything, uploadOverCellular = false)
 
-        assertEquals(WorkVerdict.SUCCESS, verdict)
-        assertEquals(listOf(dongle.address, ring.address), work.syncs)
-        assertEquals(emptyList<Pair<Boolean, Boolean>>(), work.uploads)
-    }
-
-    @Test
-    fun `a periodic run with nothing paired only seals, and enqueues an upload for what it sealed`() = runTest {
-        devices.devices = emptyList()
-        store.appendPage("other", "1:1", listOf(marker("dl_1.jsonl"), row(1, 1)))
-
-        val verdict = syncWork(noLink).run(address = null, attempt = 0, sealEverything, uploadOverCellular = true)
-
-        assertEquals(WorkVerdict.SUCCESS, verdict)
-        assertEquals(emptyList<String>(), work.syncs)
-        assertEquals(1, store.pending("sink").size)
-        assertEquals(listOf(true to false), work.uploads, "KEEP, on the cellular setting")
-    }
+            assertEquals(WorkVerdict.SUCCESS, verdict)
+            assertEquals(listOf(dongle.address, ring.address), work.syncs)
+            assertEquals(emptyList<Pair<Boolean, Boolean>>(), work.uploads)
+        }
 
     @Test
-    fun `a sync that sealed batches enqueues an upload, and one that sealed nothing does not`() = runTest {
-        val sync = syncWork(loggerLinks())
+    fun `a periodic run with nothing paired only seals, and enqueues an upload for what it sealed`() =
+        runTest {
+            devices.devices = emptyList()
+            store.appendPage("other", "1:1", listOf(marker("dl_1.jsonl"), row(1, 1)))
 
-        assertEquals(WorkVerdict.SUCCESS, sync.run(dongle.address, attempt = 0, sealEverything, uploadOverCellular = false))
-        assertEquals(listOf(false to false), work.uploads, "KEEP, unmetered only")
+            val verdict = syncWork(noLink).run(address = null, attempt = 0, sealEverything, uploadOverCellular = true)
 
-        assertEquals(WorkVerdict.SUCCESS, sync.run(dongle.address, attempt = 0, sealEverything, uploadOverCellular = false))
-        assertEquals(1, work.uploads.size, "caught up: nothing new sealed")
-        assertEquals(emptyList<String>(), work.syncs)
-    }
-
-    @Test
-    fun `an interrupted sync asks to run again until its last attempt, and still enqueues an upload`() = runTest {
-        val sync = syncWork(loggerLinks(loseLink = true))
-        val lastAttempt = SyncRetryPolicy().maxRuns - 1
-
-        assertEquals(WorkVerdict.RETRY, sync.run(dongle.address, attempt = 0, sealEverything, uploadOverCellular = false))
-        assertEquals(listOf(false to false), work.uploads, "the page stored before the loss was sealed")
-
-        assertEquals(WorkVerdict.SUCCESS, sync.run(dongle.address, attempt = lastAttempt, sealEverything, uploadOverCellular = false))
-    }
+            assertEquals(WorkVerdict.SUCCESS, verdict)
+            assertEquals(emptyList<String>(), work.syncs)
+            assertEquals(1, store.pending("sink").size)
+            assertEquals(listOf(true to false), work.uploads, "KEEP, on the cellular setting")
+        }
 
     @Test
-    fun `a sync that never reaches its device does not ask to run again`() = runTest {
-        assertEquals(WorkVerdict.SUCCESS, syncWork(unreachable).run(dongle.address, attempt = 0, sealEverything, uploadOverCellular = false))
-        assertEquals(emptyList<Pair<Boolean, Boolean>>(), work.uploads, "nothing stored, so nothing sealed")
-    }
+    fun `a sync that sealed batches enqueues an upload, and one that sealed nothing does not`() =
+        runTest {
+            val sync = syncWork(loggerLinks())
+
+            assertEquals(
+                WorkVerdict.SUCCESS,
+                sync.run(dongle.address, attempt = 0, sealEverything, uploadOverCellular = false),
+            )
+            assertEquals(listOf(false to false), work.uploads, "KEEP, unmetered only")
+
+            assertEquals(
+                WorkVerdict.SUCCESS,
+                sync.run(dongle.address, attempt = 0, sealEverything, uploadOverCellular = false),
+            )
+            assertEquals(1, work.uploads.size, "caught up: nothing new sealed")
+            assertEquals(emptyList<String>(), work.syncs)
+        }
 
     @Test
-    fun `restoring schedules follows the periodic toggle and observes presence of every paired device`() = runTest {
-        devices.devices = listOf(dongle, ring)
-        val observed = mutableListOf<String>()
+    fun `an interrupted sync asks to run again until its last attempt, and still enqueues an upload`() =
+        runTest {
+            val sync = syncWork(loggerLinks(loseLink = true))
+            val lastAttempt = SyncRetryPolicy().maxRuns - 1
 
-        restoreSchedules(FakeSettings(AppSettings(periodicSync = true)), devices, work) { observed += it }
-        restoreSchedules(FakeSettings(AppSettings(periodicSync = false)), devices, work) { observed += it }
+            assertEquals(
+                WorkVerdict.RETRY,
+                sync.run(dongle.address, attempt = 0, sealEverything, uploadOverCellular = false),
+            )
+            assertEquals(listOf(false to false), work.uploads, "the page stored before the loss was sealed")
 
-        assertEquals(listOf(true, false), work.periodic)
-        assertEquals(listOf(dongle.address, ring.address, dongle.address, ring.address), observed)
-    }
-
-    @Test
-    fun `restoring schedules with nothing paired observes nothing`() = runTest {
-        devices.devices = emptyList()
-        val observed = mutableListOf<String>()
-
-        restoreSchedules(FakeSettings(), devices, work) { observed += it }
-
-        assertEquals(listOf(AppSettings().periodicSync), work.periodic)
-        assertTrue(observed.isEmpty())
-    }
-
-    private fun uploadWork(vararg sinks: Sink, clock: () -> Long = { NOW }): UploadWork =
-        UploadWork(UploadJob(store, { sinks.toList() }, InMemorySyncStatus(), clock = clock), work)
+            assertEquals(
+                WorkVerdict.SUCCESS,
+                sync.run(dongle.address, attempt = lastAttempt, sealEverything, uploadOverCellular = false),
+            )
+        }
 
     @Test
-    fun `an upload round that a sink answered Retry runs again on the back-off, one that only waited schedules the follow-up`() = runTest {
-        store.appendPage("wican", "1:0", listOf(marker("dl_1.jsonl"), row(1_000, 1)))
-        store.seal(sealEverything, NOW)
-        val throttled = CompositeSink("sink", ScriptedUpload(UploadResult.Retry("HTTP 429", retryAfterMs = 90_000)), Jsonl)
-        var now = NOW
-        val upload = uploadWork(throttled, clock = { now })
-
-        assertEquals(WorkVerdict.RETRY, upload.run(attempt = 0, sealEverything, uploadOverCellular = false))
-        assertEquals(emptyList<Pair<Long, Boolean>>(), work.deferredUploads)
-
-        now += 30_000
-        assertEquals(WorkVerdict.SUCCESS, upload.run(attempt = 1, sealEverything, uploadOverCellular = true))
-        assertEquals(listOf(60_000L to true), work.deferredUploads, "the follow-up is due when the sink is, under the current network policy")
-    }
+    fun `a sync that never reaches its device does not ask to run again`() =
+        runTest {
+            assertEquals(
+                WorkVerdict.SUCCESS,
+                syncWork(unreachable).run(dongle.address, attempt = 0, sealEverything, uploadOverCellular = false),
+            )
+            assertEquals(emptyList<Pair<Boolean, Boolean>>(), work.uploads, "nothing stored, so nothing sealed")
+        }
 
     @Test
-    fun `an upload round with nothing to wait for ends the work without a follow-up`() = runTest {
-        store.appendPage("wican", "1:0", listOf(marker("dl_1.jsonl"), row(1_000, 1)))
-        store.seal(sealEverything, NOW)
+    fun `restoring schedules follows the periodic toggle and observes presence of every paired device`() =
+        runTest {
+            devices.devices = listOf(dongle, ring)
+            val observed = mutableListOf<String>()
 
-        assertEquals(WorkVerdict.SUCCESS, uploadWork(CompositeSink("sink", ScriptedUpload(UploadResult.Acked), Jsonl)).run(0, sealEverything, false))
-        assertEquals(WorkVerdict.SUCCESS, uploadWork(CompositeSink("sink", ScriptedUpload(UploadResult.Failed("HTTP 403")), Jsonl)).run(0, sealEverything, false))
+            restoreSchedules(FakeSettings(AppSettings(periodicSync = true)), devices, work) { observed += it }
+            restoreSchedules(FakeSettings(AppSettings(periodicSync = false)), devices, work) { observed += it }
 
-        assertEquals(emptyList<Pair<Long, Boolean>>(), work.deferredUploads)
-    }
+            assertEquals(listOf(true, false), work.periodic)
+            assertEquals(listOf(dongle.address, ring.address, dongle.address, ring.address), observed)
+        }
+
+    @Test
+    fun `restoring schedules with nothing paired observes nothing`() =
+        runTest {
+            devices.devices = emptyList()
+            val observed = mutableListOf<String>()
+
+            restoreSchedules(FakeSettings(), devices, work) { observed += it }
+
+            assertEquals(listOf(AppSettings().periodicSync), work.periodic)
+            assertTrue(observed.isEmpty())
+        }
+
+    private fun uploadWork(
+        vararg sinks: Sink,
+        clock: () -> Long = { NOW },
+    ): UploadWork = UploadWork(UploadJob(store, { sinks.toList() }, InMemorySyncStatus(), clock = clock), work)
+
+    @Test
+    fun `an upload round that a sink answered Retry runs again on the back-off, one that only waited schedules the follow-up`() =
+        runTest {
+            store.appendPage("wican", "1:0", listOf(marker("dl_1.jsonl"), row(1_000, 1)))
+            store.seal(sealEverything, NOW)
+            val throttled =
+                CompositeSink("sink", ScriptedUpload(UploadResult.Retry("HTTP 429", retryAfterMs = 90_000)), Jsonl)
+            var now = NOW
+            val upload = uploadWork(throttled, clock = { now })
+
+            assertEquals(WorkVerdict.RETRY, upload.run(attempt = 0, sealEverything, uploadOverCellular = false))
+            assertEquals(emptyList<Pair<Long, Boolean>>(), work.deferredUploads)
+
+            now += 30_000
+            assertEquals(WorkVerdict.SUCCESS, upload.run(attempt = 1, sealEverything, uploadOverCellular = true))
+            assertEquals(
+                listOf(60_000L to true),
+                work.deferredUploads,
+                "the follow-up is due when the sink is, under the current network policy",
+            )
+        }
+
+    @Test
+    fun `an upload round with nothing to wait for ends the work without a follow-up`() =
+        runTest {
+            store.appendPage("wican", "1:0", listOf(marker("dl_1.jsonl"), row(1_000, 1)))
+            store.seal(sealEverything, NOW)
+
+            assertEquals(
+                WorkVerdict.SUCCESS,
+                uploadWork(
+                    CompositeSink("sink", ScriptedUpload(UploadResult.Acked), Jsonl),
+                ).run(0, sealEverything, false),
+            )
+            assertEquals(
+                WorkVerdict.SUCCESS,
+                uploadWork(
+                    CompositeSink("sink", ScriptedUpload(UploadResult.Failed("HTTP 403")), Jsonl),
+                ).run(0, sealEverything, false),
+            )
+
+            assertEquals(emptyList<Pair<Long, Boolean>>(), work.deferredUploads)
+        }
 
     @Test
     fun `uploads wait for any network with cellular allowed, and for an unmetered one without`() {

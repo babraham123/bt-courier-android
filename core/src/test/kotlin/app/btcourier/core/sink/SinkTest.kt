@@ -24,7 +24,9 @@ class SinkTest {
     lateinit var dir: Path
 
     private val lines = listOf(marker("1700000000.jsonl")) + rows(1..50)
-    private fun batch(lines: List<String> = this.lines) = SealedBatch("7", "wican", "1700000000:0", lines, sealedAtMs = 0)
+
+    private fun batch(lines: List<String> = this.lines) =
+        SealedBatch("7", "wican", "1700000000:0", lines, sealedAtMs = 0)
 
     private fun gunzip(bytes: ByteArray) = GZIPInputStream(bytes.inputStream()).readBytes()
 
@@ -64,30 +66,38 @@ class SinkTest {
     }
 
     @Test
-    fun `local directory transport writes the object atomically and idempotently`() = runTest {
-        val transport = LocalDirectoryUploadTransport(dir)
-        val b = encodeBatch(batch(), Jsonl)
-        assertEquals(UploadResult.Acked, transport.upload(b))
-        assertEquals(UploadResult.Acked, transport.upload(b))
-        assertEquals(listOf(b.name), dir.listDirectoryEntries().map { it.name })
-        assertArrayEquals(b.bytes, dir.resolve(b.name).readBytes())
-    }
+    fun `local directory transport writes the object atomically and idempotently`() =
+        runTest {
+            val transport = LocalDirectoryUploadTransport(dir)
+            val b = encodeBatch(batch(), Jsonl)
+            assertEquals(UploadResult.Acked, transport.upload(b))
+            assertEquals(UploadResult.Acked, transport.upload(b))
+            assertEquals(listOf(b.name), dir.listDirectoryEntries().map { it.name })
+            assertArrayEquals(b.bytes, dir.resolve(b.name).readBytes())
+        }
 
     @Test
-    fun `local directory transport reports an unwritable target as retryable`() = runTest {
-        val notADir = Files.writeString(dir.resolve("file"), "x")
-        val result = LocalDirectoryUploadTransport(notADir).upload(encodeBatch(batch(), Jsonl))
-        assertTrue(result is UploadResult.Retry, "$result")
-    }
+    fun `local directory transport reports an unwritable target as retryable`() =
+        runTest {
+            val notADir = Files.writeString(dir.resolve("file"), "x")
+            val result = LocalDirectoryUploadTransport(notADir).upload(encodeBatch(batch(), Jsonl))
+            assertTrue(result is UploadResult.Retry, "$result")
+        }
 
     @Test
-    fun `a revoked sign-in is a permanent failure, not a crash or a retry`() = runTest {
-        val signedOut = CompositeSink("oidc", object : UploadTransport {
-            override suspend fun upload(batch: Batch): UploadResult =
-                throw OidcException.ReauthorizationRequired("invalid_grant")
-        }, Jsonl)
+    fun `a revoked sign-in is a permanent failure, not a crash or a retry`() =
+        runTest {
+            val signedOut =
+                CompositeSink(
+                    "oidc",
+                    object : UploadTransport {
+                        override suspend fun upload(batch: Batch): UploadResult =
+                            throw OidcException.ReauthorizationRequired("invalid_grant")
+                    },
+                    Jsonl,
+                )
 
-        val result = assertInstanceOf(UploadResult.Failed::class.java, signedOut.upload(batch()))
-        assertTrue(result.reason.contains("sign in again"), result.reason)
-    }
+            val result = assertInstanceOf(UploadResult.Failed::class.java, signedOut.upload(batch()))
+            assertTrue(result.reason.contains("sign in again"), result.reason)
+        }
 }

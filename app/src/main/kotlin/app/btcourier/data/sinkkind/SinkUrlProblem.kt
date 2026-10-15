@@ -35,15 +35,20 @@ enum class SinkUrlProblem {
  *   sent as is.
  * @param required false lets a blank URL pass.
  */
-fun validateSinkUrl(raw: String, allowQuery: Boolean = false, required: Boolean = false): SinkUrlProblem? {
+fun validateSinkUrl(
+    raw: String,
+    allowQuery: Boolean = false,
+    required: Boolean = false,
+): SinkUrlProblem? {
     val text = raw.trim()
     if (text.isEmpty()) return SinkUrlProblem.INVALID.takeIf { required }
-    val url = try {
-        parseBaseUrl(text)
-    } catch (_: IllegalArgumentException) {
-        // parseBaseUrl refuses both; only a URL that parses can carry credentials.
-        return if (text.toHttpUrlOrNull() == null) SinkUrlProblem.INVALID else SinkUrlProblem.CREDENTIALS_IN_URL
-    }
+    val url =
+        try {
+            parseBaseUrl(text)
+        } catch (_: IllegalArgumentException) {
+            // parseBaseUrl refuses both; only a URL that parses can carry credentials.
+            return if (text.toHttpUrlOrNull() == null) SinkUrlProblem.INVALID else SinkUrlProblem.CREDENTIALS_IN_URL
+        }
     if ((url.query != null && !allowQuery) || url.fragment != null) return SinkUrlProblem.QUERY_OR_FRAGMENT
     return if (url.isHttps) null else SinkUrlProblem.CLEARTEXT
 }

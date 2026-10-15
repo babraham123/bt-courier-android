@@ -33,7 +33,10 @@ object Gzip {
         return out.toByteArray()
     }
 
-    private fun writeIntLe(out: ByteArrayOutputStream, v: Int) {
+    private fun writeIntLe(
+        out: ByteArrayOutputStream,
+        v: Int,
+    ) {
         for (shift in 0 until 32 step 8) out.write((v ushr shift) and 0xff)
     }
 }

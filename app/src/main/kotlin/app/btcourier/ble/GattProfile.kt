@@ -19,7 +19,10 @@ data class GattProfile(
     val wantsBond: Boolean,
 ) {
     /** One `GattLink.write` routed to its characteristic and ATT write type. */
-    data class WriteRoute(val characteristic: UUID, val writeType: WriteType)
+    data class WriteRoute(
+        val characteristic: UUID,
+        val writeType: WriteType,
+    )
 
     /** Every write goes to [write]; the caller's flag picks the ATT write type. */
     fun routeWrite(withResponse: Boolean): WriteRoute =
@@ -37,7 +40,14 @@ data class GattProfile(
  * MTU carries them and none is negotiated. `ColmiRingSource` writes without response.
  */
 object ColmiRingGatt {
-    val PROFILE = GattProfile(ColmiGatt.SERVICE, notify = ColmiGatt.TX, write = ColmiGatt.RX, mtu = GattProfile.DEFAULT_MTU, wantsBond = false)
+    val PROFILE =
+        GattProfile(
+            ColmiGatt.SERVICE,
+            notify = ColmiGatt.TX,
+            write = ColmiGatt.RX,
+            mtu = GattProfile.DEFAULT_MTU,
+            wantsBond = false,
+        )
 
     /** The family's advertised names start with the model, `R02_...`, `R06_...` (unverified on hardware). */
     val NAME_PATTERN: Regex = Regex("^R0.*")
@@ -46,7 +56,12 @@ object ColmiRingGatt {
 }
 
 /** What a companion-device scan must match; kept free of Android types so it can be tested. */
-data class DeviceFilterSpec(val serviceUuid: UUID, val namePattern: Regex) {
-    fun matches(advertisedName: String?, advertisedServices: Collection<UUID>): Boolean =
-        advertisedName != null && namePattern.matches(advertisedName) && serviceUuid in advertisedServices
+data class DeviceFilterSpec(
+    val serviceUuid: UUID,
+    val namePattern: Regex,
+) {
+    fun matches(
+        advertisedName: String?,
+        advertisedServices: Collection<UUID>,
+    ): Boolean = advertisedName != null && namePattern.matches(advertisedName) && serviceUuid in advertisedServices
 }

@@ -10,21 +10,23 @@ import java.io.IOException
 
 class FakeGattLinkTest {
     @Test
-    fun `scripted peer echoes writes until the link drops`() = runTest {
-        val link = FakeGattLink { bytes, _ -> notify(bytes.reversedArray()) }
+    fun `scripted peer echoes writes until the link drops`() =
+        runTest {
+            val link = FakeGattLink { bytes, _ -> notify(bytes.reversedArray()) }
 
-        link.write(byteArrayOf(1, 2, 3), withResponse = false)
-        link.drop()
+            link.write(byteArrayOf(1, 2, 3), withResponse = false)
+            link.drop()
 
-        val received = link.notifications.toList()
-        assertEquals(1, received.size)
-        assertArrayEquals(byteArrayOf(3, 2, 1), received.single())
-        assertThrows<IOException> { link.write(byteArrayOf(0), withResponse = false) }
-    }
+            val received = link.notifications.toList()
+            assertEquals(1, received.size)
+            assertArrayEquals(byteArrayOf(3, 2, 1), received.single())
+            assertThrows<IOException> { link.write(byteArrayOf(0), withResponse = false) }
+        }
 
     @Test
-    fun `writes larger than the MTU payload are rejected`() = runTest {
-        val link = FakeGattLink(mtu = 23)
-        assertThrows<IllegalArgumentException> { link.write(ByteArray(21), withResponse = true) }
-    }
+    fun `writes larger than the MTU payload are rejected`() =
+        runTest {
+            val link = FakeGattLink(mtu = 23)
+            assertThrows<IllegalArgumentException> { link.write(ByteArray(21), withResponse = true) }
+        }
 }

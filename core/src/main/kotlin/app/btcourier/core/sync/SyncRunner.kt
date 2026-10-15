@@ -52,17 +52,18 @@ class SyncRunner(
 ) {
     suspend fun run(): SyncReport {
         val progress = Progress()
-        val stoppedBecause = try {
-            pullAll(progress)
-        } catch (e: SourceException.Busy) {
-            StopReason.Busy
-        } catch (e: SourceException.Truncated) {
-            StopReason.Truncated(e)
-        } catch (e: SourceException) {
-            StopReason.DeviceError(e)
-        } catch (e: IOException) {
-            StopReason.LinkLost(e)
-        }
+        val stoppedBecause =
+            try {
+                pullAll(progress)
+            } catch (e: SourceException.Busy) {
+                StopReason.Busy
+            } catch (e: SourceException.Truncated) {
+                StopReason.Truncated(e)
+            } catch (e: SourceException) {
+                StopReason.DeviceError(e)
+            } catch (e: IOException) {
+                StopReason.LinkLost(e)
+            }
         return SyncReport(progress.pages, progress.linesStored, progress.duplicates, stoppedBecause)
     }
 
@@ -86,6 +87,7 @@ class SyncRunner(
             when {
                 // A page without rows stores nothing, but the cursor still has to move past it.
                 store.appendPage(sourceId, page.nextCursor, fixed.lines) -> progress.linesStored += fixed.rows
+
                 fixed.rows > 0 -> progress.duplicates++
             }
             if (!page.more) return StopReason.CaughtUp
@@ -124,17 +126,25 @@ sealed interface StopReason {
     data object CaughtUp : StopReason
 
     /** The device kept answering `more:true` without moving its cursor. */
-    data class NoProgress(val cursor: String) : StopReason
+    data class NoProgress(
+        val cursor: String,
+    ) : StopReason
 
     /** The link failed (dropped, frame lost, timed out); resume on the next connection. */
-    data class LinkLost(val cause: IOException) : StopReason
+    data class LinkLost(
+        val cause: IOException,
+    ) : StopReason
 
     /** A response was cut short; the page was not stored and is pulled again next time. */
-    data class Truncated(val cause: SourceException.Truncated) : StopReason
+    data class Truncated(
+        val cause: SourceException.Truncated,
+    ) : StopReason
 
     /** 429 on every attempt; try again later. */
     data object Busy : StopReason
 
     /** The device refused (HTTP error) or answered something unusable; needs a look, not a retry loop. */
-    data class DeviceError(val cause: SourceException) : StopReason
+    data class DeviceError(
+        val cause: SourceException,
+    ) : StopReason
 }

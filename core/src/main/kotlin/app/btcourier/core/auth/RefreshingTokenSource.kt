@@ -41,32 +41,43 @@ class RefreshingTokenSource(
     private var current: TokenSet? = null
     private var unsaved = false
 
-    override fun token(): String = synchronized(lock) {
-        if (!loaded) {
-            current = store.load()
-            loaded = true
+    override fun token(): String =
+        synchronized(lock) {
+            if (!loaded) {
+                current = store.load()
+                loaded = true
+            }
+            persist()
+            val tokens = current ?: throw OidcException.ReauthorizationRequired("not signed in")
+            if (nowMs() < tokens.expiresAtMs - skewMs) return tokens.accessToken
+            val refreshToken =
+                tokens.refreshToken
+                    ?: throw OidcException.ReauthorizationRequired(
+                        "the access token expired and no refresh token was issued",
+                    )
+            val fresh =
+                try {
+                    refresh(tokens, refreshToken)
+                } catch (e: IOException) {
+                    if (nowMs() < tokens.expiresAtMs) return tokens.accessToken
+                    throw e
+                }
+            adopt(fresh)
+            fresh.accessToken
         }
-        persist()
-        val tokens = current ?: throw OidcException.ReauthorizationRequired("not signed in")
-        if (nowMs() < tokens.expiresAtMs - skewMs) return tokens.accessToken
-        val refreshToken = tokens.refreshToken
-            ?: throw OidcException.ReauthorizationRequired("the access token expired and no refresh token was issued")
-        val fresh = try {
-            refresh(tokens, refreshToken)
-        } catch (e: IOException) {
-            if (nowMs() < tokens.expiresAtMs) return tokens.accessToken
-            throw e
-        }
-        adopt(fresh)
-        fresh.accessToken
-    }
 
-    private fun refresh(tokens: TokenSet, refreshToken: String): TokenSet {
+    private fun refresh(
+        tokens: TokenSet,
+        refreshToken: String,
+    ): TokenSet {
         val fields = mapOf("grant_type" to "refresh_token", "refresh_token" to refreshToken)
         val requestedAt = nowMs()
         val reply = http.newCall(client.post(provider.tokenEndpoint, fields)).execute().toOAuthReply("token endpoint")
         return when (reply) {
-            is OAuthReply.Ok -> reply.body.toTokenSet(requestedAt, previous = tokens)
+            is OAuthReply.Ok -> {
+                reply.body.toTokenSet(requestedAt, previous = tokens)
+            }
+
             is OAuthReply.Error -> {
                 if (reply.error != "invalid_grant") throw reply.rejected()
                 adopt(null)

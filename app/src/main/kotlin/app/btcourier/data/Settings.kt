@@ -52,7 +52,10 @@ interface SettingsRepository {
  * The app's settings store, with [LegacySinkMigration] run before the first read. Exactly one
  * instance may exist per file, so `AppGraph` holds it.
  */
-fun settingsDataStore(context: Context, credentials: SinkCredentials): DataStore<Preferences> =
+fun settingsDataStore(
+    context: Context,
+    credentials: SinkCredentials,
+): DataStore<Preferences> =
     PreferenceDataStoreFactory.create(migrations = listOf(LegacySinkMigration(credentials))) {
         context.applicationContext.preferencesDataStoreFile("settings")
     }
@@ -61,7 +64,9 @@ fun settingsDataStore(context: Context, credentials: SinkCredentials): DataStore
  * [AppSettings] in Preferences DataStore. The sink list and the device list are one JSON value
  * each ([encodeSinks], [encodeDevices]), so editing either is a single atomic write.
  */
-class DataStoreSettings(private val store: DataStore<Preferences>) : SettingsRepository {
+class DataStoreSettings(
+    private val store: DataStore<Preferences>,
+) : SettingsRepository {
     override val settings: Flow<AppSettings> = store.data.map(::read)
 
     override suspend fun update(transform: (AppSettings) -> AppSettings) {
@@ -133,17 +138,25 @@ internal object SettingsKeys {
  * The migrated sink keeps id [LEGACY_SINK_ID], the ack key the old single sink used, so batches it
  * had not acked yet still go to it.
  */
-class LegacySinkMigration(private val credentials: SinkCredentials) : DataMigration<Preferences> {
+class LegacySinkMigration(
+    private val credentials: SinkCredentials,
+) : DataMigration<Preferences> {
     override suspend fun shouldMigrate(currentData: Preferences): Boolean =
         SettingsKeys.LEGACY.any { it in currentData }
 
     override suspend fun migrate(currentData: Preferences): Preferences {
         val sink = legacySink(currentData)
         if (sink != null && currentData[SettingsKeys.SINKS] == null) credentials.adoptLegacySecret(LEGACY_SINK_ID)
-        return currentData.toMutablePreferences().apply {
-            if (sink != null && this[SettingsKeys.SINKS] == null) this[SettingsKeys.SINKS] = encodeSinks(listOf(sink))
-            SettingsKeys.LEGACY.forEach { remove(it) }
-        }.toPreferences()
+        return currentData
+            .toMutablePreferences()
+            .apply {
+                if (sink != null &&
+                    this[SettingsKeys.SINKS] == null
+                ) {
+                    this[SettingsKeys.SINKS] = encodeSinks(listOf(sink))
+                }
+                SettingsKeys.LEGACY.forEach { remove(it) }
+            }.toPreferences()
     }
 
     override suspend fun cleanUp() {
@@ -154,11 +167,12 @@ class LegacySinkMigration(private val credentials: SinkCredentials) : DataMigrat
     private fun legacySink(prefs: Preferences): SinkConfig? {
         val url = prefs[SettingsKeys.LEGACY_URL]?.trim().orEmpty()
         if (url.isEmpty()) return null
-        val auth = when (prefs[SettingsKeys.LEGACY_AUTH]) {
-            "BASIC" -> AuthConfig.Basic(prefs[SettingsKeys.LEGACY_USER].orEmpty())
-            "BEARER" -> AuthConfig.Bearer
-            else -> AuthConfig.None
-        }
+        val auth =
+            when (prefs[SettingsKeys.LEGACY_AUTH]) {
+                "BASIC" -> AuthConfig.Basic(prefs[SettingsKeys.LEGACY_USER].orEmpty())
+                "BEARER" -> AuthConfig.Bearer
+                else -> AuthConfig.None
+            }
         return SinkConfig(
             id = LEGACY_SINK_ID,
             name = LEGACY_SINK_NAME,

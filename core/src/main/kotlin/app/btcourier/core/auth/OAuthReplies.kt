@@ -9,10 +9,16 @@ import java.io.IOException
 
 /** A provider reply that was neither a transport failure nor transient. */
 internal sealed interface OAuthReply {
-    class Ok(val body: JsonObject) : OAuthReply
+    class Ok(
+        val body: JsonObject,
+    ) : OAuthReply
 
     /** An RFC 6749 §5.2 error reply. */
-    class Error(val error: String, val description: String?, val httpCode: Int) : OAuthReply {
+    class Error(
+        val error: String,
+        val description: String?,
+        val httpCode: Int,
+    ) : OAuthReply {
         fun rejected() = OidcException.Rejected(error, description, httpCode)
     }
 }
@@ -22,23 +28,29 @@ internal sealed interface OAuthReply {
  * so they are retried like a dropped connection. The body is never quoted in errors because a
  * token response carries secrets.
  */
-internal fun Response.readJsonObject(endpoint: String): Pair<Int, JsonObject?> = use {
-    if (code == 429 || code >= 500) throw IOException("$endpoint answered HTTP $code")
-    code to parseObjectOrNull(body.string())
-}
+internal fun Response.readJsonObject(endpoint: String): Pair<Int, JsonObject?> =
+    use {
+        if (code == 429 || code >= 500) throw IOException("$endpoint answered HTTP $code")
+        code to parseObjectOrNull(body.string())
+    }
 
 internal fun Response.toOAuthReply(endpoint: String): OAuthReply {
     val (code, json) = readJsonObject(endpoint)
     if (code in 200..299) {
-        return OAuthReply.Ok(json ?: throw OidcException.InvalidResponse("$endpoint answered HTTP $code without a JSON object"))
+        return OAuthReply.Ok(
+            json ?: throw OidcException.InvalidResponse("$endpoint answered HTTP $code without a JSON object"),
+        )
     }
-    val error = json?.string("error")
-        ?: throw OidcException.InvalidResponse("$endpoint answered HTTP $code without an OAuth error code")
+    val error =
+        json?.string("error")
+            ?: throw OidcException.InvalidResponse("$endpoint answered HTTP $code without an OAuth error code")
     return OAuthReply.Error(error, json.string("error_description"), code)
 }
 
-internal fun JsonObject.requireString(key: String, what: String): String =
-    string(key)?.takeIf { it.isNotEmpty() } ?: throw OidcException.InvalidResponse("$what has no $key")
+internal fun JsonObject.requireString(
+    key: String,
+    what: String,
+): String = string(key)?.takeIf { it.isNotEmpty() } ?: throw OidcException.InvalidResponse("$what has no $key")
 
 /**
  * Reads an RFC 6749 §5.1 access token response.
@@ -48,7 +60,10 @@ internal fun JsonObject.requireString(key: String, what: String): String =
  * @param previous the set being refreshed. RFC 6749 §6 lets the provider omit `refresh_token`
  *   (keep the old one) and `scope` (unchanged).
  */
-internal fun JsonObject.toTokenSet(requestedAtMs: Long, previous: TokenSet? = null): TokenSet {
+internal fun JsonObject.toTokenSet(
+    requestedAtMs: Long,
+    previous: TokenSet? = null,
+): TokenSet {
     val what = "token response"
     val tokenType = string("token_type")
     if (tokenType != null && !tokenType.equals("Bearer", ignoreCase = true)) {

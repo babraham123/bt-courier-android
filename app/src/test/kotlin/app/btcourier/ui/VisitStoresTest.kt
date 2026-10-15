@@ -15,7 +15,9 @@ import org.junit.jupiter.api.Test
 class VisitStoresTest {
     private val cleared = mutableListOf<String>()
 
-    private inner class Tracked(val name: String) : ViewModel() {
+    private inner class Tracked(
+        val name: String,
+    ) : ViewModel() {
         override fun onCleared() {
             cleared += name
         }
@@ -51,7 +53,13 @@ class VisitStoresTest {
     @Test
     fun `clearing the holder with the activity clears every visit`() {
         val activityStore = ActivityStore()
-        val holder = ViewModelProvider(activityStore, viewModelFactory { initializer { VisitStoresHolder() } })[VisitStoresHolder::class.java]
+        val holder =
+            ViewModelProvider(
+                activityStore,
+                viewModelFactory {
+                    initializer { VisitStoresHolder() }
+                },
+            )[VisitStoresHolder::class.java]
         holder.stores.tracked("a")
         holder.stores.tracked("b")
 

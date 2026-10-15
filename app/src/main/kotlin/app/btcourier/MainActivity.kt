@@ -63,71 +63,93 @@ class MainActivity : ComponentActivity() {
                 val toSettings = { screen = Screen.Settings }
                 // The editor handles back itself, to drop what a never-saved sink stored.
                 if (screen == Screen.Pairing || screen == Screen.Settings) BackHandler(onBack = home)
-                val activeVisit = when (screen) {
-                    Screen.Pairing -> pairingVisit
-                    Screen.SinkEditor -> editorVisit
-                    Screen.Status, Screen.Settings -> null
-                }
+                val activeVisit =
+                    when (screen) {
+                        Screen.Pairing -> pairingVisit
+                        Screen.SinkEditor -> editorVisit
+                        Screen.Status, Screen.Settings -> null
+                    }
                 LaunchedEffect(activeVisit) { visitStores.keepOnly(activeVisit) }
 
                 when (screen) {
-                    Screen.Status -> StatusScreen(
-                        viewModel = statusViewModel(),
-                        onPair = {
-                            pairingVisit = UUID.randomUUID().toString()
-                            screen = Screen.Pairing
-                        },
-                        onSettings = { screen = Screen.Settings },
-                    )
-                    Screen.Pairing -> PairingRoute(pairingViewModel(pairingVisit), onBack = home)
-                    Screen.Settings -> SettingsScreen(viewModel = settingsViewModel(), onBack = home, onEditSink = { id ->
-                        editingSink = id
-                        editorVisit = UUID.randomUUID().toString()
-                        screen = Screen.SinkEditor
-                    })
-                    Screen.SinkEditor -> SinkEditorScreen(viewModel = sinkEditorViewModel(editingSink, editorVisit), onDone = toSettings)
+                    Screen.Status -> {
+                        StatusScreen(
+                            viewModel = statusViewModel(),
+                            onPair = {
+                                pairingVisit = UUID.randomUUID().toString()
+                                screen = Screen.Pairing
+                            },
+                            onSettings = { screen = Screen.Settings },
+                        )
+                    }
+
+                    Screen.Pairing -> {
+                        PairingRoute(pairingViewModel(pairingVisit), onBack = home)
+                    }
+
+                    Screen.Settings -> {
+                        SettingsScreen(viewModel = settingsViewModel(), onBack = home, onEditSink = { id ->
+                            editingSink = id
+                            editorVisit = UUID.randomUUID().toString()
+                            screen = Screen.SinkEditor
+                        })
+                    }
+
+                    Screen.SinkEditor -> {
+                        SinkEditorScreen(viewModel = sinkEditorViewModel(editingSink, editorVisit), onDone = toSettings)
+                    }
                 }
             }
         }
     }
 
     @Composable
-    private fun statusViewModel(): StatusViewModel = viewModel {
-        StatusViewModel(
-            status = AppGraph.status.status,
-            settings = AppGraph.settings.settings,
-            devices = AppGraph.pairedDevices,
-            work = AppGraph.work,
-            diagnostics = AndroidDiagnostics(applicationContext, AppGraph.log, AppGraph.storeDir),
-        )
-    }
+    private fun statusViewModel(): StatusViewModel =
+        viewModel {
+            StatusViewModel(
+                status = AppGraph.status.status,
+                settings = AppGraph.settings.settings,
+                devices = AppGraph.pairedDevices,
+                work = AppGraph.work,
+                diagnostics = AndroidDiagnostics(applicationContext, AppGraph.log, AppGraph.storeDir),
+            )
+        }
 
     @Composable
-    private fun pairingViewModel(visit: String): PairingViewModel = viewModel(visitStores.owner(visit)) {
-        PairingViewModel(AppGraph.pairedDevices, AndroidPairingPlatform(applicationContext))
-    }
+    private fun pairingViewModel(visit: String): PairingViewModel =
+        viewModel(visitStores.owner(visit)) {
+            PairingViewModel(AppGraph.pairedDevices, AndroidPairingPlatform(applicationContext))
+        }
 
     @Composable
-    private fun settingsViewModel(): SettingsViewModel = viewModel {
-        SettingsViewModel(AppGraph.settings, AppGraph.work)
-    }
+    private fun settingsViewModel(): SettingsViewModel =
+        viewModel {
+            SettingsViewModel(AppGraph.settings, AppGraph.work)
+        }
 
     @Composable
-    private fun sinkEditorViewModel(sinkId: String?, visit: String): SinkEditorViewModel = viewModel(visitStores.owner(visit)) {
-        SinkEditorViewModel(
-            sinkId = sinkId,
-            settings = AppGraph.settings,
-            credentials = AppGraph.sinkCredentials,
-            work = AppGraph.work,
-            http = AppGraph.httpClient,
-            appScope = AppGraph.scope,
-        )
-    }
+    private fun sinkEditorViewModel(
+        sinkId: String?,
+        visit: String,
+    ): SinkEditorViewModel =
+        viewModel(visitStores.owner(visit)) {
+            SinkEditorViewModel(
+                sinkId = sinkId,
+                settings = AppGraph.settings,
+                credentials = AppGraph.sinkCredentials,
+                work = AppGraph.work,
+                http = AppGraph.httpClient,
+                appScope = AppGraph.scope,
+            )
+        }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PairingRoute(viewModel: PairingViewModel, onBack: () -> Unit) {
+private fun PairingRoute(
+    viewModel: PairingViewModel,
+    onBack: () -> Unit,
+) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {

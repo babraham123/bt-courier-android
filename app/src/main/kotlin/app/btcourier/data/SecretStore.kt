@@ -24,7 +24,10 @@ interface SecretStore {
     suspend fun get(name: String): String?
 
     /** Stores [value] under [name]; null deletes it. */
-    suspend fun put(name: String, value: String?)
+    suspend fun put(
+        name: String,
+        value: String?,
+    )
 }
 
 /**
@@ -45,21 +48,25 @@ class KeystoreSecretStore(
 ) : SecretStore {
     private val mutex = Mutex()
 
-    override suspend fun get(name: String): String? = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            val file = fileOf(name)
-            if (!file.exists()) return@withContext null
-            try {
-                decrypt(file.readBytes())
-            } catch (_: GeneralSecurityException) {
-                null
-            } catch (_: IllegalArgumentException) {
-                null
+    override suspend fun get(name: String): String? =
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                val file = fileOf(name)
+                if (!file.exists()) return@withContext null
+                try {
+                    decrypt(file.readBytes())
+                } catch (_: GeneralSecurityException) {
+                    null
+                } catch (_: IllegalArgumentException) {
+                    null
+                }
             }
         }
-    }
 
-    override suspend fun put(name: String, value: String?) = mutex.withLock {
+    override suspend fun put(
+        name: String,
+        value: String?,
+    ) = mutex.withLock {
         withContext(Dispatchers.IO) {
             val file = fileOf(name)
             if (value == null) {
@@ -91,9 +98,10 @@ class KeystoreSecretStore(
         val ivLength = bytes[1].toInt()
         require(ivLength in 12..16 && bytes.size > 2 + ivLength) { "bad secret header" }
         val iv = bytes.copyOfRange(2, 2 + ivLength)
-        val cipher = Cipher.getInstance(TRANSFORMATION).apply {
-            init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, iv))
-        }
+        val cipher =
+            Cipher.getInstance(TRANSFORMATION).apply {
+                init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, iv))
+            }
         return cipher.doFinal(bytes, 2 + ivLength, bytes.size - 2 - ivLength).decodeToString()
     }
 
@@ -111,10 +119,12 @@ private const val KEY_ALIAS = "btcourier.secrets"
 private fun androidKeystoreKey(): SecretKey {
     val keyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
     (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
-    val spec = KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-        .setKeySize(256)
-        .build()
+    val spec =
+        KeyGenParameterSpec
+            .Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .build()
     return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE).apply { init(spec) }.generateKey()
 }

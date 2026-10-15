@@ -28,46 +28,61 @@ object WicanSupport : DeviceSupport {
     override val syncsOnCarTrigger = true
 
     override val label = R.string.kind_wican
-    override val pairingText = PairingText(
-        help = R.string.pairing_kind_wican_help,
-        explain = listOf(R.string.pairing_explain_ble, R.string.pairing_explain_passkey, R.string.pairing_explain_window),
-        associate = R.string.pairing_associate_body,
-        test = R.string.pairing_test_body,
-    )
+    override val pairingText =
+        PairingText(
+            help = R.string.pairing_kind_wican_help,
+            explain =
+                listOf(
+                    R.string.pairing_explain_ble,
+                    R.string.pairing_explain_passkey,
+                    R.string.pairing_explain_window,
+                ),
+            associate = R.string.pairing_associate_body,
+            test = R.string.pairing_test_body,
+        )
 
-    override suspend fun <T> withSource(link: GattLink, options: SourceOptions, block: suspend (Source) -> T): T =
-        withTransport(link) { block(WicanLoggerSource(it, options.pageLimit, options.clock)) }
+    override suspend fun <T> withSource(
+        link: GattLink,
+        options: SourceOptions,
+        block: suspend (Source) -> T,
+    ): T = withTransport(link) { block(WicanLoggerSource(it, options.pageLimit, options.clock)) }
 
-    override suspend fun probe(link: GattLink): ProbeResult = withTransport(link) { transport ->
-        val response = transport.request("GET", "/api/status")
-        if (response.status != 200) throw IOException("GET /api/status answered ${response.status}")
-        val version = parseStatusVersion(response.body) ?: throw IOException("GET /api/status carried no version")
-        ProbeResult.Wican(version, link.mtu)
-    }
+    override suspend fun probe(link: GattLink): ProbeResult =
+        withTransport(link) { transport ->
+            val response = transport.request("GET", "/api/status")
+            if (response.status != 200) throw IOException("GET /api/status answered ${response.status}")
+            val version = parseStatusVersion(response.body) ?: throw IOException("GET /api/status carried no version")
+            ProbeResult.Wican(version, link.mtu)
+        }
 
     /**
      * Runs [block] with a tunnel transport on [link]. The transport's notification reader must
      * outlive single requests but not [block]. A plain child job rather than a supervisor: an
      * unexpected failure in the reader then surfaces from here instead of crashing the process.
      */
-    private suspend fun <T> withTransport(link: GattLink, block: suspend (BleHttpTransport) -> T): T = coroutineScope {
-        val reader = Job(coroutineContext[Job])
-        try {
-            block(BleHttpTransport(link, CoroutineScope(coroutineContext + reader)))
-        } finally {
-            reader.cancel()
+    private suspend fun <T> withTransport(
+        link: GattLink,
+        block: suspend (BleHttpTransport) -> T,
+    ): T =
+        coroutineScope {
+            val reader = Job(coroutineContext[Job])
+            try {
+                block(BleHttpTransport(link, CoroutineScope(coroutineContext + reader)))
+            } finally {
+                reader.cancel()
+            }
         }
-    }
 }
 
 /** `version` from a `GET /api/status` body (dev_status_manager `HTTP_API.md`), or null. */
-internal fun parseStatusVersion(body: ByteArray): String? = try {
-    (Json.parseToJsonElement(body.decodeToString()) as? JsonObject)
-        ?.get("version")
-        ?.jsonPrimitive
-        ?.contentOrNull
-        ?.takeIf { it.isNotBlank() }
-} catch (e: IllegalArgumentException) {
-    // Malformed JSON (SerializationException) or a non-primitive `version`.
-    null
-}
+internal fun parseStatusVersion(body: ByteArray): String? =
+    try {
+        (Json.parseToJsonElement(body.decodeToString()) as? JsonObject)
+            ?.get("version")
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+    } catch (e: IllegalArgumentException) {
+        // Malformed JSON (SerializationException) or a non-primitive `version`.
+        null
+    }

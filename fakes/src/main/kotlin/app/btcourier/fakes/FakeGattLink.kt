@@ -22,13 +22,13 @@ class FakeGattLink(
     private val pending = Channel<ByteArray>(Channel.UNLIMITED)
 
     private val _writes = mutableListOf<ByteArray>()
-    private val _withResponse = mutableListOf<Boolean>()
+    private val _writesWithResponse = mutableListOf<Boolean>()
 
     /** Copies of every PDU written, in order. */
     val writes: List<ByteArray> get() = synchronized(_writes) { _writes.toList() }
 
     /** The `withResponse` flag of each entry in [writes]. */
-    val writesWithResponse: List<Boolean> get() = synchronized(_writes) { _withResponse.toList() }
+    val writesWithResponse: List<Boolean> get() = synchronized(_writes) { _writesWithResponse.toList() }
 
     @Volatile
     var closed: Boolean = false
@@ -36,12 +36,15 @@ class FakeGattLink(
 
     override val notifications: Flow<ByteArray> = pending.receiveAsFlow()
 
-    override suspend fun write(bytes: ByteArray, withResponse: Boolean) {
+    override suspend fun write(
+        bytes: ByteArray,
+        withResponse: Boolean,
+    ) {
         if (closed) throw IOException("link closed")
         require(bytes.size <= mtu - 3) { "PDU of ${bytes.size} bytes exceeds MTU payload ${mtu - 3}" }
         synchronized(_writes) {
             _writes += bytes.copyOf()
-            _withResponse += withResponse
+            _writesWithResponse += withResponse
         }
         onWrite(bytes, withResponse)
         // A real stack suspends on every write; without this a writer loop would never let the

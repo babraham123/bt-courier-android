@@ -62,44 +62,66 @@ class SyncJob(
      *   to a foreground service there, so the service never runs while the device is merely being
      *   looked for.
      */
-    suspend fun run(address: String?, sealPolicy: SealPolicy, attempt: Int = 0, onConnected: suspend () -> Unit = {}): SyncOutcome {
-        val device = address?.let { a -> devices.all().firstOrNull { it.address.equals(a, ignoreCase = true) } }
-            ?: return finish(End.NotPaired(address), null, sealPolicy, attempt)
+    suspend fun run(
+        address: String?,
+        sealPolicy: SealPolicy,
+        attempt: Int = 0,
+        onConnected: suspend () -> Unit = {},
+    ): SyncOutcome {
+        val device =
+            address?.let { a -> devices.all().firstOrNull { it.address.equals(a, ignoreCase = true) } }
+                ?: return finish(End.NotPaired(address), null, sealPolicy, attempt)
         val lock = locks.of(device.address)
         if (!lock.tryLock()) return SyncOutcome.AlreadyRunning
         try {
-            val link = try {
-                links.open(device.address, device.kind)
-            } catch (e: IOException) {
-                return finish(End.Unreachable(e), device, sealPolicy, attempt)
-            }
-            val report = try {
-                onConnected()
-                transfer(link, device)
-            } finally {
-                link.close()
-            }
+            val link =
+                try {
+                    links.open(device.address, device.kind)
+                } catch (e: IOException) {
+                    return finish(End.Unreachable(e), device, sealPolicy, attempt)
+                }
+            val report =
+                try {
+                    onConnected()
+                    transfer(link, device)
+                } finally {
+                    link.close()
+                }
             return finish(End.Reached(report), device, sealPolicy, attempt)
         } finally {
             lock.unlock()
         }
     }
 
-    private suspend fun transfer(link: GattLink, device: PairedDevice): SyncReport =
+    private suspend fun transfer(
+        link: GattLink,
+        device: PairedDevice,
+    ): SyncReport =
         device.kind.support.withSource(link, SourceOptions(clock, zone(), pageLimit)) { source ->
             SyncRunner(sourceIdFor(device.kind, device.address), source, store, busyBackoff = retry.busyBackoff).run()
         }
 
     /** How a run ended, before [finish] turns it into its [SyncOutcome]. */
     private sealed interface End {
-        data class Reached(val report: SyncReport) : End
+        data class Reached(
+            val report: SyncReport,
+        ) : End
 
-        data class Unreachable(val cause: IOException) : End
+        data class Unreachable(
+            val cause: IOException,
+        ) : End
 
-        data class NotPaired(val address: String?) : End
+        data class NotPaired(
+            val address: String?,
+        ) : End
     }
 
-    private suspend fun finish(end: End, device: PairedDevice?, sealPolicy: SealPolicy, attempt: Int): SyncOutcome.Recorded {
+    private suspend fun finish(
+        end: End,
+        device: PairedDevice?,
+        sealPolicy: SealPolicy,
+        attempt: Int,
+    ): SyncOutcome.Recorded {
         val sealed = store.seal(sealPolicy, clock())
         val counters = store.counters()
         val cursor = device?.let { store.cursor(sourceIdFor(it.kind, it.address)) }
@@ -110,15 +132,16 @@ class SyncJob(
             recorded.withCounters(counters).withError(outcome.error, now)
         }
         val report = (end as? End.Reached)?.report
-        val line = buildString {
-            append("sync ${device?.kind ?: "-"} ${outcome.result}")
-            if (report != null) {
-                append(" (${outcome.stop}): ${report.pagesPulled} pages, ${report.linesStored} lines, ")
-                append("${report.duplicates} duplicates, cursor $cursor")
+        val line =
+            buildString {
+                append("sync ${device?.kind ?: "-"} ${outcome.result}")
+                if (report != null) {
+                    append(" (${outcome.stop}): ${report.pagesPulled} pages, ${report.linesStored} lines, ")
+                    append("${report.duplicates} duplicates, cursor $cursor")
+                }
+                append("; sealed ${sealed.size}, ${counters.pendingBatches} batches pending")
+                outcome.error?.let { append(": $it") }
             }
-            append("; sealed ${sealed.size}, ${counters.pendingBatches} batches pending")
-            outcome.error?.let { append(": $it") }
-        }
         if (report != null) log.info(TAG, line) else log.warn(TAG, line)
         return outcome
     }
@@ -127,32 +150,91 @@ class SyncJob(
      * The one place a run's end becomes what is recorded and whether another run is worth it. A
      * new [StopReason] is one branch here, plus its [SyncStopKind] and the status screen's label.
      */
-    private fun outcomeOf(end: End, cursor: String?, sealed: List<String>, attempt: Int): SyncOutcome.Recorded {
-        fun reached(report: SyncReport, result: SyncResultKind, stop: SyncStopKind, error: String?) = SyncOutcome.Recorded(
-            result, stop, error, report.linesStored, report.pagesPulled, cursor, sealed,
+    private fun outcomeOf(
+        end: End,
+        cursor: String?,
+        sealed: List<String>,
+        attempt: Int,
+    ): SyncOutcome.Recorded {
+        fun reached(
+            report: SyncReport,
+            result: SyncResultKind,
+            stop: SyncStopKind,
+            error: String?,
+        ) = SyncOutcome.Recorded(
+            result,
+            stop,
+            error,
+            report.linesStored,
+            report.pagesPulled,
+            cursor,
+            sealed,
             retryWorthwhile = retry.anotherRun(interrupted = result == SyncResultKind.INTERRUPTED, attempt),
         )
         return when (end) {
-            is End.NotPaired -> SyncOutcome.Recorded(
-                SyncResultKind.NOT_PAIRED,
-                error = if (end.address == null) "no device paired" else "device not paired",
-                sealed = sealed,
-            )
-            is End.Unreachable -> SyncOutcome.Recorded(
-                SyncResultKind.UNREACHABLE,
-                error = "device unreachable: ${end.cause.message}",
-                cursor = cursor,
-                sealed = sealed,
-            )
-            is End.Reached -> when (val reason = end.report.stoppedBecause) {
-                StopReason.CaughtUp -> reached(end.report, SyncResultKind.CAUGHT_UP, SyncStopKind.CAUGHT_UP, null)
-                is StopReason.NoProgress ->
-                    reached(end.report, SyncResultKind.DEVICE_ERROR, SyncStopKind.NO_PROGRESS, "device did not advance past ${reason.cursor}")
-                is StopReason.DeviceError -> reached(end.report, SyncResultKind.DEVICE_ERROR, SyncStopKind.DEVICE_ERROR, reason.cause.message)
-                is StopReason.LinkLost -> reached(end.report, SyncResultKind.INTERRUPTED, SyncStopKind.LINK_LOST, "link lost: ${reason.cause.message}")
-                is StopReason.Truncated ->
-                    reached(end.report, SyncResultKind.INTERRUPTED, SyncStopKind.TRUNCATED, "transfer truncated: ${reason.cause.message}")
-                StopReason.Busy -> reached(end.report, SyncResultKind.INTERRUPTED, SyncStopKind.BUSY, "device busy")
+            is End.NotPaired -> {
+                SyncOutcome.Recorded(
+                    SyncResultKind.NOT_PAIRED,
+                    error = if (end.address == null) "no device paired" else "device not paired",
+                    sealed = sealed,
+                )
+            }
+
+            is End.Unreachable -> {
+                SyncOutcome.Recorded(
+                    SyncResultKind.UNREACHABLE,
+                    error = "device unreachable: ${end.cause.message}",
+                    cursor = cursor,
+                    sealed = sealed,
+                )
+            }
+
+            is End.Reached -> {
+                when (val reason = end.report.stoppedBecause) {
+                    StopReason.CaughtUp -> {
+                        reached(end.report, SyncResultKind.CAUGHT_UP, SyncStopKind.CAUGHT_UP, null)
+                    }
+
+                    is StopReason.NoProgress -> {
+                        reached(
+                            end.report,
+                            SyncResultKind.DEVICE_ERROR,
+                            SyncStopKind.NO_PROGRESS,
+                            "device did not advance past ${reason.cursor}",
+                        )
+                    }
+
+                    is StopReason.DeviceError -> {
+                        reached(
+                            end.report,
+                            SyncResultKind.DEVICE_ERROR,
+                            SyncStopKind.DEVICE_ERROR,
+                            reason.cause.message,
+                        )
+                    }
+
+                    is StopReason.LinkLost -> {
+                        reached(
+                            end.report,
+                            SyncResultKind.INTERRUPTED,
+                            SyncStopKind.LINK_LOST,
+                            "link lost: ${reason.cause.message}",
+                        )
+                    }
+
+                    is StopReason.Truncated -> {
+                        reached(
+                            end.report,
+                            SyncResultKind.INTERRUPTED,
+                            SyncStopKind.TRUNCATED,
+                            "transfer truncated: ${reason.cause.message}",
+                        )
+                    }
+
+                    StopReason.Busy -> {
+                        reached(end.report, SyncResultKind.INTERRUPTED, SyncStopKind.BUSY, "device busy")
+                    }
+                }
             }
         }
     }
@@ -164,7 +246,10 @@ class SyncJob(
          * case-folded because Android reports addresses upper-case but a hand-entered one may not
          * be. The prefix also names the device's uploaded batches.
          */
-        fun sourceIdFor(kind: DeviceKind, address: String): String = kind.support.sourcePrefix + address.uppercase()
+        fun sourceIdFor(
+            kind: DeviceKind,
+            address: String,
+        ): String = kind.support.sourcePrefix + address.uppercase()
 
         private const val TAG = "sync"
     }
@@ -186,7 +271,10 @@ data class SyncRetryPolicy(
     val maxRuns: Int = 5,
 ) {
     /** Whether a run ending [interrupted] after [attempt] earlier runs in a row earns another. */
-    fun anotherRun(interrupted: Boolean, attempt: Int): Boolean = interrupted && attempt + 1 < maxRuns
+    fun anotherRun(
+        interrupted: Boolean,
+        attempt: Int,
+    ): Boolean = interrupted && attempt + 1 < maxRuns
 }
 
 /**

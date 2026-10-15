@@ -21,12 +21,18 @@ class ResponseAssembler(
         /** Not part of this exchange: another seq (a late frame of an aborted request), a device CREDIT for an upload, or anything after LAST. */
         data object Ignored : Event
 
-        class Head(val head: ResponseHead) : Event
+        class Head(
+            val head: ResponseHead,
+        ) : Event
 
-        class Body(val bytes: ByteArray) : Event
+        class Body(
+            val bytes: ByteArray,
+        ) : Event
 
         /** LAST: the response is complete. [tail] is its payload, normally empty. */
-        class End(val tail: ByteArray) : Event
+        class End(
+            val tail: ByteArray,
+        ) : Event
     }
 
     var head: ResponseHead? = null
@@ -53,10 +59,16 @@ class ResponseAssembler(
                 if (head != null) throw BleHttpException.Protocol("second RSP head for seq $seq")
                 ResponseHead.decode(frame.payload).also { head = it }.let(Event::Head)
             }
-            FrameType.RSP_BODY -> body(frame)
+
+            FrameType.RSP_BODY -> {
+                body(frame)
+            }
+
             // Device CREDITs pace uploads; REQ/REQ_BODY/ABORT never come from the device and §2
             // says unexpected types are ignored.
-            else -> Event.Ignored
+            else -> {
+                Event.Ignored
+            }
         }
     }
 

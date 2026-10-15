@@ -23,11 +23,11 @@ import app.btcourier.data.SinkEnvironment
 import app.btcourier.data.SshKeys
 import app.btcourier.data.SyncStatusRepository
 import app.btcourier.data.buildSinks
-import app.btcourier.data.statusDataStore
 import app.btcourier.data.configuredSinkIds
 import app.btcourier.data.saf.SafDocumentTree
 import app.btcourier.data.saf.releaseGrant
 import app.btcourier.data.settingsDataStore
+import app.btcourier.data.statusDataStore
 import app.btcourier.log.AppLog
 import app.btcourier.work.LinkFactory
 import app.btcourier.work.SchedulerWorkControl
@@ -55,9 +55,11 @@ import java.util.concurrent.TimeUnit
  * The store must be a single instance per process: [DefaultStore] keeps its index in memory and
  * serialises writers with an in-process lock.
  */
-// The application context lives as long as the process, so holding it statically leaks nothing.
-// Suppressed on the object: lint does not see the annotation on a Kotlin property's backing field.
-@SuppressLint("StaticFieldLeak")
+@SuppressLint(
+    // The application context lives as long as the process, so holding it statically leaks nothing.
+    // Suppressed on the object: lint does not see the annotation on a Kotlin property's backing field.
+    "StaticFieldLeak",
+)
 object AppGraph {
     private lateinit var app: Context
 
@@ -67,11 +69,12 @@ object AppGraph {
 
     /** The companion-device associations, i.e. which devices are paired. */
     @Volatile
-    var associations: Associations = object : Associations {
-        override fun list(): List<Association> = emptyList()
+    var associations: Associations =
+        object : Associations {
+            override fun list(): List<Association> = emptyList()
 
-        override fun remove(association: Association) = Unit
-    }
+            override fun remove(association: Association) = Unit
+        }
 
     /** Outlives any screen; for fire-and-forget work such as a receiver's `goAsync`. */
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -81,6 +84,7 @@ object AppGraph {
         DataStoreSyncStatus(statusDataStore(app) { newestAssociation(associations.list())?.address })
     }
     val pairedDevices: PairedDeviceRepository by lazy { CompanionPairedDeviceRepository(associations, settings) }
+
     /** Every scheduling request goes through it: screens, triggers and workers. */
     val work: WorkControl by lazy { SchedulerWorkControl(app) }
     val syncFanOut: SyncFanOut by lazy { SyncFanOut(pairedDevices, work::syncNow) }
@@ -95,7 +99,8 @@ object AppGraph {
     val storeDir: File get() = File(app.filesDir, "store")
 
     val httpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
+        OkHttpClient
+            .Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             // Batches are at most ~1 MB compressed; a minute covers a slow uplink.
             .writeTimeout(60, TimeUnit.SECONDS)
@@ -135,12 +140,21 @@ object AppGraph {
     // One instance for the process: it keeps each sink's retry schedule across rounds, while the
     // sinks themselves are rebuilt every round from the current settings.
     val uploadJob: UploadJob by lazy {
-        UploadJob(store, sinks = { buildSinks(settings.current(), secrets, sinkEnvironment) }, status = status, log = log)
+        UploadJob(
+            store,
+            sinks = { buildSinks(settings.current(), secrets, sinkEnvironment) },
+            status = status,
+            log = log,
+        )
     }
 
     val uploadWork: UploadWork by lazy { UploadWork(uploadJob, work) }
 
-    fun init(context: Context, links: LinkFactory, associations: Associations) {
+    fun init(
+        context: Context,
+        links: LinkFactory,
+        associations: Associations,
+    ) {
         app = context.applicationContext
         linkFactory = links
         this.associations = associations

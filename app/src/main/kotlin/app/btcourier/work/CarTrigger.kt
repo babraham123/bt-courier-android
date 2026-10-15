@@ -20,8 +20,18 @@ const val CAR_TRIGGER_DEBOUNCE_MS = 60_000L
  * [CAR_TRIGGER_DEBOUNCE_MS] old. A [lastTriggerMs] in the future (wall clock moved back) does not
  * suppress, so a clock change can never silence the trigger for good.
  */
-fun decideCarTrigger(action: String?, address: String?, configuredAddress: String?, lastTriggerMs: Long?, nowMs: Long): Boolean {
-    if (action != BluetoothDevice.ACTION_ACL_CONNECTED && action != BluetoothDevice.ACTION_ACL_DISCONNECTED) return false
+fun decideCarTrigger(
+    action: String?,
+    address: String?,
+    configuredAddress: String?,
+    lastTriggerMs: Long?,
+    nowMs: Long,
+): Boolean {
+    if (action != BluetoothDevice.ACTION_ACL_CONNECTED &&
+        action != BluetoothDevice.ACTION_ACL_DISCONNECTED
+    ) {
+        return false
+    }
     if (address.isNullOrBlank() || configuredAddress.isNullOrBlank()) return false
     if (!address.equals(configuredAddress, ignoreCase = true)) return false
     val sinceLast = lastTriggerMs?.let { nowMs - it } ?: return true
@@ -46,14 +56,18 @@ fun decideCarTrigger(action: String?, address: String?, configuredAddress: Strin
  *   lands the trip instead of waiting for the next drive.
  */
 class CarTrigger : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
+    override fun onReceive(
+        context: Context,
+        intent: Intent,
+    ) {
         val action = intent.action
-        val device = if (Build.VERSION.SDK_INT >= 33) {
-            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-        }
+        val device =
+            if (Build.VERSION.SDK_INT >= 33) {
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+            }
         val address = device?.address
         val app = context.applicationContext
         val pending = goAsync()
@@ -95,7 +109,8 @@ object BondedDevices {
     fun list(context: Context): List<Pair<String, String>> {
         val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter ?: return emptyList()
         return try {
-            adapter.bondedDevices.orEmpty()
+            adapter.bondedDevices
+                .orEmpty()
                 .map { (it.name?.takeIf(String::isNotBlank) ?: it.address) to it.address }
                 .sortedBy { it.first.lowercase() }
         } catch (e: SecurityException) {

@@ -63,9 +63,13 @@ class StoredLineTest {
     @Test
     fun `walking lines attributes each to the latest marker, starting from the open file`() {
         val seen = mutableListOf<Pair<String, String?>>()
-        val last = walkFiles(listOf(row(1), fileMarker("b"), row(2), "garbage", fileMarker("c")), openFile = "a") { line, _, file ->
-            seen += line to file
-        }
+        val last =
+            walkFiles(
+                listOf(row(1), fileMarker("b"), row(2), "garbage", fileMarker("c")),
+                openFile = "a",
+            ) { line, _, file ->
+                seen += line to file
+            }
 
         assertEquals(
             listOf(row(1) to "a", fileMarker("b") to "b", row(2) to "b", "garbage" to "b", fileMarker("c") to "c"),

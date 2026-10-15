@@ -43,7 +43,10 @@ sealed interface TransportConfig {
     /** `PUT <url>/<batch name>`; [compress] false uploads the decompressed bytes. */
     @Serializable
     @SerialName("http_put")
-    data class HttpPut(val url: String, val compress: Boolean = true) : TransportConfig {
+    data class HttpPut(
+        val url: String,
+        val compress: Boolean = true,
+    ) : TransportConfig {
         override val kind get() = TransportKind.HTTP_PUT
     }
 
@@ -93,7 +96,9 @@ sealed interface TransportConfig {
     /** A Storage Access Framework tree the app holds a persisted grant for. */
     @Serializable
     @SerialName("local_folder")
-    data class LocalFolder(val treeUri: String) : TransportConfig {
+    data class LocalFolder(
+        val treeUri: String,
+    ) : TransportConfig {
         override val kind get() = TransportKind.LOCAL_FOLDER
     }
 }
@@ -110,13 +115,17 @@ enum class TransportKind {
 fun defaultMqttPort(tls: Boolean) = if (tls) 8883 else 1883
 
 /** App-side names for [BodyEncoding], so the persisted form does not depend on core's enum names. */
-enum class PostEncoding(val core: BodyEncoding) {
+enum class PostEncoding(
+    val core: BodyEncoding,
+) {
     GZIP_FILE(BodyEncoding.GzipFile),
     CONTENT_ENCODING_GZIP(BodyEncoding.ContentEncodingGzip),
     IDENTITY(BodyEncoding.Identity),
 }
 
-enum class FormatKind(val format: Format) {
+enum class FormatKind(
+    val format: Format,
+) {
     JSONL(Jsonl),
     CSV(Csv),
     PROMETHEUS(PrometheusText),
@@ -135,7 +144,9 @@ sealed interface AuthConfig {
     /** [user] plus the sink's secret as password; for MQTT these are the broker credentials. */
     @Serializable
     @SerialName("basic")
-    data class Basic(val user: String) : AuthConfig {
+    data class Basic(
+        val user: String,
+    ) : AuthConfig {
         override val kind get() = AuthKind.BASIC
     }
 
@@ -169,7 +180,9 @@ sealed interface AuthConfig {
 enum class AuthKind { NONE, BASIC, BEARER, OIDC }
 
 /** App-side names for [ClientAuthMethod]; [NONE] is a public client without a secret. */
-enum class OidcClientAuth(val core: ClientAuthMethod) {
+enum class OidcClientAuth(
+    val core: ClientAuthMethod,
+) {
     NONE(ClientAuthMethod.None),
     SECRET_BASIC(ClientAuthMethod.ClientSecretBasic),
     SECRET_POST(ClientAuthMethod.ClientSecretPost),
@@ -184,11 +197,12 @@ fun newSinkId(): String = String(CharArray(10) { ID_ALPHABET[idRandom.nextInt(ID
 /** Random suffix for a default MQTT client id, so two phones never kick each other off a broker. */
 fun newMqttClientId(): String = "btcourier-" + newSinkId().take(8)
 
-internal val sinkJson = Json {
-    ignoreUnknownKeys = true
-    // Defaults are written out so a later change to a default does not silently re-point a sink.
-    encodeDefaults = true
-}
+internal val sinkJson =
+    Json {
+        ignoreUnknownKeys = true
+        // Defaults are written out so a later change to a default does not silently re-point a sink.
+        encodeDefaults = true
+    }
 
 private val sinkListSerializer = ListSerializer(SinkConfig.serializer())
 
