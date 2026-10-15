@@ -11,7 +11,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 
 /**
- * Byte layouts from PulseLoopiOS (github.com/saksham2001/PulseLoopiOS): 16-byte packets,
+ * Byte layouts from `colmi_r02_client` (tahnok) and Gadgetbridge ColmiR0x: 16-byte packets,
  * byte 0 command, bytes 1..14 payload, byte 15 = sum(bytes 0..14) & 0xFF. Checksums below are
  * worked by hand.
  */
@@ -47,7 +47,7 @@ class ColmiPacketCodecTest {
             hex("15 00 F1 53 65 00 00 00 00 00 00 00 00 00 00 BE"),
             ColmiPacketCodec.heartRateLogRequest(1_700_000_000),
         )
-        // Steps log: day offset, then PulseLoopiOS's fixed 0F 00 5F 01.
+        // Steps log: day offset, then colmi_r02_client's fixed 0F 00 5F 01.
         assertArrayEquals(
             hex("43 02 0F 00 5F 01 00 00 00 00 00 00 00 00 00 B4"),
             ColmiPacketCodec.stepsLogRequest(2),

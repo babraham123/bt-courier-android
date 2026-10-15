@@ -33,7 +33,7 @@ data class GattProfile(
 
 /**
  * The Colmi R02 family's UART-like service ([ColmiGatt]). The ring has no passkey and is used
- * unbonded, as PulseLoopiOS does. Its packets are 16 bytes, so the default
+ * unbonded, as `colmi_r02_client` and Gadgetbridge do. Its packets are 16 bytes, so the default
  * MTU carries them and none is negotiated. `ColmiRingSource` writes without response.
  */
 object ColmiRingGatt {

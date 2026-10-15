@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test
 import java.util.UUID
 
 /**
- * The ring's profile and scan filter. UUIDs from PulseLoopiOS:
+ * The ring's profile and scan filter. UUIDs from `colmi_r02_client` / Gadgetbridge ColmiR0x:
  * service 6E40FFF0, commands written to 6E400002, answers notified on 6E400003.
  */
 class GattProfileTest {

@@ -5,8 +5,8 @@ import java.time.LocalDateTime
 import java.util.UUID
 
 /**
- * GATT layout of the Colmi R02 family (R02/R06/R10...), as implemented by PulseLoopiOS
- * (github.com/saksham2001/PulseLoopiOS): a Nordic-UART-like service where the app writes
+ * GATT layout of the Colmi R02 family (R02/R06/R10...), as published by `colmi_r02_client`
+ * (tahnok) and Gadgetbridge's ColmiR0x support: a Nordic-UART-like service where the app writes
  * commands to [RX] and the ring answers on [TX]. A `GattLink` for the ring binds writes to [RX]
  * and notifications to [TX].
  */
@@ -42,7 +42,7 @@ object ColmiPacketCodec {
     /** Language byte of set-time; 1 is English, 0 Chinese. */
     private const val LANGUAGE_ENGLISH = 1
 
-    // Copied verbatim from PulseLoopiOS's steps request after the day offset; their meaning
+    // Copied verbatim from colmi_r02_client's steps request after the day offset; their meaning
     // (probably a quarter-hour range 0x0F..0x5F and a format flag) is not documented.
     private val STEPS_REQUEST_TAIL = byteArrayOf(0x0F, 0x00, 0x5F, 0x01)
 
