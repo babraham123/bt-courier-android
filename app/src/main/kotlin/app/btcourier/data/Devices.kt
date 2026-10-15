@@ -3,7 +3,10 @@ package app.btcourier.data
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 
-/** The kinds of BLE device the app syncs; each has its own GATT profile, pairing and source. */
+/**
+ * The kinds of BLE device the app syncs, as stored in settings. What differs per kind (GATT
+ * profile, pairing, source, triggers) lives behind [app.btcourier.device.support].
+ */
 @Serializable
 enum class DeviceKind {
     /** MeatPi WiCAN Pro: bonded `ble_http` tunnel, `WicanLoggerSource`. */

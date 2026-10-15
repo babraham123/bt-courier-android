@@ -1,7 +1,6 @@
 package app.btcourier.ble
 
 import app.btcourier.core.source.colmi.ColmiGatt
-import app.btcourier.data.DeviceKind
 import com.juul.kable.WriteType
 import java.util.UUID
 
@@ -51,15 +50,3 @@ data class DeviceFilterSpec(val serviceUuid: UUID, val namePattern: Regex) {
     fun matches(advertisedName: String?, advertisedServices: Collection<UUID>): Boolean =
         advertisedName != null && namePattern.matches(advertisedName) && serviceUuid in advertisedServices
 }
-
-val DeviceKind.gattProfile: GattProfile
-    get() = when (this) {
-        DeviceKind.WICAN -> WicanGatt.PROFILE
-        DeviceKind.COLMI_RING -> ColmiRingGatt.PROFILE
-    }
-
-val DeviceKind.filterSpec: DeviceFilterSpec
-    get() = when (this) {
-        DeviceKind.WICAN -> WicanGatt.FILTER
-        DeviceKind.COLMI_RING -> ColmiRingGatt.FILTER
-    }

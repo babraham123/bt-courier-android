@@ -2,7 +2,7 @@ package app.btcourier.work
 
 import app.btcourier.ble.PairedDevice
 import app.btcourier.ble.PairedDevices
-import app.btcourier.data.DeviceKind
+import app.btcourier.device.support
 
 /** What asks for background syncs; each syncs a different set of paired devices ([syncTargets]). */
 sealed interface SyncTrigger {
@@ -12,7 +12,7 @@ sealed interface SyncTrigger {
     /** CDM reports the device at [address] in range. */
     data class Presence(val address: String) : SyncTrigger
 
-    /** The car head unit connected or disconnected; only a dongle in the car is awake for it. */
+    /** The car head unit connected or disconnected; syncs the kinds that live in the car. */
     data object Car : SyncTrigger
 }
 
@@ -20,7 +20,7 @@ sealed interface SyncTrigger {
 fun syncTargets(trigger: SyncTrigger, devices: List<PairedDevice>): List<String> = when (trigger) {
     SyncTrigger.Periodic -> devices
     is SyncTrigger.Presence -> devices.filter { it.address.equals(trigger.address, ignoreCase = true) }
-    SyncTrigger.Car -> devices.filter { it.kind == DeviceKind.WICAN }
+    SyncTrigger.Car -> devices.filter { it.kind.support.syncsOnCarTrigger }
 }.map { it.address }
 
 /** Enqueues one sync per device a trigger targets; [enqueue] is `Scheduler.syncNow` in the app. */

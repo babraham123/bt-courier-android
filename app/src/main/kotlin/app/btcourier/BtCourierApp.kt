@@ -3,7 +3,7 @@ package app.btcourier
 import android.app.Application
 import app.btcourier.ble.CompanionAssociations
 import app.btcourier.ble.KableGattLink
-import app.btcourier.ble.gattProfile
+import app.btcourier.device.support
 import app.btcourier.work.Notifications
 import app.btcourier.work.Scheduler
 import kotlinx.coroutines.launch
@@ -13,7 +13,7 @@ class BtCourierApp : Application() {
         super.onCreate()
         AppGraph.init(
             this,
-            links = { address, kind -> KableGattLink.connect(address, kind.gattProfile) },
+            links = { address, kind -> KableGattLink.connect(address, kind.support.profile) },
             associations = CompanionAssociations(this),
         )
         Notifications.createChannels(this)

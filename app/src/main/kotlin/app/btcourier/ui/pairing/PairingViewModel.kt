@@ -4,11 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.btcourier.ble.PairedDeviceRepository
 import app.btcourier.ble.PairingException
-import app.btcourier.ble.ProbeResult
-import app.btcourier.ble.gattProfile
 import app.btcourier.ble.pairingStep
 import app.btcourier.data.DeviceConfig
 import app.btcourier.data.DeviceKind
+import app.btcourier.device.ProbeResult
+import app.btcourier.device.support
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,7 +36,10 @@ interface PairingPlatform {
     /** Starts CDM presence observation of [address]; false when it is not associated (any more). */
     fun observePresence(address: String): Boolean
 
-    /** Connects to [address] with [kind]'s GATT profile and runs its "test connection" probe. */
+    /**
+     * Connects to [address] with [kind]'s GATT profile and runs its "test connection" probe;
+     * [ProbeResult.Busy] when a sync holds the device.
+     */
     suspend fun probe(address: String, kind: DeviceKind): ProbeResult
 }
 
@@ -78,7 +81,7 @@ class PairingViewModel(
                 failed(e.message)
                 return@launch
             }
-            if (kind.gattProfile.wantsBond) {
+            if (kind.support.profile.wantsBond) {
                 mutableState.update { it.copy(step = PairingStep.Bond, busy = false) }
             } else {
                 ready(upper)

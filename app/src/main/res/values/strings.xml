@@ -15,6 +15,7 @@
     <string name="pairing_associate_body_ring">Android will scan for nearby rings and ask you to pick one.</string>
     <string name="pairing_test_body_ring">Paired. Test the connection: the app connects and asks the ring for its battery level.</string>
     <string name="pairing_test_ok_ring">Battery %1$d%%</string>
+    <string name="pairing_test_busy">The device is syncing. Try again when the sync is done.</string>
     <string name="pairing_explain_ble">Enable Bluetooth on the dongle first: it is off by default. In its web interface, turn on BLE (ble_manager → enabled) and reboot it.</string>
     <string name="pairing_explain_passkey">Android will ask for a 6-digit passkey. It is the dongle\'s BLE passkey setting (123456 unless you changed it).</string>
     <string name="pairing_explain_window">The dongle accepts new pairings only after a boot. If pairing fails, power-cycle it and try again. Close other apps connected to it: it serves one phone at a time.</string>
