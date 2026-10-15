@@ -52,7 +52,8 @@ import kotlin.time.Duration.Companion.seconds
  *   not the ring's echoed timestamp, as Gadgetbridge does.
  * - The steps request addresses days by offset from the ring's today, assumed equal to the phone's
  *   today right after set-time; each steps row is placed by the date the ring stamps on it.
- * - Writes go without response, as `colmi_r02_client` does.
+ * - Writes go with response when RX declares it, else without, as PulseLoopiOS picks
+ *   (`colmi_r02_client` always writes without).
  * - Answers are not acknowledged, and the ring may send packets of other commands at any time;
  *   those are skipped, as are notifications that are not whole 16-byte packets or fail the checksum
  *   (a corrupted packet of the answer then surfaces as a timeout).

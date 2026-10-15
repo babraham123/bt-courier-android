@@ -18,28 +18,36 @@ class WicanGattTest {
         assertEquals(UUID.fromString("0000FFF4-0000-1000-8000-00805F9B34FB"), WicanGatt.HTTP_IN)
     }
 
+    // The transport picks the write type per frame, whatever FFF4's discovered properties say.
+    private val declared = listOf(true, false)
+
     @Test
     fun `request frames are written to FFF4 with response`() {
-        assertEquals(
-            GattProfile.WriteRoute(WicanGatt.HTTP_IN, WriteType.WithResponse),
-            WicanGatt.PROFILE.routeWrite(true),
-        )
+        declared.forEach {
+            assertEquals(
+                GattProfile.WriteRoute(WicanGatt.HTTP_IN, WriteType.WithResponse),
+                WicanGatt.PROFILE.routeWrite(true, writeWithResponseSupported = it),
+            )
+        }
     }
 
     @Test
     fun `credit and abort frames are written to FFF4 without response`() {
-        assertEquals(
-            GattProfile.WriteRoute(WicanGatt.HTTP_IN, WriteType.WithoutResponse),
-            WicanGatt.PROFILE.routeWrite(false),
-        )
+        declared.forEach {
+            assertEquals(
+                GattProfile.WriteRoute(WicanGatt.HTTP_IN, WriteType.WithoutResponse),
+                WicanGatt.PROFILE.routeWrite(false, writeWithResponseSupported = it),
+            )
+        }
     }
 
     @Test
     fun `nothing is ever written to the notify characteristic`() {
-        listOf(
-            true,
-            false,
-        ).forEach { assertTrue(WicanGatt.PROFILE.routeWrite(it).characteristic != WicanGatt.HTTP_OUT) }
+        listOf(true, false).forEach { withResponse ->
+            declared.forEach {
+                assertTrue(WicanGatt.PROFILE.routeWrite(withResponse, it).characteristic != WicanGatt.HTTP_OUT)
+            }
+        }
     }
 
     @Test
