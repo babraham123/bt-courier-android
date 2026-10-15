@@ -7,6 +7,7 @@ import app.btcourier.core.store.Store
 import app.btcourier.core.sync.StopReason
 import app.btcourier.core.sync.SyncReport
 import app.btcourier.core.sync.SyncRunner
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
@@ -78,6 +79,8 @@ class ColmiRingSourceTest {
             val source = source(ring)
 
             val first = source.pull("2026-10-12")
+            // Only the 2 s settle before set-time takes (virtual) time; every answer is immediate.
+            assertEquals(2_000L, currentTime)
             assertEquals(
                 listOf(
                     """{"_file":"colmi/2026-10-13"}""",
@@ -144,6 +147,26 @@ class ColmiRingSourceTest {
                     ).pull("2026-10-12")
                 }.exceptionOrNull()
             assertInstanceOf(IOException::class.java, failure)
+        }
+
+    @Test
+    fun `set-time waits for the ring to settle and for its echo, and a lost echo sets the clock again on the next pull`() =
+        runTest {
+            val ring = ring()
+            ring.silentCommands += FakeColmiRing.CMD_SET_TIME
+            val source = source(ring)
+
+            val failure = runCatching { source.pull("2026-10-12") }.exceptionOrNull()
+            assertInstanceOf(IOException::class.java, failure)
+            // Gadgetbridge's 2 s settle, then the 5 s answer timeout; no log was asked for.
+            assertEquals(7_000L, currentTime)
+            assertEquals(listOf(0x01), ring.commands.map { it[0].toInt() })
+
+            ring.silentCommands.clear()
+            assertEquals("2026-10-13", source.pull("2026-10-12").nextCursor)
+            // The settle wait is once per connection: the retry goes straight to set-time.
+            assertEquals(7_000L, currentTime)
+            assertEquals(listOf(now, now), ring.clockSets)
         }
 
     @Test

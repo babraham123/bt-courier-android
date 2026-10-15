@@ -5,6 +5,7 @@ import app.btcourier.core.source.ClockEvent
 import app.btcourier.core.source.Page
 import app.btcourier.core.source.Source
 import app.btcourier.core.transport.GattLink
+import kotlinx.coroutines.delay
 import java.io.IOException
 import java.time.Instant
 import java.time.LocalDate
@@ -33,7 +34,10 @@ import kotlin.time.Duration.Companion.seconds
  * was overwritten on the ring and is gone.
  *
  * Clock: the first [pull] of an instance sets the ring to the phone's wall clock in [zone]
- * (`0x01`), as the vendor app and Gadgetbridge do, so the ring's days are the phone's days.
+ * (`0x01`), as the vendor app and Gadgetbridge do, so the ring's days are the phone's days. It
+ * first waits [settleDelay] after connecting, as Gadgetbridge does before its first command, then
+ * waits for the ring's `0x01` echo: a lost set-time would silently shift every day offset, so a
+ * missing echo fails the pull like any other timeout and the next pull sets the clock again.
  * There is no clock journal ([clockJournal] is empty) and no [deviceStatus]: rows carry the
  * ring's own stamps, which the normaliser rates `device`. A ring whose clock was lost (flat
  * battery) before this sync logged under a wrong clock that cannot be repaired afterwards.
@@ -58,6 +62,8 @@ import kotlin.time.Duration.Companion.seconds
  *
  * @param responseTimeout longest wait for each packet of an answer; exceeding it is an
  *   [IOException], like any other link failure, and the day is pulled again next sync.
+ * @param settleDelay wait between the instance's first [pull] (right after connecting) and its
+ *   first command.
  */
 class ColmiRingSource(
     private val link: GattLink,
@@ -65,23 +71,19 @@ class ColmiRingSource(
     private val phoneClock: () -> Long = System::currentTimeMillis,
     private val historyDays: Int = DEFAULT_HISTORY_DAYS,
     private val responseTimeout: Duration = 5.seconds,
+    private val settleDelay: Duration = DEFAULT_SETTLE_DELAY,
 ) : Source {
     init {
         require(historyDays >= 2) { "the ring must hold at least one whole day before today, got $historyDays" }
     }
 
+    private var settled = false
     private var clockSet = false
     private var batteryReported = false
 
     override suspend fun pull(cursor: String?): Page {
         val last = cursor?.let(::parseCursor)
-        if (!clockSet) {
-            link.write(
-                ColmiPacketCodec.setTime(LocalDateTime.ofInstant(Instant.ofEpochMilli(phoneClock()), zone)),
-                WITHOUT_RESPONSE,
-            )
-            clockSet = true
-        }
+        setClockOnce()
         val today = Instant.ofEpochMilli(phoneClock()).atZone(zone).toLocalDate()
         val oldest = today.minusDays(historyDays - 1L)
         val day = maxOf(last?.plusDays(1) ?: oldest, oldest)
@@ -106,6 +108,17 @@ class ColmiRingSource(
     }
 
     override suspend fun clockJournal(): List<ClockEvent> = emptyList()
+
+    private suspend fun setClockOnce() {
+        if (clockSet) return
+        if (!settled) {
+            delay(settleDelay)
+            settled = true
+        }
+        val wall = LocalDateTime.ofInstant(Instant.ofEpochMilli(phoneClock()), zone)
+        link.colmiRequest(ColmiPacketCodec.setTime(wall), responseTimeout) { }
+        clockSet = true
+    }
 
     private suspend fun heartRateRows(day: LocalDate): List<Row> {
         val start = day.atStartOfDay()
@@ -157,6 +170,7 @@ class ColmiRingSource(
         const val PARAM_STEPS: String = "colmi.steps"
         const val PARAM_BATTERY: String = "colmi.battery"
 
-        private const val WITHOUT_RESPONSE = false
+        /** Gadgetbridge's wait after connecting, "to give the ring time to settle". */
+        val DEFAULT_SETTLE_DELAY: Duration = 2.seconds
     }
 }
