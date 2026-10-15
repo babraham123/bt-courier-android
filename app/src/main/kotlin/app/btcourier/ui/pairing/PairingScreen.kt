@@ -35,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.btcourier.AppGraph
@@ -47,8 +48,10 @@ import app.btcourier.ble.hasBluetoothConnectPermission
 import app.btcourier.ble.pairingStep
 import app.btcourier.ble.requestAssociation
 import app.btcourier.data.DeviceKind
+import app.btcourier.device.PairingChoices
 import app.btcourier.device.ProbeResult
 import app.btcourier.device.support
+import app.btcourier.ui.Toggle
 import app.btcourier.work.DeviceLocks
 import app.btcourier.work.DevicePresence
 import app.btcourier.work.LinkFactory
@@ -136,6 +139,15 @@ fun PairingScreen(
 
             PairingStep.Explain -> {
                 text.explain.forEach { Text(stringResource(it)) }
+                text.autoHeartRateChoice?.let { choice ->
+                    Toggle(
+                        choice.label,
+                        choice.help,
+                        state.choices.autoHeartRate,
+                        role = Role.Checkbox,
+                        onChange = viewModel::setAutoHeartRate,
+                    )
+                }
                 Button(onClick = {
                     if (hasBluetoothConnectPermission(context)) {
                         viewModel.permissionGranted()
@@ -184,6 +196,7 @@ fun PairingScreen(
 
                     is ProbeResult.Ring -> {
                         Text(stringResource(R.string.pairing_test_ok_ring, probe.battery.level))
+                        Text(autoHeartRateText(probe))
                     }
 
                     ProbeResult.Busy -> {
@@ -211,6 +224,16 @@ fun PairingScreen(
             }
         }
         state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+@Composable
+private fun autoHeartRateText(probe: ProbeResult.Ring): String {
+    val setting = probe.autoHeartRate
+    return when {
+        setting == null -> stringResource(R.string.pairing_test_auto_hr_unknown)
+        setting.enabled -> stringResource(R.string.pairing_test_auto_hr_on, setting.intervalMinutes)
+        else -> stringResource(R.string.pairing_test_auto_hr_off)
     }
 }
 
@@ -249,7 +272,8 @@ class AndroidPairingPlatform(
     override suspend fun probe(
         address: String,
         kind: DeviceKind,
-    ): ProbeResult = pairingProbe.run(address, kind)
+        choices: PairingChoices,
+    ): ProbeResult = pairingProbe.run(address, kind, choices)
 }
 
 @SuppressLint("MissingPermission") // Checked just above; the wizard cannot reach this step without it.

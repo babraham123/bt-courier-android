@@ -13,8 +13,13 @@
     <string name="pairing_kind_colmi_ring_help">R02-family ring; syncs heart rate and steps of the past days.</string>
     <string name="pairing_explain_ring">Charge the ring and keep it close to the phone. Close other apps connected to it (the vendor app, Gadgetbridge): it serves one phone at a time. There is no passkey.</string>
     <string name="pairing_associate_body_ring">Android will scan for nearby rings and ask you to pick one.</string>
-    <string name="pairing_test_body_ring">Paired. Test the connection: the app connects and asks the ring for its battery level.</string>
+    <string name="pairing_auto_hr_choice">Turn on background heart rate (every 5 min)</string>
+    <string name="pairing_auto_hr_choice_help">Uses ring battery. You can change it later in the ring\'s vendor app.</string>
+    <string name="pairing_test_body_ring">Paired. Test the connection: the app connects, asks the ring for its battery level and applies your background heart rate choice.</string>
     <string name="pairing_test_ok_ring">Battery %1$d%%</string>
+    <string name="pairing_test_auto_hr_on">Background heart rate: on, every %1$d min</string>
+    <string name="pairing_test_auto_hr_off">Background heart rate: off</string>
+    <string name="pairing_test_auto_hr_unknown">Background heart rate: could not be confirmed</string>
     <string name="pairing_test_busy">The device is syncing. Try again when the sync is done.</string>
     <string name="pairing_explain_ble">Enable Bluetooth on the dongle first: it is off by default. In its web interface, turn on BLE (ble_manager → enabled) and reboot it.</string>
     <string name="pairing_explain_passkey">Android will ask for a 6-digit passkey. It is the dongle\'s BLE passkey setting (123456 unless you changed it).</string>

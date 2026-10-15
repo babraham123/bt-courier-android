@@ -47,7 +47,10 @@ object WicanSupport : DeviceSupport {
         block: suspend (Source) -> T,
     ): T = withTransport(link) { block(WicanLoggerSource(it, options.pageLimit, options.clock)) }
 
-    override suspend fun probe(link: GattLink): ProbeResult =
+    override suspend fun probe(
+        link: GattLink,
+        choices: PairingChoices,
+    ): ProbeResult =
         withTransport(link) { transport ->
             val response = transport.request("GET", "/api/status")
             if (response.status != 200) throw IOException("GET /api/status answered ${response.status}")

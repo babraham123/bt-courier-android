@@ -1,6 +1,7 @@
 package app.btcourier.ui.pairing
 
 import app.btcourier.data.DeviceKind
+import app.btcourier.device.PairingChoices
 import app.btcourier.device.ProbeResult
 import app.btcourier.device.support
 import app.btcourier.work.DeviceLocks
@@ -17,21 +18,22 @@ class PairingProbe(
     private val locks: DeviceLocks,
 ) {
     /**
-     * Connects to [address], runs [kind]'s probe and closes the link. [ProbeResult.Busy] without
-     * opening anything when the device's lock is held.
+     * Connects to [address], runs [kind]'s probe with [choices] and closes the link.
+     * [ProbeResult.Busy] without opening anything when the device's lock is held.
      *
      * @throws java.io.IOException when the device cannot be reached or does not answer as expected.
      */
     suspend fun run(
         address: String,
         kind: DeviceKind,
+        choices: PairingChoices,
     ): ProbeResult {
         val lock = locks.of(address)
         if (!lock.tryLock()) return ProbeResult.Busy
         try {
             val link = links.open(address.uppercase(), kind)
             try {
-                return kind.support.probe(link)
+                return kind.support.probe(link, choices)
             } finally {
                 link.close()
             }

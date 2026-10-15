@@ -4,6 +4,7 @@ import androidx.annotation.StringRes
 import app.btcourier.ble.DeviceFilterSpec
 import app.btcourier.ble.GattProfile
 import app.btcourier.core.source.Source
+import app.btcourier.core.source.colmi.AutoHeartRate
 import app.btcourier.core.source.colmi.Battery
 import app.btcourier.core.transport.GattLink
 import app.btcourier.data.DeviceKind
@@ -51,13 +52,28 @@ interface DeviceSupport {
     ): T
 
     /**
-     * The pair wizard's "test connection" on the connected [link]: one cheap read that proves
-     * the link carries this kind's protocol. Leaves the device's state alone. Closes nothing.
+     * The pair wizard's "test connection" on the connected [link]: a cheap read that proves the
+     * link carries this kind's protocol, then the kind's part of [choices]. Leaves the device's
+     * state alone unless [choices] asks for a change. Closes nothing.
      *
      * @throws java.io.IOException when the device does not answer as expected.
      */
-    suspend fun probe(link: GattLink): ProbeResult
+    suspend fun probe(
+        link: GattLink,
+        choices: PairingChoices,
+    ): ProbeResult
 }
+
+/**
+ * What the user chose on the pair wizard's explain step, applied by [DeviceSupport.probe]; each
+ * kind reads only its own part, and a kind offers a choice by its [PairingText].
+ *
+ * @property autoHeartRate the ring: turn its own heart-rate logging on before reading the setting
+ *   back. False only reads it, leaving the setting the vendor app made.
+ */
+data class PairingChoices(
+    val autoHeartRate: Boolean = true,
+)
 
 /**
  * What a source may need from the app; each kind reads only its own part.
@@ -80,6 +96,14 @@ data class PairingText(
     val explain: List<Int>,
     @StringRes val associate: Int,
     @StringRes val test: Int,
+    /** The explain step's checkbox for [PairingChoices.autoHeartRate]; null when not offered. */
+    val autoHeartRateChoice: PairingChoiceText? = null,
+)
+
+/** A checkbox on the explain step: its [label] and one line of [help] under it. */
+data class PairingChoiceText(
+    @StringRes val label: Int,
+    @StringRes val help: Int,
 )
 
 /** What a "test connection" learned. */
@@ -89,8 +113,10 @@ sealed interface ProbeResult {
         val mtu: Int,
     ) : ProbeResult
 
+    /** @property autoHeartRate the logging setting read back, or null when the ring did not answer in time. */
     data class Ring(
         val battery: Battery,
+        val autoHeartRate: AutoHeartRate?,
     ) : ProbeResult
 
     /** A sync (or another probe) holds the device's link; nothing was opened. */
