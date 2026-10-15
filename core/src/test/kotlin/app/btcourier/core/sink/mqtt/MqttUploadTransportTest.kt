@@ -3,7 +3,6 @@ package app.btcourier.core.sink.mqtt
 import app.btcourier.core.sink.Batch
 import app.btcourier.core.sink.Gzip
 import app.btcourier.core.sink.UploadResult
-import app.btcourier.core.sink.RetryBackoff.Companion.INITIAL_BACKOFF_MS
 import app.btcourier.core.sink.mqtt.StubBroker.Companion.maximumPacketSize
 import app.btcourier.core.sink.mqtt.StubBroker.Companion.v3Connack
 import app.btcourier.core.sink.mqtt.StubBroker.Companion.v3Puback
@@ -191,24 +190,21 @@ class MqttUploadTransportTest {
     }
 
     @Test
-    fun `an unreachable broker is retried with the HTTP transports' exponential back-off`() = runTest {
+    fun `an unreachable broker is retried without a hint`() = runTest {
         val port = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
-        val transport = transport(config(port))
-
-        assertEquals(INITIAL_BACKOFF_MS, retry(transport.upload(batch)).afterMs)
-        assertEquals(2 * INITIAL_BACKOFF_MS, retry(transport.upload(batch)).afterMs)
+        assertNull(retry(transport(config(port)).upload(batch)).retryAfterMs)
     }
 
     @Test
-    fun `a missing PUBACK times out as a retry, closes the connection, and success resets the back-off`() = runTest {
+    fun `a missing PUBACK times out as a retry and closes the connection, and the next PUBACK acks`() = runTest {
         val publishes = AtomicInteger()
         val stub = mqtt5Stub(puback = { id -> if (publishes.incrementAndGet() == 2) v5Puback(id, 0) else StubBroker.Reply.Silent })
         val transport = transport(config(stub.port, publishTimeoutMs = 300))
 
-        assertEquals(INITIAL_BACKOFF_MS, retry(transport.upload(batch)).afterMs)
+        retry(transport.upload(batch))
         assertTrue(stub.awaitNoConnections(), "connection left open after a publish timeout")
         assertEquals(UploadResult.Acked, transport.upload(batch))
-        assertEquals(INITIAL_BACKOFF_MS, retry(transport.upload(batch)).afterMs)
+        retry(transport.upload(batch))
         assertEquals(listOf(topic, topic, topic), stub.published.map { it.topic })
         assertTrue(stub.awaitNoConnections())
     }

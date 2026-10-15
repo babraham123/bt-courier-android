@@ -187,6 +187,30 @@ class UploadJobTest {
     }
 
     @Test
+    fun `a sink is not contacted before its Retry-After, although sinks are rebuilt every round`() = runTest {
+        val store = storeWithTwoBatches(setOf("put"))
+        server.enqueue(MockResponse.Builder().code(429).setHeader("Retry-After", "120").build())
+        repeat(2) { server.enqueue(MockResponse.Builder().code(201).build()) }
+        val settings = AppSettings(sinks = listOf(SinkConfig("put", "Put", transport = TransportConfig.HttpPut(server.url("/ingest/").toString()))))
+        var now = NOW
+        val job = UploadJob(store, { buildSinks(settings, MapSecretStore(), env()) }, status, clock = { now })
+
+        assertEquals(UploadOutcome.Retry, job.run(attempt = 0, sealEverything))
+        now += 119_000
+        assertEquals(UploadOutcome.Retry, job.run(attempt = 1, sealEverything))
+
+        assertEquals(1, server.requestCount, "the waiting round sent nothing")
+        val s = status.status.value
+        assertEquals(mapOf("put" to SinkUpload(now, UploadResultKind.RETRYING)), s.lastUploadBySink)
+        assertTrue(s.lastError!!.startsWith("put: HTTP 429"), s.lastError)
+
+        now += 1_000
+        assertEquals(UploadOutcome.Delivered, job.run(attempt = 2, sealEverything))
+        assertEquals(3, server.requestCount)
+        assertEquals(0, store.counters().pendingBatches)
+    }
+
+    @Test
     fun `an unparseable sink URL fails that sink instead of crashing the worker, and keeps its batches`() = runTest {
         val store = storeWithTwoBatches(setOf("bad"))
         val settings = AppSettings(sinks = listOf(SinkConfig("bad", "Bad", transport = TransportConfig.HttpPut("not a url"))))

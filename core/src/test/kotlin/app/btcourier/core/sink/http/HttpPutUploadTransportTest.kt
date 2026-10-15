@@ -5,9 +5,6 @@ import app.btcourier.core.http.MockServerTest
 import app.btcourier.core.sink.Batch
 import app.btcourier.core.sink.Gzip
 import app.btcourier.core.sink.UploadResult
-import app.btcourier.core.sink.RetryBackoff.Companion.INITIAL_BACKOFF_MS
-import app.btcourier.core.sink.RetryBackoff.Companion.MAX_BACKOFF_MS
-import app.btcourier.core.sink.RetryBackoff.Companion.MAX_RETRY_AFTER_MS
 import kotlinx.coroutines.test.runTest
 import mockwebserver3.MockResponse
 import mockwebserver3.SocketEffect
@@ -17,6 +14,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
@@ -32,7 +30,7 @@ class HttpPutUploadTransportTest : MockServerTest() {
     private val now = Instant.parse("2026-10-14T12:00:00Z").toEpochMilli()
 
     private fun transport(auth: Auth = Auth.None, compress: Boolean = true, client: OkHttpClient = this.client) =
-        HttpPutUploadTransport(baseUrl("/ingest/"), client, auth, compress, nowMs = { now })
+        HttpPutUploadTransport(baseUrl("/ingest/"), client, auth, compress)
 
     private fun retry(result: UploadResult) = assertInstanceOf(UploadResult.Retry::class.java, result)
 
@@ -90,8 +88,7 @@ class HttpPutUploadTransportTest : MockServerTest() {
     @ValueSource(ints = [408, 429, 500, 502, 503, 504])
     fun `timeouts, throttling and server errors are retried`(code: Int) = runTest {
         respond(code)
-        val result = retry(transport().upload(batch))
-        assertEquals(INITIAL_BACKOFF_MS, result.afterMs)
+        retry(transport().upload(batch))
     }
 
     @ParameterizedTest
@@ -159,47 +156,39 @@ class HttpPutUploadTransportTest : MockServerTest() {
     }
 
     @Test
-    fun `retry-after in seconds is honoured`() = runTest {
+    fun `retry-after in seconds is passed on as the server's hint`() = runTest {
         respond(429, "", "Retry-After" to "120")
-        assertEquals(120_000, retry(transport().upload(batch)).afterMs)
-    }
-
-    @Test
-    fun `retry-after as an HTTP date is relative to now`() = runTest {
-        respond(503, "", "Retry-After" to httpDate(now + 90_000))
-        assertEquals(90_000, retry(transport().upload(batch)).afterMs)
-    }
-
-    @Test
-    fun `retry-after in the past means retry now, and a far-future one is capped`() = runTest {
-        respond(503, "", "Retry-After" to httpDate(now - 60_000))
         respond(503, "", "Retry-After" to "${7 * 24 * 3600}")
         val t = transport()
-        assertEquals(0, retry(t.upload(batch)).afterMs)
-        assertEquals(MAX_RETRY_AFTER_MS, retry(t.upload(batch)).afterMs)
+        assertEquals(120_000L, retry(t.upload(batch)).retryAfterMs)
+        assertEquals(7 * 24 * 3600_000L, retry(t.upload(batch)).retryAfterMs, "bounding a hint is retry policy, not the transport's")
     }
 
     @Test
-    fun `unparseable retry-after falls back to back-off`() = runTest {
-        respond(503, "", "Retry-After" to "soon")
-        assertEquals(INITIAL_BACKOFF_MS, retry(transport().upload(batch)).afterMs)
-    }
-
-    @Test
-    fun `back-off doubles over consecutive retries, is capped, and resets after an ack`() = runTest {
+    fun `retry-after as an HTTP date is measured against the response's Date, a past one meaning now`() = runTest {
+        respond(503, "", "Date" to httpDate(now), "Retry-After" to httpDate(now + 90_000))
+        respond(503, "", "Date" to httpDate(now), "Retry-After" to httpDate(now - 60_000))
         val t = transport()
-        val delays = (1..10).map {
-            respond(503)
-            retry(t.upload(batch)).afterMs
-        }
-        val expected = (0 until 10).map { (INITIAL_BACKOFF_MS shl it).coerceAtMost(MAX_BACKOFF_MS) }
-        assertEquals(expected, delays)
-        assertEquals(MAX_BACKOFF_MS, delays.last())
+        assertEquals(90_000L, retry(t.upload(batch)).retryAfterMs)
+        assertEquals(0L, retry(t.upload(batch)).retryAfterMs)
+    }
 
-        respond(201)
-        assertEquals(UploadResult.Acked, t.upload(batch))
+    @Test
+    fun `retry-after as an HTTP date without a Date header is measured against arrival`() = runTest {
+        val at = System.currentTimeMillis() + 3_600_000
+        respond(503, "", "Retry-After" to httpDate(at))
+        val hint = checkNotNull(retry(transport().upload(batch)).retryAfterMs)
+        // HTTP dates have whole seconds and the response arrives a moment after `at` was taken.
+        assertTrue(hint in 3_598_000..3_600_000, "$hint")
+    }
+
+    @Test
+    fun `a missing or unparseable retry-after gives no hint`() = runTest {
         respond(503)
-        assertEquals(INITIAL_BACKOFF_MS, retry(t.upload(batch)).afterMs)
+        respond(503, "", "Retry-After" to "soon")
+        val t = transport()
+        assertNull(retry(t.upload(batch)).retryAfterMs)
+        assertNull(retry(t.upload(batch)).retryAfterMs)
     }
 
     @ParameterizedTest

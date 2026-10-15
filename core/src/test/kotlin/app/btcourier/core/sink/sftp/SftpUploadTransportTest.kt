@@ -3,7 +3,6 @@ package app.btcourier.core.sink.sftp
 import app.btcourier.core.sink.Batch
 import app.btcourier.core.sink.Gzip
 import app.btcourier.core.sink.UploadResult
-import app.btcourier.core.sink.RetryBackoff.Companion.INITIAL_BACKOFF_MS
 import kotlinx.coroutines.test.runTest
 import org.apache.sshd.common.config.keys.KeyUtils
 import org.apache.sshd.common.file.virtualfs.VirtualFileSystemFactory
@@ -16,6 +15,7 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
@@ -162,27 +162,20 @@ class SftpUploadTransportTest {
     }
 
     @Test
-    fun `an unreachable port retries with doubling back-off`() = runTest {
+    fun `an unreachable port is retried without a hint`() = runTest {
         val closedPort = ServerSocket(0).use { it.localPort }
-        val down = transport(port = closedPort)
-
-        assertEquals(INITIAL_BACKOFF_MS, retry(down.upload(batch)).afterMs)
-        assertEquals(2 * INITIAL_BACKOFF_MS, retry(down.upload(batch)).afterMs)
-        assertEquals(4 * INITIAL_BACKOFF_MS, retry(down.upload(batch)).afterMs)
+        assertNull(retry(transport(port = closedPort).upload(batch)).retryAfterMs)
     }
 
     @Test
-    fun `back-off restarts after a success`() = runTest {
+    fun `a server that went away and came back is retried, then acked`() = runTest {
         val port = server.port
         val sftp = transport(port = port)
         server.stop(true)
-        assertEquals(INITIAL_BACKOFF_MS, retry(sftp.upload(batch)).afterMs)
-        assertEquals(2 * INITIAL_BACKOFF_MS, retry(sftp.upload(batch)).afterMs)
+        retry(sftp.upload(batch))
 
         startServer(port)
         assertEquals(UploadResult.Acked, sftp.upload(batch))
-        server.stop(true)
-        assertEquals(INITIAL_BACKOFF_MS, retry(sftp.upload(batch)).afterMs)
     }
 
     @Test

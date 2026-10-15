@@ -6,9 +6,6 @@ import app.btcourier.core.sink.Batch
 import app.btcourier.core.sink.Gzip
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.sink.http.HttpPostUploadTransport.BodyEncoding
-import app.btcourier.core.sink.RetryBackoff.Companion.INITIAL_BACKOFF_MS
-import app.btcourier.core.sink.RetryBackoff.Companion.MAX_BACKOFF_MS
-import app.btcourier.core.sink.RetryBackoff.Companion.MAX_RETRY_AFTER_MS
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -37,7 +34,7 @@ class HttpPostUploadTransportTest : MockServerTest() {
         nameQuery: Boolean = false,
         path: String = "/api/v1/import/prometheus",
         client: OkHttpClient = this.client,
-    ) = HttpPostUploadTransport(baseUrl(path), client, auth, encoding, nameQuery, nowMs = { now })
+    ) = HttpPostUploadTransport(baseUrl(path), client, auth, encoding, nameQuery)
 
     private fun retry(result: UploadResult) = assertInstanceOf(UploadResult.Retry::class.java, result)
 
@@ -120,7 +117,7 @@ class HttpPostUploadTransportTest : MockServerTest() {
     @ValueSource(ints = [408, 429, 500, 502, 503, 504])
     fun `timeouts, throttling and server errors are retried`(code: Int) = runTest {
         respond(code)
-        assertEquals(INITIAL_BACKOFF_MS, retry(transport().upload(batch)).afterMs)
+        retry(transport().upload(batch))
     }
 
     @ParameterizedTest
@@ -159,28 +156,12 @@ class HttpPostUploadTransportTest : MockServerTest() {
     }
 
     @Test
-    fun `retry-after in seconds or as an HTTP date is honoured and capped`() = runTest {
+    fun `retry-after in seconds or as an HTTP date is passed on as the server's hint`() = runTest {
         respond(429, "", "Retry-After" to "120")
-        respond(503, "", "Retry-After" to httpDate(now + 90_000))
-        respond(503, "", "Retry-After" to httpDate(now - 60_000))
-        respond(503, "", "Retry-After" to "${7 * 24 * 3600}")
-        val t = transport()
-        assertEquals(listOf(120_000L, 90_000L, 0L, MAX_RETRY_AFTER_MS), (1..4).map { retry(t.upload(batch)).afterMs })
-    }
-
-    @Test
-    fun `back-off doubles over consecutive retries, is capped, and resets after an ack`() = runTest {
-        val t = transport()
-        val delays = (1..10).map {
-            respond(503, "", "Retry-After" to "soon")
-            retry(t.upload(batch)).afterMs
-        }
-        assertEquals((0 until 10).map { (INITIAL_BACKOFF_MS shl it).coerceAtMost(MAX_BACKOFF_MS) }, delays)
-
-        respond(204)
-        assertEquals(UploadResult.Acked, t.upload(batch))
+        respond(503, "", "Date" to httpDate(now), "Retry-After" to httpDate(now + 90_000))
         respond(503)
-        assertEquals(INITIAL_BACKOFF_MS, retry(t.upload(batch)).afterMs)
+        val t = transport()
+        assertEquals(listOf(120_000L, 90_000L, null), (1..3).map { retry(t.upload(batch)).retryAfterMs })
     }
 
     @Test
