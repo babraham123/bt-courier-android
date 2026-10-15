@@ -33,7 +33,7 @@ import kotlin.time.Duration.Companion.seconds
  * was overwritten on the ring and is gone.
  *
  * Clock: the first [pull] of an instance sets the ring to the phone's wall clock in [zone]
- * (`0x01`), as the vendor app and Gadgetbridge do, so the ring's days are the phone's days.
+ * (`0x01`), as the vendor app and PulseLoopiOS do, so the ring's days are the phone's days.
  * There is no clock journal ([clockJournal] is empty) and no [deviceStatus]: rows carry the
  * ring's own stamps, which the normaliser rates `device`. A ring whose clock was lost (flat
  * battery) before this sync logged under a wrong clock that cannot be repaired afterwards.
@@ -42,13 +42,13 @@ import kotlin.time.Duration.Companion.seconds
  * phone clock); a sync that is already caught up stores no page and so no battery reading.
  *
  * Unverified on hardware (all from the public reverse engineering; to be checked against a ring):
- * - Ring timestamps are its wall clock counted as if UTC. `colmi_r02_client` sets the ring to UTC
+ * - Ring timestamps are its wall clock counted as if UTC. PulseLoopiOS sets the ring to UTC
  *   and requests UTC midnights, which is this rule with `zone = UTC`; with a local zone the ring's
  *   day boundaries follow local midnight. Readings are placed from the requested day's start,
- *   not the ring's echoed timestamp, as Gadgetbridge does.
+ *   not the ring's echoed timestamp, as PulseLoopiOS does.
  * - The steps request addresses days by offset from the ring's today, assumed equal to the phone's
  *   today right after set-time; each steps row is placed by the date the ring stamps on it.
- * - Writes go without response, as `colmi_r02_client` does.
+ * - Writes go without response, as PulseLoopiOS does.
  * - Answers are not acknowledged, and the ring may send packets of other commands at any time;
  *   those are skipped, as are notifications that are not whole 16-byte packets or fail the checksum
  *   (a corrupted packet of the answer then surfaces as a timeout).

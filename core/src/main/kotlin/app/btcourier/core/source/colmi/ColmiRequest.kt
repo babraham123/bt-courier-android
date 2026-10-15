@@ -19,7 +19,7 @@ import kotlin.time.Duration
  * whole 16-byte packets and packets failing the checksum are skipped, so a corrupted packet of the
  * answer surfaces as the timeout. A notification that holds several packets is consumed whole:
  * packets after the one that completes the answer are dropped. Not acknowledged; unverified on
- * hardware, from `colmi_r02_client` and Gadgetbridge.
+ * hardware, from PulseLoopiOS.
  *
  * @throws IOException on timeout or when the link drops before the answer is whole.
  */
