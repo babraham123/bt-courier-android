@@ -10,6 +10,7 @@ import java.util.UUID
  *
  * @property mtu ATT MTU to ask for after service discovery; [DEFAULT_MTU] or less asks for none.
  * @property wantsBond whether pairing bonds with the device (system passkey dialog) before use.
+ * @property writeTypeRule how the caller's `withResponse` flag becomes the ATT write type.
  */
 data class GattProfile(
     val service: UUID,
@@ -17,6 +18,7 @@ data class GattProfile(
     val write: UUID,
     val mtu: Int,
     val wantsBond: Boolean,
+    val writeTypeRule: WriteTypeRule = WriteTypeRule.AS_ASKED,
 ) {
     /** One `GattLink.write` routed to its characteristic and ATT write type. */
     data class WriteRoute(
@@ -24,9 +26,34 @@ data class GattProfile(
         val writeType: WriteType,
     )
 
-    /** Every write goes to [write]; the caller's flag picks the ATT write type. */
-    fun routeWrite(withResponse: Boolean): WriteRoute =
-        WriteRoute(write, if (withResponse) WriteType.WithResponse else WriteType.WithoutResponse)
+    enum class WriteTypeRule {
+        /** The caller's flag, whatever the characteristic declares. */
+        AS_ASKED,
+
+        /**
+         * The caller's flag, except that a write with response falls back to one without when the
+         * characteristic does not declare the write property.
+         */
+        AS_ASKED_IF_SUPPORTED,
+    }
+
+    /**
+     * Every write goes to [write]; the caller's flag and [writeTypeRule] pick the ATT write type.
+     *
+     * @param writeWithResponseSupported whether the discovered [write] characteristic declares the
+     *   write (with response) property.
+     */
+    fun routeWrite(
+        withResponse: Boolean,
+        writeWithResponseSupported: Boolean,
+    ): WriteRoute {
+        val response =
+            when (writeTypeRule) {
+                WriteTypeRule.AS_ASKED -> withResponse
+                WriteTypeRule.AS_ASKED_IF_SUPPORTED -> withResponse && writeWithResponseSupported
+            }
+        return WriteRoute(write, if (response) WriteType.WithResponse else WriteType.WithoutResponse)
+    }
 
     companion object {
         /** ATT default before any exchange. */
@@ -37,7 +64,9 @@ data class GattProfile(
 /**
  * The Colmi R02 family's UART-like service ([ColmiGatt]). The ring has no passkey and is used
  * unbonded, as `colmi_r02_client` and Gadgetbridge do. Its packets are 16 bytes, so the default
- * MTU carries them and none is negotiated. `ColmiRingSource` writes without response.
+ * MTU carries them and none is negotiated. Commands ask for a write with response, which goes
+ * without one when RX does not declare it, as PulseLoopiOS picks by the characteristic's
+ * properties (`colmi_r02_client` always writes without).
  */
 object ColmiRingGatt {
     val PROFILE =
@@ -47,6 +76,7 @@ object ColmiRingGatt {
             write = ColmiGatt.RX,
             mtu = GattProfile.DEFAULT_MTU,
             wantsBond = false,
+            writeTypeRule = GattProfile.WriteTypeRule.AS_ASKED_IF_SUPPORTED,
         )
 
     /**

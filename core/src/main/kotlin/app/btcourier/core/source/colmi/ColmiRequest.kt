@@ -12,8 +12,9 @@ import java.io.IOException
 import kotlin.time.Duration
 
 /**
- * Writes the ring command [packet] without response and assembles its answer from the
- * notifications on this link, waiting up to [timeout] for each packet of it.
+ * Writes the ring command [packet] and assembles its answer from the notifications on this link,
+ * waiting up to [timeout] for each packet of it. The write asks for a response; the app's ring
+ * link sends it without one when RX does not declare write with response (PulseLoopiOS's rule).
  *
  * Packets of other commands (the ring may send those at any time), notifications that are not
  * whole 16-byte packets and packets failing the checksum are skipped, so a corrupted packet of the
@@ -30,7 +31,7 @@ suspend fun <T : Any> GattLink.colmiRequest(
     assembler: ColmiAssembler<T>,
 ): T {
     val command = packet[0]
-    write(packet, false)
+    write(packet, true)
     val result =
         try {
             notifications

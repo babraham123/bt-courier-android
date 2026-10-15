@@ -7,6 +7,7 @@ import com.juul.kable.State
 import com.juul.kable.Transport
 import com.juul.kable.characteristicOf
 import com.juul.kable.toIdentifier
+import com.juul.kable.write
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
@@ -65,6 +66,11 @@ class KableGattLink private constructor(
 ) : GattLink {
     private val closed = AtomicBoolean(false)
 
+    // Whether the profile's write characteristic declares write with response; false until
+    // discovery, which only a profile with WriteTypeRule.AS_ASKED_IF_SUPPORTED consults.
+    @Volatile
+    private var writeWithResponseSupported = false
+
     // Unbounded so a slow consumer never loses a PDU here. The WiCAN's 16 KB credit window bounds
     // what can pile up, and its frame counter would catch a loss elsewhere anyway; the ring only
     // sends what it is asked for.
@@ -83,6 +89,14 @@ class KableGattLink private constructor(
 
     private suspend fun open() {
         val connection = peripheral.connect()
+        // connect() returns after service discovery, so the declared properties are known here.
+        writeWithResponseSupported =
+            peripheral.services.value
+                ?.firstOrNull { it.serviceUuid == profile.service.toKotlinUuid() }
+                ?.characteristics
+                ?.firstOrNull { it.characteristicUuid == profile.write.toKotlinUuid() }
+                ?.properties
+                ?.write == true
         // Shorter connection interval: more connection events per second for frames written with
         // response and for multi-packet answers. Only a hint; the controller may refuse it.
         peripheral.requestConnectionPriority(AndroidPeripheral.Priority.High)
@@ -117,7 +131,7 @@ class KableGattLink private constructor(
     ) {
         if (closed.get()) throw IOException("link closed")
         require(bytes.size <= mtu - 3) { "PDU of ${bytes.size} bytes exceeds MTU payload ${mtu - 3}" }
-        val route = profile.routeWrite(withResponse)
+        val route = profile.routeWrite(withResponse, writeWithResponseSupported)
         // Kable serialises GATT operations behind a FIFO mutex, so concurrent writers (request
         // body vs CREDIT) reach the air in call order, and each write suspends until the stack's
         // onCharacteristicWrite.

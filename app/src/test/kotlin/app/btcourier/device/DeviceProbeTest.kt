@@ -30,7 +30,7 @@ class DeviceProbeTest {
         }
 
     @Test
-    fun `the ring probe reads the battery with one command written without response, leaving its clock alone`() =
+    fun `the ring probe reads the battery with one command that asks for a response, leaving its clock alone`() =
         runTest {
             val ring = FakeColmiRing(today = LocalDate.of(2026, 10, 15), batteryLevel = 64, charging = true)
 
@@ -40,7 +40,7 @@ class DeviceProbeTest {
             )
 
             assertEquals(listOf(0x03), ring.commands.map { it[0].toInt() })
-            assertEquals(listOf(false), ring.link.writesWithResponse)
+            assertEquals(listOf(true), ring.link.writesWithResponse)
             assertEquals(emptyList<Any>(), ring.clockSets)
         }
 
