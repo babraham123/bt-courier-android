@@ -3,7 +3,6 @@ package app.btcourier.core.sink.mqtt
 import app.btcourier.core.sink.Batch
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.sink.UploadTransport
-import app.btcourier.core.sink.RetryBackoff
 import com.hivemq.client.mqtt.MqttClientSslConfig
 import com.hivemq.client.mqtt.MqttClientTransportConfig
 import com.hivemq.client.mqtt.datatypes.MqttQos
@@ -81,30 +80,19 @@ import java.util.concurrent.atomic.AtomicBoolean
  *   change. A 3.1.1 broker that rejects a large payload just closes the connection, which is
  *   indistinguishable from a network drop and therefore retried.
  *
- * [UploadResult.Retry.afterMs] is the HTTP transports' exponential back-off ([RetryBackoff]) over
- * this instance's consecutive retries, reset by any non-retry result.
- *
  * [close] aborts an in-flight upload (it returns [UploadResult.Retry]) and makes later uploads
  * return [UploadResult.Failed]. It is idempotent.
  */
 class MqttUploadTransport(private val config: MqttConfig) : UploadTransport, Closeable {
     private val mutex = Mutex()
     private val closed = AtomicBoolean(false)
-    private val backoff = RetryBackoff()
 
     @Volatile private var active: Connection? = null
 
     @Volatile private var version = config.version
 
-    override suspend fun upload(batch: Batch): UploadResult {
-        val result = mutex.withLock {
-            if (closed.get()) UploadResult.Failed("MQTT transport is closed") else deliver(batch)
-        }
-        if (result !is UploadResult.Retry) {
-            backoff.reset()
-            return result
-        }
-        return backoff.retry(result.reason, null)
+    override suspend fun upload(batch: Batch): UploadResult = mutex.withLock {
+        if (closed.get()) UploadResult.Failed("MQTT transport is closed") else deliver(batch)
     }
 
     override fun close() {

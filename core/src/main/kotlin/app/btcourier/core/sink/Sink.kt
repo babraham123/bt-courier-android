@@ -2,7 +2,6 @@ package app.btcourier.core.sink
 
 import app.btcourier.core.auth.OidcException
 import app.btcourier.core.store.SealedBatch
-import app.btcourier.core.store.Store
 import java.security.MessageDigest
 
 /**
@@ -75,19 +74,3 @@ fun encodeBatch(batch: SealedBatch, format: Format): Batch {
 private val unsafe = Regex("[^A-Za-z0-9._-]")
 
 private fun sanitise(s: String): String = unsafe.replace(s, "_")
-
-/**
- * Uploads [store]'s pending batches to [sink] oldest first, acking each success, and stops at the
- * first failure so batches arrive in order.
- *
- * @return null if everything pending was delivered, else the result that stopped delivery.
- */
-suspend fun deliverPending(store: Store, sink: Sink): UploadResult? {
-    while (true) {
-        val batch = store.pending(sink.id, limit = 1).firstOrNull() ?: return null
-        when (val result = sink.upload(batch)) {
-            UploadResult.Acked -> store.ack(batch.id, sink.id)
-            else -> return result
-        }
-    }
-}

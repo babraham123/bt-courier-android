@@ -2,11 +2,11 @@ package app.btcourier.fakes
 
 import app.btcourier.core.sink.Batch
 import app.btcourier.core.sink.CompositeSink
+import app.btcourier.core.sink.Delivery
 import app.btcourier.core.sink.Jsonl
 import app.btcourier.core.sink.LocalDirectoryUploadTransport
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.sink.UploadTransport
-import app.btcourier.core.sink.deliverPending
 import app.btcourier.core.store.DefaultStore
 import app.btcourier.core.store.FileStoreDb
 import app.btcourier.core.store.SealPolicy
@@ -111,7 +111,7 @@ class EndToEndSyncTest {
         val source = WicanLoggerSource(transport, limit, phoneClock = { (epochB + 600) * 1000 })
         // Age 0 seals the open file too, so every stored row is deliverable after each sync.
         val report = SyncRunner("wican", source, store, sealPolicy = SealPolicy(maxBatchAgeMs = 0), clock = { 0 }).run()
-        assertNull(deliverPending(store, sink), "everything sealed was delivered")
+        assertNull(Delivery(store).deliverPending(sink), "everything sealed was delivered")
         return report to peripheral
     }
 

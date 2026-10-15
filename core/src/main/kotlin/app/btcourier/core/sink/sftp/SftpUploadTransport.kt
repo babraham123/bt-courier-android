@@ -3,7 +3,6 @@ package app.btcourier.core.sink.sftp
 import app.btcourier.core.sink.Batch
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.sink.UploadTransport
-import app.btcourier.core.sink.RetryBackoff
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import net.schmizz.sshj.Config
@@ -44,8 +43,7 @@ import java.util.EnumSet
  *   Keystore key invalidated by a lock-screen change), remote directory missing or not a
  *   directory, permission denied: [UploadResult.Failed]. These need a config change.
  * - Any other I/O error (refused, unreachable, timed out, connection dropped, server-side write
- *   failure): [UploadResult.Retry], with the HTTP transports' exponential back-off
- *   ([RetryBackoff]) over this instance's consecutive retries, reset by any non-retry result.
+ *   failure): [UploadResult.Retry].
  *
  * The client key is used only through `java.security.Signature`, so an AndroidKeyStore key that
  * can't be exported works as-is (see [ProviderNeutralEcdsa]). Only `ecdsa-sha2-nistp256`
@@ -71,13 +69,8 @@ class SftpUploadTransport(
     private val ioTimeoutMs: Int = DEFAULT_IO_TIMEOUT_MS,
 ) : UploadTransport {
     private val pin = normaliseFingerprint(hostKeyFingerprint)
-    private val backoff = RetryBackoff()
 
-    override suspend fun upload(batch: Batch): UploadResult {
-        val result = runInterruptible(Dispatchers.IO) { uploadBlocking(batch) }
-        if (result !is UploadResult.Retry) backoff.reset()
-        return result
-    }
+    override suspend fun upload(batch: Batch): UploadResult = runInterruptible(Dispatchers.IO) { uploadBlocking(batch) }
 
     private fun uploadBlocking(batch: Batch): UploadResult {
         // Names come from encodeBatch and are already safe; this guards hand-built batches.
@@ -156,7 +149,7 @@ class SftpUploadTransport(
             e is UserAuthException -> UploadResult.Failed("server rejected key authentication for user $username")
             e is SFTPException && e.statusCode in PERMANENT_SFTP_STATUS ->
                 UploadResult.Failed("SFTP ${e.statusCode} for $name: ${e.message}")
-            else -> backoff.retry("${e.javaClass.simpleName} for $name: ${e.message}", retryAfterMs = null)
+            else -> UploadResult.Retry("${e.javaClass.simpleName} for $name: ${e.message}")
         }
     }
 
