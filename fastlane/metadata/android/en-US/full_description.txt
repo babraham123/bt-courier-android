@@ -1,0 +1,9 @@
+BT Courier pulls logged data from Bluetooth LE devices, caches it on the phone, and uploads it in batches to servers you run yourself. It syncs in the background when the device comes into range, catches up from where it left off after a disconnect, and repairs timestamps the device logged before its clock was set.
+
+The first supported device is the WiCAN Pro OBD-II dongle on its dev-v6 firmware with BLE enabled: the app reads the dongle's data logger over BLE without needing Wi-Fi in the car. Support for Colmi smart rings is experimental.
+
+Batches can go to HTTP PUT or POST endpoints, an SFTP server, an MQTT broker or a local folder, as JSONL, CSV or Prometheus text. Authentication options are Basic, Bearer and OIDC device sign-in; credentials are stored in the Android Keystore and only https URLs are accepted.
+
+BT Courier has no cloud service, no account, no telemetry and no ads, and does not use Google Play Services. Data goes only to the destinations you configure.
+
+The app is pre-alpha and has not yet been verified on real hardware.

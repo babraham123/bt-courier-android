@@ -1,0 +1,1 @@
+Sync logged data from Bluetooth LE devices to your own self-hosted backends

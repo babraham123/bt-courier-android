@@ -79,7 +79,7 @@ Status: `todo` | `doing` | `blocked` | `done`. Deps are task ids.
 | id | task | status | deps |
 |---|---|---|---|
 | R1 | Signed release via GitHub Releases; Obtainium install | todo | A8, S4 |
-| R2 | F-Droid metadata + merge request | todo | R1 |
+| R2 | F-Droid metadata + merge request: fastlane metadata in `fastlane/metadata/android/en-US/` (title, short and full description, `changelogs/1.txt` for versionCode 1) and `CHANGELOG.md` exist. Remaining: RFP submission and fdroiddata merge request, confirm F-Droid's rebuild reproduces the signed release APK, screenshots in `images/phoneScreenshots/` | doing | R1 |
 
 ## 7. Additional features
 

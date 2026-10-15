@@ -1,0 +1,69 @@
+name: Bug report
+description: Something does not work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Security issues: report privately via the repository's Security tab (see SECURITY.md),
+        not here.
+  - type: checkboxes
+    id: no-personal-data
+    attributes:
+      label: Personal data
+      options:
+        - label: >
+            This report and its attachments contain no VIN, trip or location data, hostnames,
+            IP addresses or credentials.
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: false
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      placeholder: "0.0.1"
+    validations:
+      required: true
+  - type: input
+    id: android-version
+    attributes:
+      label: Android version
+      placeholder: "Android 15"
+    validations:
+      required: true
+  - type: input
+    id: phone
+    attributes:
+      label: Phone model
+    validations:
+      required: false
+  - type: input
+    id: device
+    attributes:
+      label: Device and firmware
+      description: The BLE device and its firmware version, e.g. WiCAN Pro firmware version.
+      placeholder: "WiCAN Pro, firmware ..."
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics export
+      description: >
+        Paste or attach the log export from the status screen. It is redacted, but check it for
+        anything personal before submitting.
+      render: text
+    validations:
+      required: false

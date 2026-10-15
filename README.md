@@ -8,16 +8,24 @@ sources, sinks and formats as plugins. It uses only FOSS dependencies and no Goo
 
 ## Status
 
-Pre-alpha. The core library and the Android app are implemented and unit-tested (277 tests),
-but nothing has been verified on real hardware yet. To try it you need:
+Pre-alpha. The core library and the Android app are implemented and unit-tested, and CI runs the
+checks on every push, but nothing has been verified on real hardware yet. To try it you need:
 
 - a WiCAN Pro on the `dev-v6` firmware with BLE enabled;
 - an Android 12+ phone.
 
-Design notes and the task list live in `planning/`.
+Distribution is planned through GitHub Releases installable with Obtainium, then F-Droid. Changes
+are listed in `CHANGELOG.md`; design notes and the task list live in `planning/`.
 
 ## Build
 
 Build with JDK 21 and the Android SDK (platform 36), pointing `sdk.dir` in `local.properties` or
-`ANDROID_HOME` at the SDK, then run `./gradlew :core:test :fakes:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug`. The
-debug APK lands in `app/build/outputs/apk/debug/`. Licensed under GPL-3.0; see `LICENSE`.
+`ANDROID_HOME` at the SDK, then run the full check:
+
+```
+./gradlew :core:test :fakes:test :app:testDebugUnitTest ktlintCheck :app:lintDebug :app:lintRelease :app:assembleDebug :app:assembleRelease
+```
+
+The debug APK lands in `app/build/outputs/apk/debug/`. See `CONTRIBUTING.md` for code style,
+tests and the no-personal-data rule, and `SECURITY.md` to report a vulnerability. Licensed under
+GPL-3.0; see `LICENSE`.
