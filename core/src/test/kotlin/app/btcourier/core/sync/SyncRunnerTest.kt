@@ -95,7 +95,8 @@ class SyncRunnerTest {
 
         val report = runner(source).run()
 
-        assertEquals(SyncReport(pagesPulled = 3, linesStored = 5, duplicates = 0, StopReason.CaughtUp), report)
+        val sealed = store.pending("sink").map { it.id }
+        assertEquals(SyncReport(pagesPulled = 3, linesStored = 5, duplicates = 0, StopReason.CaughtUp, sealed), report)
         assertEquals(listOf("status", "journal", "pull null", "pull 1:100", "pull 1784000000:60"), source.calls)
         assertEquals("1784000000:120", store.cursor("wican"))
         val batches = store.pendingRows("sink")
@@ -136,11 +137,14 @@ class SyncRunnerTest {
         assertEquals("1:100", store.cursor("wican"))
         // What was persisted is sealed and deliverable even though the sync failed.
         assertEquals(expectedRows.take(2), store.pendingRows("sink").flatten())
+        val firstSealed = store.pending("sink").map { it.id }
+        assertEquals(firstSealed, first.sealed)
 
         source.calls.clear()
         val second = runner(source).run()
 
         assertEquals(StopReason.CaughtUp, second.stoppedBecause)
+        assertEquals(store.pending("sink").map { it.id } - firstSealed.toSet(), second.sealed, "only this run's batches")
         assertEquals("pull 1:100", source.calls[2])
         assertEquals(expectedRows, store.pendingRows("sink").flatten())
     }
@@ -193,7 +197,7 @@ class SyncRunnerTest {
 
         val report = runner(ScriptedSource(caughtUp, clockJournal)).run()
 
-        assertEquals(SyncReport(pagesPulled = 1, linesStored = 0, duplicates = 0, StopReason.CaughtUp), report)
+        assertEquals(SyncReport(pagesPulled = 1, linesStored = 0, duplicates = 0, StopReason.CaughtUp, sealed = emptyList()), report)
         assertEquals(expectedRows, store.pendingRows("sink").flatten())
     }
 
@@ -203,7 +207,8 @@ class SyncRunnerTest {
 
         val report = runner(ScriptedSource(stuck, clockJournal)).run()
 
-        assertEquals(SyncReport(pagesPulled = 2, linesStored = 2, duplicates = 1, StopReason.NoProgress("1:100")), report)
+        val sealed = store.pending("sink").map { it.id }
+        assertEquals(SyncReport(pagesPulled = 2, linesStored = 2, duplicates = 1, StopReason.NoProgress("1:100"), sealed), report)
     }
 
     @Test
@@ -215,8 +220,8 @@ class SyncRunnerTest {
 
         val report = runner(ScriptedSource(empty)).run()
 
-        assertEquals(SyncReport(pagesPulled = 2, linesStored = 1, duplicates = 0, StopReason.CaughtUp), report)
         val batches = store.pending("sink")
+        assertEquals(SyncReport(pagesPulled = 2, linesStored = 1, duplicates = 0, StopReason.CaughtUp, batches.map { it.id }), report)
         assertEquals(listOf(listOf(fileMarker("dl_6.jsonl"), fixed(tsAfter, tsAfter, "device"))), batches.map { it.lines })
     }
 

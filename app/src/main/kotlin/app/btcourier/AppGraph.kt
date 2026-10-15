@@ -66,6 +66,9 @@ object AppGraph {
             // Batches are at most ~1 MB compressed; a minute covers a slow uplink.
             .writeTimeout(60, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
+            // A redirected PUT is replayed as a GET, and that GET's 200 would be taken as an ack.
+            .followRedirects(false)
+            .followSslRedirects(false)
             .build()
     }
 

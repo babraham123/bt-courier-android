@@ -19,4 +19,4 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
       # The runner image ships an Android SDK; the build fetches platform 36 if missing.
-      - run: ./gradlew :core:test :fakes:test :app:assembleDebug
+      - run: ./gradlew :core:test :fakes:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug

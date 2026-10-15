@@ -47,7 +47,11 @@ private const val MB = 1_000_000L
 
 /** Below ~10 MB a single stalled sink would start evicting within one long drive. */
 const val MIN_CACHE_CAP_MB = 10L
-const val MAX_CACHE_CAP_MB = 20_000L
+/**
+ * The store rewrites its whole JSON index on every page append (~250 B per ~40 KB page): ~13 MB per
+ * append at 2 GB, ~130 MB at 20 GB.
+ */
+const val MAX_CACHE_CAP_MB = 2_000L
 
 fun validateCacheCap(text: String): CacheCapProblem? {
     val mb = text.trim().toLongOrNull() ?: return CacheCapProblem.NOT_A_NUMBER
@@ -98,6 +102,8 @@ class SettingsViewModel(
         viewModelScope.launch {
             val before = settings.current()
             var after = before
+            // Not atomic: an upload starting between these two writes can pair the new URL with the
+            // old secret; the uploadNow(replace = true) below bounds that window.
             settings.update { stored ->
                 stored.copy(
                     sinkUrl = form.sinkUrl.trim(),
