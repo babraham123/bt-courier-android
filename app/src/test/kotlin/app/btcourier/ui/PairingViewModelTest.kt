@@ -1,14 +1,16 @@
 package app.btcourier.ui
 
-import app.btcourier.ble.ProbeResult
 import app.btcourier.core.source.colmi.Battery
 import app.btcourier.data.DeviceConfig
 import app.btcourier.data.DeviceKind
+import app.btcourier.device.ProbeResult
 import app.btcourier.fakes.FakeColmiRing
-import app.btcourier.ble.probe
 import app.btcourier.ui.pairing.PairingPlatform
+import app.btcourier.ui.pairing.PairingProbe
 import app.btcourier.ui.pairing.PairingStep
 import app.btcourier.ui.pairing.PairingViewModel
+import app.btcourier.work.DeviceLocks
+import app.btcourier.work.LinkFactory
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
@@ -25,38 +27,45 @@ import java.time.LocalDate
 /**
  * The pair wizard's steps per kind: a WiCAN bonds before presence starts, a ring goes straight
  * from the association to the test, which reads its battery. Every association stores its kind.
+ * The test opens its link through the link factory under the device lock syncs take, so it
+ * reports the device busy, opening nothing, while a sync holds it.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @ExtendWith(MainDispatcherExtension::class)
 class PairingViewModelTest {
     private val devices = FakePairedDevices()
     private val ring = FakeColmiRing(today = LocalDate.of(2026, 10, 15), batteryLevel = 42)
+    private val locks = DeviceLocks()
 
     private inner class RecordingPlatform : PairingPlatform {
         val observed = mutableListOf<String>()
-        val probed = mutableListOf<Pair<String, DeviceKind>>()
-        var failProbe = false
-        var hangProbe = false
-        val probeCancelled = CompletableDeferred<Unit>()
+        val opened = mutableListOf<Pair<String, DeviceKind>>()
+        var failOpen = false
+        var hangOpen = false
+        val openCancelled = CompletableDeferred<Unit>()
+
+        private val links = LinkFactory { address, kind ->
+            opened += address to kind
+            if (failOpen) throw IOException("connect timed out")
+            if (hangOpen) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    openCancelled.complete(Unit)
+                }
+            }
+            ring.link
+        }
+
+        // The app's real probe, lock and kind lookup over the fake ring; only the link is faked.
+        private val pairingProbe = PairingProbe(links, locks)
 
         override fun observePresence(address: String): Boolean {
             observed += address
             return true
         }
 
-        // The ring kind probes the fake ring through the app's real probe.
-        override suspend fun probe(address: String, kind: DeviceKind): ProbeResult {
-            probed += address to kind
-            if (failProbe) throw IOException("connect timed out")
-            if (hangProbe) {
-                try {
-                    awaitCancellation()
-                } finally {
-                    probeCancelled.complete(Unit)
-                }
-            }
-            return probe(ring.link, kind)
-        }
+        override suspend fun probe(address: String, kind: DeviceKind): ProbeResult = pairingProbe.run(address, kind)
     }
 
     private val platform = RecordingPlatform()
@@ -93,9 +102,34 @@ class PairingViewModelTest {
         testScheduler.advanceUntilIdle()
 
         assertEquals(ProbeResult.Ring(Battery(42, charging = false)), vm.state.value.probe)
-        assertEquals(listOf("AA:BB:CC:DD:EE:02" to DeviceKind.COLMI_RING), platform.probed)
+        assertEquals(listOf("AA:BB:CC:DD:EE:02" to DeviceKind.COLMI_RING), platform.opened)
         assertEquals(listOf(0x03), ring.commands.map { it[0].toInt() })
         assertFalse(vm.state.value.busy)
+        assertTrue(ring.link.closed)
+        assertFalse(locks.of("AA:BB:CC:DD:EE:02").isLocked, "the lock is released for syncs")
+    }
+
+    @Test
+    fun `a connection test while a sync holds the device reports it busy and opens no link`() = runTest {
+        pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
+        val syncLock = locks.of("aa:bb:cc:dd:ee:02")
+        assertTrue(syncLock.tryLock())
+
+        vm.test()
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(ProbeResult.Busy, vm.state.value.probe)
+        assertNull(vm.state.value.error)
+        assertFalse(vm.state.value.busy)
+        assertEquals(emptyList<Any>(), platform.opened)
+        assertEquals(emptyList<Any>(), ring.commands)
+        assertTrue(syncLock.isLocked, "the sync keeps its lock")
+
+        syncLock.unlock()
+        vm.test()
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(ProbeResult.Ring(Battery(42, charging = false)), vm.state.value.probe)
     }
 
     @Test
@@ -124,7 +158,7 @@ class PairingViewModelTest {
     @Test
     fun `leaving the wizard cancels a connection test still running`() = runTest {
         pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
-        platform.hangProbe = true
+        platform.hangOpen = true
         vm.test()
         testScheduler.advanceUntilIdle()
         assertTrue(vm.state.value.busy)
@@ -132,13 +166,14 @@ class PairingViewModelTest {
         stores.keepOnly(null)
         testScheduler.advanceUntilIdle()
 
-        assertTrue(platform.probeCancelled.isCompleted)
+        assertTrue(platform.openCancelled.isCompleted)
+        assertFalse(locks.of("AA:BB:CC:DD:EE:02").isLocked, "a cancelled test releases the lock")
     }
 
     @Test
     fun `a failed connection test shows why and can be repeated`() = runTest {
         pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
-        platform.failProbe = true
+        platform.failOpen = true
 
         vm.test()
         testScheduler.advanceUntilIdle()
@@ -146,5 +181,6 @@ class PairingViewModelTest {
         assertEquals("Test connection failed: connect timed out", vm.state.value.error)
         assertNull(vm.state.value.probe)
         assertFalse(vm.state.value.busy)
+        assertFalse(locks.of("AA:BB:CC:DD:EE:02").isLocked, "a failed test releases the lock")
     }
 }

@@ -7,28 +7,23 @@ import app.btcourier.core.sync.SyncReport
 import app.btcourier.core.sync.SyncRunner
 import app.btcourier.ble.PairedDevice
 import app.btcourier.ble.PairedDevices
-import app.btcourier.core.source.colmi.ColmiRingSource
 import app.btcourier.core.transport.GattLink
-import app.btcourier.core.transport.blehttp.BleHttpTransport
 import app.btcourier.core.wican.WicanLoggerSource
 import app.btcourier.data.DeviceKind
+import app.btcourier.device.SourceOptions
+import app.btcourier.device.support
 import app.btcourier.data.DeviceSync
 import app.btcourier.data.SyncResultKind
 import app.btcourier.data.SyncStatusRepository
 import app.btcourier.data.SyncStopKind
 import app.btcourier.log.AppLog
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.sync.Mutex
 import java.io.IOException
 import java.time.ZoneId
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * One sync of one paired device into the store, independent of WorkManager: look the device up,
- * open a link with its kind's GATT profile, run [SyncRunner] over its kind's source (the WiCAN's
- * logger over `ble_http`, the Colmi ring's day logs), close the link, record the outcome in
+ * open a link with its kind's GATT profile, run [SyncRunner] over the source its kind's
+ * [support][app.btcourier.device.DeviceSupport] opens on the link, close the link, record the outcome in
  * [status] under its address. Each paired device has its own store source id ([sourceIdFor]), so
  * a replacement device starts from its own oldest data instead of the previous device's cursor.
  *
@@ -37,9 +32,9 @@ import java.util.concurrent.ConcurrentHashMap
  * stays asleep until the next drive.
  *
  * At most one sync runs per device: periodic fan-out, presence and manual syncs can enqueue
- * overlapping works for one device, so [locks] is what keeps them from opening two links to it. A
- * sync that finds its device's lock held returns [SyncOutcome.AlreadyRunning]. Different devices
- * sync in parallel.
+ * overlapping works for one device, so [locks] is what keeps them from opening two links to it;
+ * the pair wizard's probe takes the same lock. A sync that finds its device's lock held returns
+ * [SyncOutcome.AlreadyRunning]. Different devices sync in parallel.
  *
  * @param zone the phone's zone, which the ring's clock is set to and its days are counted in.
  */
@@ -49,7 +44,7 @@ class SyncJob(
     private val store: Store,
     private val status: SyncStatusRepository,
     private val clock: () -> Long = System::currentTimeMillis,
-    private val locks: DeviceLocks = processLocks,
+    private val locks: DeviceLocks = DeviceLocks.process,
     private val pageLimit: Int = WicanLoggerSource.DEFAULT_LIMIT,
     private val zone: () -> ZoneId = ZoneId::systemDefault,
     private val log: AppLog = AppLog(),
@@ -88,19 +83,10 @@ class SyncJob(
         }
     }
 
-    private suspend fun transfer(link: GattLink, kind: DeviceKind, sourceId: String, sealPolicy: SealPolicy): SyncReport = coroutineScope {
-        // The WiCAN transport's notification reader must outlive single requests but not the sync.
-        val linkJob = Job(coroutineContext[Job])
-        try {
-            val source = when (kind) {
-                DeviceKind.WICAN -> WicanLoggerSource(BleHttpTransport(link, CoroutineScope(coroutineContext + linkJob)), pageLimit, clock)
-                DeviceKind.COLMI_RING -> ColmiRingSource(link, zone(), clock)
-            }
+    private suspend fun transfer(link: GattLink, kind: DeviceKind, sourceId: String, sealPolicy: SealPolicy): SyncReport =
+        kind.support.withSource(link, SourceOptions(clock, zone(), pageLimit)) { source ->
             SyncRunner(sourceId, source, store, sealPolicy = sealPolicy, clock = clock).run()
-        } finally {
-            linkJob.cancel()
         }
-    }
 
     private suspend fun finish(report: SyncReport, device: PairedDevice, sourceId: String): SyncOutcome {
         val counters = store.counters()
@@ -161,22 +147,10 @@ class SyncJob(
          * case-folded because Android reports addresses upper-case but a hand-entered one may not
          * be. The prefix also names the device's uploaded batches.
          */
-        fun sourceIdFor(kind: DeviceKind, address: String): String = when (kind) {
-            DeviceKind.WICAN -> "wican:"
-            DeviceKind.COLMI_RING -> "colmi:"
-        } + address.uppercase()
+        fun sourceIdFor(kind: DeviceKind, address: String): String = kind.support.sourcePrefix + address.uppercase()
 
         private const val TAG = "sync"
-
-        private val processLocks = DeviceLocks()
     }
-}
-
-/** One [Mutex] per device address (case-insensitive), created on first use. */
-class DeviceLocks {
-    private val locks = ConcurrentHashMap<String, Mutex>()
-
-    fun of(address: String): Mutex = locks.getOrPut(address.uppercase()) { Mutex() }
 }
 
 sealed interface SyncOutcome {

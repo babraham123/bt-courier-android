@@ -4,13 +4,6 @@ import app.btcourier.core.source.ClockEvent
 import app.btcourier.core.source.Page
 import app.btcourier.core.source.Source
 import app.btcourier.core.transport.GattLink
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.flow.mapNotNull
-import kotlinx.coroutines.flow.timeout
-import kotlinx.coroutines.flow.transform
 import java.io.IOException
 import java.time.Instant
 import java.time.LocalDate
@@ -96,7 +89,7 @@ class ColmiRingSource(
             add("""{"_file":"$FILE_PREFIX$day"}""")
             rows.forEach { add(it.json()) }
             if (!batteryReported) {
-                val battery = request(ColmiPacketCodec.batteryRequest()) { ColmiPacketCodec.parseBattery(it) }
+                val battery = link.colmiRequest(ColmiPacketCodec.batteryRequest(), responseTimeout) { ColmiPacketCodec.parseBattery(it) }
                 add(Row(phoneClock(), PARAM_BATTERY, battery.level).json())
                 batteryReported = true
             }
@@ -108,7 +101,7 @@ class ColmiRingSource(
 
     private suspend fun heartRateRows(day: LocalDate): List<Row> {
         val start = day.atStartOfDay()
-        val log = request(ColmiPacketCodec.heartRateLogRequest(ringEpochSeconds(start)), HeartRateLogAssembler())
+        val log = link.colmiRequest(ColmiPacketCodec.heartRateLogRequest(ringEpochSeconds(start)), responseTimeout, HeartRateLogAssembler())
         return log.values.mapIndexedNotNull { slot, bpm ->
             if (bpm == 0) null else Row(epochMs(start.plusMinutes(slot.toLong() * log.intervalMinutes)), PARAM_HR, bpm)
         }
@@ -116,31 +109,9 @@ class ColmiRingSource(
 
     private suspend fun stepsRows(day: LocalDate, today: LocalDate): List<Row> {
         val offset = ChronoUnit.DAYS.between(day, today).toInt()
-        return request(ColmiPacketCodec.stepsLogRequest(offset), StepsLogAssembler()).map {
+        return link.colmiRequest(ColmiPacketCodec.stepsLogRequest(offset), responseTimeout, StepsLogAssembler()).map {
             Row(epochMs(it.date.atStartOfDay().plusMinutes(it.quarter * 15L)), PARAM_STEPS, it.steps)
         }
-    }
-
-    /**
-     * Writes [packet] and assembles the answer from notifications carrying its command. A
-     * notification that holds several packets is consumed whole, so packets after the one that
-     * completes the answer are dropped.
-     */
-    @OptIn(FlowPreview::class)
-    private suspend fun <T : Any> request(packet: ByteArray, assembler: ColmiAssembler<T>): T {
-        val command = packet[0]
-        link.write(packet, WITHOUT_RESPONSE)
-        val result = try {
-            link.notifications
-                .timeout(responseTimeout)
-                .transform { pdu -> ColmiPacketCodec.packets(pdu).forEach { emit(it) } }
-                .filter { ColmiPacketCodec.isValid(it) && it[0] == command }
-                .mapNotNull { assembler.feed(it) }
-                .firstOrNull()
-        } catch (e: TimeoutCancellationException) {
-            throw IOException("no complete answer to command 0x%02x within %s".format(command, responseTimeout), e)
-        }
-        return result ?: throw IOException("link dropped during command 0x%02x".format(command))
     }
 
     /** The ring's frame: its wall clock counted as if UTC. */

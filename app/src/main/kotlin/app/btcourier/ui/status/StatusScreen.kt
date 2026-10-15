@@ -43,10 +43,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.btcourier.R
-import app.btcourier.data.DeviceKind
 import app.btcourier.data.SyncResultKind
 import app.btcourier.data.SyncStopKind
 import app.btcourier.data.UploadResultKind
+import app.btcourier.device.support
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -174,7 +174,7 @@ fun StatusScreen(viewModel: StatusViewModel, onPair: () -> Unit, onSettings: () 
 
 @Composable
 private fun DeviceCard(row: DeviceRow, onSync: () -> Unit, onForget: () -> Unit) {
-    val kind = stringResource(kindLabel(row.device.kind))
+    val kind = stringResource(row.device.kind.support.label)
     Section(row.device.displayName ?: kind) {
         InfoRow(R.string.status_device_kind, kind)
         InfoRow(R.string.status_device_address, row.device.address)
@@ -239,12 +239,6 @@ private fun formatTime(ms: Long): String {
 
 @Composable
 private fun formatBytes(bytes: Long): String = Formatter.formatShortFileSize(LocalContext.current, bytes)
-
-@StringRes
-fun kindLabel(kind: DeviceKind): Int = when (kind) {
-    DeviceKind.WICAN -> R.string.kind_wican
-    DeviceKind.COLMI_RING -> R.string.kind_colmi_ring
-}
 
 @StringRes
 private fun syncLabel(kind: SyncResultKind): Int = when (kind) {

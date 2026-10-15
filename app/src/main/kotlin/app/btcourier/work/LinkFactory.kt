@@ -6,7 +6,8 @@ import java.io.IOException
 
 /**
  * Opens a connected [GattLink] to a paired device: the seam between the sync pipeline and the
- * Android BLE adapter, provided through [app.btcourier.AppGraph].
+ * Android BLE adapter (`KableGattLink` in production), provided through [app.btcourier.AppGraph].
+ * Syncs and the pair wizard's probe both open links through it, under [DeviceLocks].
  */
 fun interface LinkFactory {
     /**
