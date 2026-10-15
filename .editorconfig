@@ -11,6 +11,10 @@ indent_size = 4
 [*.{kt,kts}]
 max_line_length = 120
 ktlint_code_style = ktlint_official
+# Composable functions are nouns in PascalCase by Compose convention.
+ktlint_function_naming_ignore_when_annotated_with = Composable
+# Test names are backticked sentences that state the spec; they may run past the line limit.
+ktlint_ignore_back_ticked_identifier = true
 
 [*.{yml,yaml,toml,json}]
 indent_size = 2

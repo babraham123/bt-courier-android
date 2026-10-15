@@ -21,6 +21,8 @@ sshd = "2.15.0"
 hivemq-mqtt = "1.4.1"
 moquette = "0.17"
 documentfile = "1.1.0"
+ktlint-gradle = "14.2.0"
+ktlint-engine = "1.8.0"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -63,6 +65,8 @@ junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher
 # Runs the JUnit 4 Robolectric screen tests on the JUnit Platform beside Jupiter.
 junit-vintage-engine = { module = "org.junit.vintage:junit-vintage-engine" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+# The ktlint engine the Gradle plugin runs; listed as a library only so Renovate tracks its version.
+ktlint-cli = { module = "com.pinterest.ktlint:ktlint-cli", version.ref = "ktlint-engine" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
@@ -70,3 +74,4 @@ kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint-gradle" }
