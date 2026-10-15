@@ -20,12 +20,14 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.IOException
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The loop around the [app.btcourier.core.normalize.Normalizer] and the store: what is pulled,
  * in which order, what stops a sync and what it reports. How rows are re-based is the
  * normaliser's spec (`JournalNormalizerTest`); here the real one runs only to show the journal,
- * the anchor and the open file reach it.
+ * the anchor and the open file reach it. What a stop means to the app (record, retry, seal) is
+ * `SyncJobTest`'s.
  */
 class SyncRunnerTest {
     /** Serves [pages] by the cursor asked for and records every call in order. */
@@ -87,18 +89,19 @@ class SyncRunnerTest {
 
     private val store = DefaultStore.inMemory(clock = { 0 }, sinkIds = { setOf("sink") })
 
-    // Seals everything at the end of each run, so pending batches show what was stored.
-    private fun runner(source: Source) =
-        SyncRunner("wican", source, store, sealPolicy = SealPolicy(maxBatchAgeMs = 0), clock = { 0 })
+    private val busyBackoff = listOf(1.seconds, 2.seconds, 4.seconds)
+
+    /** Runs one sync, then seals everything, so pending batches show what was stored. */
+    private suspend fun sync(source: Source): SyncReport =
+        SyncRunner("wican", source, store, busyBackoff = busyBackoff).run().also { store.seal(SealPolicy(maxBatchAgeMs = 0), 0) }
 
     @Test
     fun `pulls from the stored cursor until more is false, journal first, rows re-based per file`() = runTest {
         val source = ScriptedSource(pages, clockJournal)
 
-        val report = runner(source).run()
+        val report = sync(source)
 
-        val sealed = store.pending("sink").map { it.id }
-        assertEquals(SyncReport(pagesPulled = 3, linesStored = 5, duplicates = 0, StopReason.CaughtUp, sealed), report)
+        assertEquals(SyncReport(pagesPulled = 3, linesStored = 5, duplicates = 0, StopReason.CaughtUp), report)
         assertEquals(listOf("status", "journal", "pull null", "pull 1:100", "pull 1784000000:60"), source.calls)
         assertEquals("1784000000:120", store.cursor("wican"))
         val batches = store.pendingRows("sink")
@@ -111,7 +114,7 @@ class SyncRunnerTest {
     fun `a page that starts mid-file is normalised as the file the previous page left open`() = runTest {
         val resumed = pages + ("1:100" to Page(listOf(row(90_000), fileMarker(fileB), row(tsAfter + 1_000)), "1784000000:60", more = true))
 
-        runner(ScriptedSource(resumed, clockJournal)).run()
+        sync(ScriptedSource(resumed, clockJournal))
 
         assertEquals(expectedRows, store.pendingRows("sink").flatten())
     }
@@ -119,10 +122,10 @@ class SyncRunnerTest {
     @Test
     fun `a sync whose first page resumes mid-file without a marker re-bases it as the file the store left open`() = runTest {
         val firstSync = mapOf<String?, Page>(null to Page(listOf(fileMarker(fileA), row(30_000), row(60_000)), "1:100", more = false))
-        runner(ScriptedSource(firstSync, clockJournal)).run()
+        sync(ScriptedSource(firstSync, clockJournal))
 
         val resumed = mapOf<String?, Page>("1:100" to Page(listOf(row(90_000)), "1:130", more = false))
-        runner(ScriptedSource(resumed, clockJournal)).run()
+        sync(ScriptedSource(resumed, clockJournal))
 
         assertEquals(expectedRows.take(3), store.pendingRows("sink").flatten())
     }
@@ -133,7 +136,7 @@ class SyncRunnerTest {
         val unset = mapOf<String?, Page>(null to Page(listOf(fileMarker("dl_2.jsonl"), row(50_000)), "2:40", more = false))
         val status = DeviceStatus(deviceEpochMs = 100_000, phoneEpochMs = 1_784_000_100_000, clockValid = false)
 
-        runner(ScriptedSource(unset, status = status)).run()
+        sync(ScriptedSource(unset, status = status))
 
         val offset = 1_784_000_100_000 - 100_000
         assertEquals(listOf(storedRow(50_000, 50_000 + offset, "anchor")), store.pendingRows("sink").flatten())
@@ -144,22 +147,18 @@ class SyncRunnerTest {
         val source = ScriptedSource(pages, clockJournal)
         source.failPull = { cursor, attempt -> if (cursor == "1:100" && attempt == 1) IOException("link lost") else null }
 
-        val first = runner(source).run()
+        val first = sync(source)
 
         assertTrue(first.stoppedBecause is StopReason.LinkLost)
         assertEquals(1, first.pagesPulled)
         assertEquals(2, first.linesStored)
         assertEquals("1:100", store.cursor("wican"))
-        // What was persisted is sealed and deliverable even though the sync failed.
         assertEquals(expectedRows.take(2), store.pendingRows("sink").flatten())
-        val firstSealed = store.pending("sink").map { it.id }
-        assertEquals(firstSealed, first.sealed)
 
         source.calls.clear()
-        val second = runner(source).run()
+        val second = sync(source)
 
         assertEquals(StopReason.CaughtUp, second.stoppedBecause)
-        assertEquals(store.pending("sink").map { it.id } - firstSealed.toSet(), second.sealed, "only this run's batches")
         assertEquals("pull 1:100", source.calls[2])
         assertEquals(expectedRows, store.pendingRows("sink").flatten())
     }
@@ -169,25 +168,29 @@ class SyncRunnerTest {
         val failure = SourceException.Truncated("/api/logger/export")
         val source = ScriptedSource(pages, clockJournal).apply { failPull = { c, _ -> failure.takeIf { c == "1:100" } } }
 
-        val report = runner(source).run()
+        val report = sync(source)
 
         assertEquals(StopReason.Truncated(failure), report.stoppedBecause)
         assertEquals("1:100", store.cursor("wican"))
     }
 
     @Test
-    fun `429 is retried after 1, 2 and 4 s, then the sync stops as Busy`() = runTest {
+    fun `429 is retried after each back-off wait, then the sync stops as Busy`() = runTest {
         val flaky = ScriptedSource(pages, clockJournal).apply {
             failPull = { c, attempt -> SourceException.Busy("export").takeIf { c == null && attempt <= 2 } }
         }
-        assertEquals(StopReason.CaughtUp, runner(flaky).run().stoppedBecause)
+        assertEquals(StopReason.CaughtUp, sync(flaky).stoppedBecause)
         assertEquals(3_000, currentTime)
 
         val stuck = ScriptedSource(pages, clockJournal).apply { failPull = { _, _ -> SourceException.Busy("export") } }
-        val report = SyncRunner("wican", stuck, DefaultStore.inMemory(sinkIds = { emptySet() })).run()
+        val report = SyncRunner("wican", stuck, DefaultStore.inMemory(sinkIds = { emptySet() }), busyBackoff = busyBackoff).run()
         assertEquals(StopReason.Busy, report.stoppedBecause)
         assertEquals(4, stuck.calls.count { it.startsWith("pull") })
         assertEquals(3_000 + 7_000, currentTime)
+
+        val impatient = ScriptedSource(pages, clockJournal).apply { failPull = { _, _ -> SourceException.Busy("export") } }
+        assertEquals(StopReason.Busy, SyncRunner("wican", impatient, store).run().stoppedBecause)
+        assertEquals(1, impatient.calls.count { it.startsWith("pull") }, "no waits, no retries")
     }
 
     @Test
@@ -195,7 +198,7 @@ class SyncRunnerTest {
         // Rows stored without the journal would keep un-re-based stamps for good.
         val source = ScriptedSource(pages, clockJournal).apply { failJournal = SourceException.DeviceError(409, "journal", "file in use") }
 
-        val report = runner(source).run()
+        val report = sync(source)
 
         assertTrue(report.stoppedBecause is StopReason.DeviceError)
         assertEquals(0, report.pagesPulled)
@@ -205,12 +208,12 @@ class SyncRunnerTest {
 
     @Test
     fun `a caught-up device stores nothing and counts no duplicates`() = runTest {
-        runner(ScriptedSource(pages, clockJournal)).run()
+        sync(ScriptedSource(pages, clockJournal))
         val caughtUp = mapOf<String?, Page>("1784000000:120" to Page(listOf(fileMarker(fileB)), "1784000000:120", more = false))
 
-        val report = runner(ScriptedSource(caughtUp, clockJournal)).run()
+        val report = sync(ScriptedSource(caughtUp, clockJournal))
 
-        assertEquals(SyncReport(pagesPulled = 1, linesStored = 0, duplicates = 0, StopReason.CaughtUp, sealed = emptyList()), report)
+        assertEquals(SyncReport(pagesPulled = 1, linesStored = 0, duplicates = 0, StopReason.CaughtUp), report)
         assertEquals(expectedRows, store.pendingRows("sink").flatten())
     }
 
@@ -218,10 +221,9 @@ class SyncRunnerTest {
     fun `a device that promises more without moving its cursor is not polled forever`() = runTest {
         val stuck = pages + ("1:100" to Page(listOf(fileMarker(fileA), row(60_000)), "1:100", more = true))
 
-        val report = runner(ScriptedSource(stuck, clockJournal)).run()
+        val report = sync(ScriptedSource(stuck, clockJournal))
 
-        val sealed = store.pending("sink").map { it.id }
-        assertEquals(SyncReport(pagesPulled = 2, linesStored = 2, duplicates = 1, StopReason.NoProgress("1:100"), sealed), report)
+        assertEquals(SyncReport(pagesPulled = 2, linesStored = 2, duplicates = 1, StopReason.NoProgress("1:100")), report)
     }
 
     @Test
@@ -231,10 +233,10 @@ class SyncRunnerTest {
             "6:0" to Page(listOf(fileMarker("dl_6.jsonl"), row(tsAfter)), "6:30", more = false),
         )
 
-        val report = runner(ScriptedSource(empty)).run()
+        val report = sync(ScriptedSource(empty))
 
         val batches = store.pending("sink")
-        assertEquals(SyncReport(pagesPulled = 2, linesStored = 1, duplicates = 0, StopReason.CaughtUp, batches.map { it.id }), report)
+        assertEquals(SyncReport(pagesPulled = 2, linesStored = 1, duplicates = 0, StopReason.CaughtUp), report)
         assertEquals(listOf(listOf(fileMarker("dl_6.jsonl"), storedRow(tsAfter, tsAfter, "device"))), batches.map { it.lines })
     }
 
@@ -242,7 +244,7 @@ class SyncRunnerTest {
     fun `other link failures are reported as link loss`() = runTest {
         val source = ScriptedSource(pages, clockJournal).apply { failPull = { _, _ -> IOException("socket closed") } }
 
-        val report = runner(source).run()
+        val report = sync(source)
 
         assertEquals("socket closed", (report.stoppedBecause as StopReason.LinkLost).cause.message)
     }

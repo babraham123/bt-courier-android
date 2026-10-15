@@ -5,22 +5,23 @@ import app.btcourier.core.normalize.JournalNormalizer
 import app.btcourier.core.normalize.Normalizer
 import app.btcourier.core.source.Source
 import app.btcourier.core.source.SourceException
-import app.btcourier.core.store.SealPolicy
 import app.btcourier.core.store.Store
 import kotlinx.coroutines.delay
 import java.io.IOException
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 
 /**
- * One sync of one source into the store (plan, "Sync loop"), on an already connected transport:
+ * The loop of one sync of one source into the store (plan, "Sync loop"), on an already connected
+ * transport:
  *
  * 1. Device status, for the [Anchor] (phone vs device clock).
  * 2. Clock journal.
  * 3. Pull from the store's cursor until `more:false`; the [Normalizer] turns each page into the
  *    lines to store, carrying the open file from page to page, and the store keeps them with the
  *    page's cursor in one transaction.
- * 4. Seal, whatever the outcome, so every persisted page can reach the sinks.
+ *
+ * Sealing is the caller's, after the loop and whatever its outcome, so a sync that never reaches
+ * its device seals through the same code as one that does.
  *
  * The journal is fetched before the loop, not after it, because the store keeps normalised lines:
  * every page must be re-based the moment it is stored, and the device trims the journal to its
@@ -38,18 +39,16 @@ import kotlin.time.Duration.Companion.seconds
  * Failures end the sync cleanly: the store's cursor stays at the last page persisted, so the next
  * sync resumes there, and a page that was pulled but not persisted is pulled again.
  *
- * @param busyBackoff waits before each retry of a call answered 429; once they are used up the
- *   sync stops with [StopReason.Busy] and the scheduler tries again later.
- * @param clock wall time for [Store.seal]'s age rule.
+ * @param busyBackoff waits before each retry of a call answered 429, on the same link; once they
+ *   are used up the sync stops with [StopReason.Busy]. The caller's retry policy sets them; none
+ *   by default.
  */
 class SyncRunner(
     private val sourceId: String,
     private val source: Source,
     private val store: Store,
     private val normalizer: Normalizer = JournalNormalizer(),
-    private val sealPolicy: SealPolicy = SealPolicy(),
-    private val clock: () -> Long = System::currentTimeMillis,
-    private val busyBackoff: List<Duration> = listOf(1.seconds, 2.seconds, 4.seconds),
+    private val busyBackoff: List<Duration> = emptyList(),
 ) {
     suspend fun run(): SyncReport {
         val progress = Progress()
@@ -64,8 +63,7 @@ class SyncRunner(
         } catch (e: IOException) {
             StopReason.LinkLost(e)
         }
-        val sealed = store.seal(sealPolicy, clock())
-        return SyncReport(progress.pages, progress.linesStored, progress.duplicates, stoppedBecause, sealed)
+        return SyncReport(progress.pages, progress.linesStored, progress.duplicates, stoppedBecause)
     }
 
     private class Progress {
@@ -113,16 +111,12 @@ class SyncRunner(
  * @property linesStored data rows newly stored (markers not counted).
  * @property duplicates pages with rows that the store already had (a re-pull after a lost ack
  *   or a crash between persisting and returning).
- * @property sealed ids of the batches this sync's seal created, whatever the outcome. Not the
- *   change in pending batches: the same seal may evict old batches at the cache cap, and an
- *   upload running meanwhile may drain some.
  */
 data class SyncReport(
     val pagesPulled: Int,
     val linesStored: Long,
     val duplicates: Int,
     val stoppedBecause: StopReason,
-    val sealed: List<String>,
 )
 
 sealed interface StopReason {

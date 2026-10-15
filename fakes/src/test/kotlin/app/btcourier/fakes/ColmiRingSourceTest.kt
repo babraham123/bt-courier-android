@@ -2,7 +2,10 @@ package app.btcourier.fakes
 
 import app.btcourier.core.source.colmi.ColmiRingSource
 import app.btcourier.core.store.DefaultStore
+import app.btcourier.core.store.SealPolicy
+import app.btcourier.core.store.Store
 import app.btcourier.core.sync.StopReason
+import app.btcourier.core.sync.SyncReport
 import app.btcourier.core.sync.SyncRunner
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -43,6 +46,10 @@ class ColmiRingSourceTest {
     )
 
     private fun source(ring: FakeColmiRing) = ColmiRingSource(ring.link, zone, phoneClock = { nowMs })
+
+    /** One sync into [store], sealed as the app seals after every sync. */
+    private suspend fun sync(ring: FakeColmiRing, store: Store): SyncReport =
+        SyncRunner("colmi", source(ring), store).run().also { store.seal(SealPolicy(), nowMs) }
 
     @Test
     fun `walks two days of history from the cursor to more false`() = runTest {
@@ -111,7 +118,7 @@ class ColmiRingSourceTest {
         val store = DefaultStore.inMemory(clock = { nowMs }, sinkIds = { setOf("sink") })
         store.appendPage("colmi", "2026-10-12", emptyList())
 
-        val report = SyncRunner("colmi", source(ring), store, clock = { nowMs }).run()
+        val report = sync(ring, store)
         assertEquals(StopReason.CaughtUp, report.stoppedBecause)
         assertEquals(2, report.pagesPulled)
         assertEquals(8L, report.linesStored)
@@ -124,7 +131,7 @@ class ColmiRingSourceTest {
         assertEquals(7, rows.size)
         assertTrue(rows.all { it.contains("\"ts_quality\":\"device\"") }, rows.joinToString("\n"))
 
-        val again = SyncRunner("colmi", source(ring), store, clock = { nowMs }).run()
+        val again = sync(ring, store)
         assertEquals(StopReason.CaughtUp, again.stoppedBecause)
         assertEquals(1, again.pagesPulled)
         assertEquals(0L, again.linesStored)
@@ -135,24 +142,23 @@ class ColmiRingSourceTest {
         val ring = ring()
         val store = DefaultStore.inMemory(clock = { nowMs }, sinkIds = { setOf("sink") })
         store.appendPage("colmi", "2026-10-12", emptyList())
-        fun sync() = SyncRunner("colmi", source(ring), store, clock = { nowMs })
 
         // Day 1's heart-rate answer is 24 packets; sub-type 2 holds slot 9 (62 bpm) and 23 ends it.
         ring.corruptNextHeartRatePacket(2)
-        val hrLost = sync().run()
+        val hrLost = sync(ring, store)
         assertInstanceOf(StopReason.LinkLost::class.java, hrLost.stoppedBecause)
         assertEquals(0L, hrLost.linesStored)
         assertEquals("2026-10-12", store.cursor("colmi"))
 
         // Day 1's steps answer is indexes 0 (quarter 1) and 1 (quarter 95, the last).
         ring.corruptNextStepsPacket(0)
-        val stepsLost = sync().run()
+        val stepsLost = sync(ring, store)
         assertInstanceOf(StopReason.LinkLost::class.java, stepsLost.stoppedBecause)
         assertEquals(0L, stepsLost.linesStored)
         assertEquals("2026-10-12", store.cursor("colmi"))
         assertEquals(emptyList<Any>(), store.pending("sink"))
 
-        val recovered = sync().run()
+        val recovered = sync(ring, store)
         assertEquals(StopReason.CaughtUp, recovered.stoppedBecause)
         assertEquals("2026-10-14", store.cursor("colmi"))
         val day1Batch = store.pending("sink").single()
