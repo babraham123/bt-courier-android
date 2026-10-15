@@ -14,7 +14,14 @@ interface WorkControl {
 
     fun uploadNow(allowCellular: Boolean, replace: Boolean)
 
-    /** Cancels the queued or running upload, e.g. so it stops using credentials just revoked. */
+    /**
+     * One follow-up upload in [delayMs], for a round that ended [UploadOutcome.Deferred]: the time
+     * a sink's server asked the app to wait. It is its own unique work, so a sync's KEEP upload
+     * meanwhile still goes out at once for the other sinks, and a newer follow-up replaces it.
+     */
+    fun uploadAt(delayMs: Long, allowCellular: Boolean)
+
+    /** Cancels the queued or running uploads, e.g. so they stop using credentials just revoked. */
     fun cancelUpload()
 
     fun setPeriodicSync(enabled: Boolean)
@@ -30,6 +37,8 @@ class SchedulerWorkControl(context: Context) : WorkControl {
     override fun syncNow(address: String) = Scheduler.syncNow(app, address)
 
     override fun uploadNow(allowCellular: Boolean, replace: Boolean) = Scheduler.uploadNow(app, allowCellular, replace)
+
+    override fun uploadAt(delayMs: Long, allowCellular: Boolean) = Scheduler.uploadAt(app, delayMs, allowCellular)
 
     override fun cancelUpload() = Scheduler.cancelUpload(app)
 

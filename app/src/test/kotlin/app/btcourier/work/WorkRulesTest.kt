@@ -2,6 +2,10 @@ package app.btcourier.work
 
 import androidx.work.NetworkType
 import app.btcourier.ble.PairedDevice
+import app.btcourier.core.sink.CompositeSink
+import app.btcourier.core.sink.Jsonl
+import app.btcourier.core.sink.Sink
+import app.btcourier.core.sink.UploadResult
 import app.btcourier.data.AppSettings
 import app.btcourier.data.DeviceKind
 import app.btcourier.data.InMemorySyncStatus
@@ -24,7 +28,8 @@ import java.time.ZoneOffset
 /**
  * The scheduling rules of the system entry points, through [WorkControl]: what a sync worker run
  * enqueues and whether it asks to run again ([SyncWork]), what app start and boot re-register
- * ([restoreSchedules]), and which network an upload waits for ([Scheduler.uploadConstraints]).
+ * ([restoreSchedules]), what an upload worker run asks for next ([UploadWork]), and which network
+ * an upload waits for ([Scheduler.uploadConstraints]).
  * [SyncWork] runs the real [SyncJob] against a [FakeWicanLogger] and the app's store.
  */
 class WorkRulesTest {
@@ -137,6 +142,36 @@ class WorkRulesTest {
 
         assertEquals(listOf(AppSettings().periodicSync), work.periodic)
         assertTrue(observed.isEmpty())
+    }
+
+    private fun uploadWork(vararg sinks: Sink, clock: () -> Long = { NOW }): UploadWork =
+        UploadWork(UploadJob(store, { sinks.toList() }, InMemorySyncStatus(), clock = clock), work)
+
+    @Test
+    fun `an upload round that a sink answered Retry runs again on the back-off, one that only waited schedules the follow-up`() = runTest {
+        store.appendPage("wican", "1:0", listOf(marker("dl_1.jsonl"), row(1_000, 1)))
+        store.seal(sealEverything, NOW)
+        val throttled = CompositeSink("sink", ScriptedUpload(UploadResult.Retry("HTTP 429", retryAfterMs = 90_000)), Jsonl)
+        var now = NOW
+        val upload = uploadWork(throttled, clock = { now })
+
+        assertEquals(WorkVerdict.RETRY, upload.run(attempt = 0, sealEverything, uploadOverCellular = false))
+        assertEquals(emptyList<Pair<Long, Boolean>>(), work.deferredUploads)
+
+        now += 30_000
+        assertEquals(WorkVerdict.SUCCESS, upload.run(attempt = 1, sealEverything, uploadOverCellular = true))
+        assertEquals(listOf(60_000L to true), work.deferredUploads, "the follow-up is due when the sink is, under the current network policy")
+    }
+
+    @Test
+    fun `an upload round with nothing to wait for ends the work without a follow-up`() = runTest {
+        store.appendPage("wican", "1:0", listOf(marker("dl_1.jsonl"), row(1_000, 1)))
+        store.seal(sealEverything, NOW)
+
+        assertEquals(WorkVerdict.SUCCESS, uploadWork(CompositeSink("sink", ScriptedUpload(UploadResult.Acked), Jsonl)).run(0, sealEverything, false))
+        assertEquals(WorkVerdict.SUCCESS, uploadWork(CompositeSink("sink", ScriptedUpload(UploadResult.Failed("HTTP 403")), Jsonl)).run(0, sealEverything, false))
+
+        assertEquals(emptyList<Pair<Long, Boolean>>(), work.deferredUploads)
     }
 
     @Test

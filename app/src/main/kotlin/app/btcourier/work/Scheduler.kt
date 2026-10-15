@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit
 object Scheduler {
     const val SYNC_PERIODIC = "sync-periodic"
     const val UPLOAD = "upload"
+    const val UPLOAD_DEFERRED = "upload-deferred"
 
     /** Unique work name of one device's one-time sync. */
     fun syncNowName(address: String) = "sync-now-" + address.uppercase()
@@ -77,8 +78,26 @@ object Scheduler {
         WorkManager.getInstance(context).enqueueUniqueWork(UPLOAD, policy, request)
     }
 
+    /**
+     * The follow-up a deferred round asks for ([WorkControl.uploadAt]). Not expedited: WorkManager
+     * refuses a delay on expedited work, and a run due later needs no quota anyway. REPLACE, so a
+     * later round's (later) due time wins; the back-off is irrelevant since a deferred round's own
+     * outcome decides the next one.
+     */
+    fun uploadAt(context: Context, delayMs: Long, allowCellular: Boolean) {
+        val request = OneTimeWorkRequestBuilder<UploadWorker>()
+            .setConstraints(uploadConstraints(allowCellular))
+            .setInitialDelay(delayMs.coerceAtLeast(0), TimeUnit.MILLISECONDS)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.DEFAULT_BACKOFF_DELAY_MILLIS, TimeUnit.MILLISECONDS)
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(UPLOAD_DEFERRED, ExistingWorkPolicy.REPLACE, request)
+    }
+
     fun cancelUpload(context: Context) {
-        WorkManager.getInstance(context).cancelUniqueWork(UPLOAD)
+        WorkManager.getInstance(context).apply {
+            cancelUniqueWork(UPLOAD)
+            cancelUniqueWork(UPLOAD_DEFERRED)
+        }
     }
 
     fun uploadConstraints(allowCellular: Boolean): Constraints =

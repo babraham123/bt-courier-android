@@ -41,7 +41,9 @@ import kotlin.io.path.listDirectoryEntries
  * [UploadJob] over the app's store with real sinks (local directory, HTTP PUT against a local
  * server) and scripted ones for failures. Expected values follow the job's contract: every
  * pending batch reaches every sink, sinks fail independently, transient failures retry up to
- * [UploadJob.MAX_ATTEMPTS] rounds, permanent ones never, and nothing is lost either way.
+ * [UploadJob.MAX_ATTEMPTS] rounds, permanent ones never, a round that only waited for a sink's
+ * `Retry-After` is no attempt but asks for a follow-up when the sink is due, and nothing is lost
+ * either way.
  */
 class UploadJobTest {
     @TempDir
@@ -197,17 +199,59 @@ class UploadJobTest {
 
         assertEquals(UploadOutcome.Retry, job.run(attempt = 0, sealEverything))
         now += 119_000
-        assertEquals(UploadOutcome.Retry, job.run(attempt = 1, sealEverything))
+        assertEquals(UploadOutcome.Deferred(1_000), job.run(attempt = 1, sealEverything), "a waiting round asks for a follow-up when the sink is due")
 
         assertEquals(1, server.requestCount, "the waiting round sent nothing")
         val s = status.status.value
+        assertEquals(UploadResultKind.RETRYING, s.lastUpload)
         assertEquals(mapOf("put" to SinkUpload(now, UploadResultKind.RETRYING)), s.lastUploadBySink)
-        assertTrue(s.lastError!!.startsWith("put: HTTP 429"), s.lastError)
+        assertEquals("put: HTTP 429 for ${server.takeRequest(5, TimeUnit.SECONDS)!!.target.substringAfterLast('/')} (next attempt in 1 s)", s.lastError)
 
         now += 1_000
-        assertEquals(UploadOutcome.Delivered, job.run(attempt = 2, sealEverything))
+        assertEquals(UploadOutcome.Delivered, job.run(attempt = 0, sealEverything))
         assertEquals(3, server.requestCount)
         assertEquals(0, store.counters().pendingBatches)
+    }
+
+    @Test
+    fun `a Retry-After beyond the attempt window does not burn the budget, the round is deferred rather than given up`() = runTest {
+        val store = storeWithTwoBatches(setOf("slow", "down"))
+        val slow = scriptedSink("slow", UploadResult.Retry("HTTP 503", retryAfterMs = 2 * HOUR), UploadResult.Acked)
+        val down = scriptedSink("down", UploadResult.Retry("HTTP 503"))
+        var now = NOW
+        val job = UploadJob(store, { listOf(slow, down) }, status, clock = { now })
+
+        assertEquals(UploadOutcome.Retry, job.run(attempt = 0, sealEverything), "a sink answered Retry, so WorkManager's back-off applies")
+        now += MINUTE
+        assertEquals(
+            UploadOutcome.Deferred(2 * HOUR - MINUTE),
+            job.run(attempt = UploadJob.MAX_ATTEMPTS - 1, sealEverything),
+            "with the budget used up but a sink still waiting, its due time beats giving up",
+        )
+        assertEquals(UploadResultKind.RETRYING, status.status.value.lastUpload)
+        assertEquals(
+            mapOf("slow" to SinkUpload(now, UploadResultKind.RETRYING), "down" to SinkUpload(now, UploadResultKind.RETRYING)),
+            status.status.value.lastUploadBySink,
+        )
+
+        now += 2 * HOUR - MINUTE
+        assertEquals(UploadOutcome.Retry, job.run(attempt = 0, sealEverything), "the follow-up attempts the slow sink and the down one is still down")
+        assertEquals(0, store.pending("slow").size)
+        assertEquals(2, store.pending("down").size)
+    }
+
+    @Test
+    fun `a permanent failure beside a waiting sink still gets the follow-up`() = runTest {
+        val store = storeWithTwoBatches(setOf("slow", "refused"))
+        val slow = scriptedSink("slow", UploadResult.Retry("HTTP 503", retryAfterMs = HOUR))
+        var now = NOW
+        val job = UploadJob(store, { listOf(slow, scriptedSink("refused", UploadResult.Failed("HTTP 403"))) }, status, clock = { now })
+        job.run(attempt = 0, sealEverything)
+
+        now += MINUTE
+        assertEquals(UploadOutcome.Deferred(HOUR - MINUTE), job.run(attempt = 1, sealEverything))
+        assertEquals(UploadResultKind.RETRYING, status.status.value.lastUpload)
+        assertEquals(UploadResultKind.FAILED, status.status.value.lastUploadBySink.getValue("refused").result)
     }
 
     @Test
