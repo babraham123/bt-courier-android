@@ -1,9 +1,11 @@
 package app.btcourier.core.normalize
 
+import app.btcourier.core.lines.StoredLine
 import app.btcourier.core.source.ClockEvent
 
 /**
- * Repairs device timestamps logged before the device clock was valid or before it was stepped.
+ * Turns one pulled page into exactly the lines the store keeps, repairing device timestamps
+ * logged before the device clock was valid or before it was stepped.
  *
  * Primary method re-bases each `_file` by the journal's `delta_ms` (wican-fw
  * `tools/log_clock.py` semantics); implausible rows the journal cannot place fall back to the
@@ -11,20 +13,35 @@ import app.btcourier.core.source.ClockEvent
  */
 interface Normalizer {
     /**
-     * @param lines raw export lines, including `{"_file":...}` markers.
+     * @param page the page's lines as the source sent them, [StoredLine.Marker]s included.
      * @param journal the device clock journal, in journal order.
      * @param anchor null if no anchor was taken this sync.
-     * @param openFile the file that rows before the first `_file` marker belong to (a page that
-     *   starts mid-file), or null if unknown.
-     * @return one [Record] per data row, in input order. Markers produce no record.
+     * @param openFile the file that rows before the page's first marker belong to: the previous
+     *   page's [Normalized.lastFile], or null for the first page of a sync.
      */
     fun fix(
-        lines: List<String>,
+        page: List<String>,
         journal: List<ClockEvent>,
         anchor: Anchor?,
         openFile: String? = null,
-    ): List<Record>
+    ): Normalized
 }
+
+/**
+ * A page ready for the store.
+ *
+ * @property lines what to store, in page order: markers verbatim and in place (the store splits
+ *   batches on them), every other non-blank line as its row was repaired. Empty when the page has
+ *   no rows, since markers alone would seal into a batch with no data.
+ * @property rows lines of [lines] that are not markers.
+ * @property lastFile the file open after the page, even when [lines] is empty: the next page's
+ *   `openFile`.
+ */
+data class Normalized(
+    val lines: List<String>,
+    val rows: Int,
+    val lastFile: String?,
+)
 
 /** Phone and device wall clocks sampled together during a sync. */
 data class Anchor(
@@ -35,26 +52,8 @@ data class Anchor(
 }
 
 /**
- * A data row with its repaired timestamp.
- *
- * @property line the row as sinks receive it: the original JSON object with `ts` replaced by
- *   [ts] and `ts_raw`, `ts_quality` appended, other keys in their original order. A line that is
- *   not a JSON object is passed through verbatim.
- * @property ts repaired epoch millis, or null when [tsQuality] is [TsQuality.UNKNOWN].
- * @property tsRaw the timestamp exactly as the device logged it, or null if the row had none.
- * @property file the `_file` the row came from, or null if the page did not say.
- */
-data class Record(
-    val line: String,
-    val ts: Long?,
-    val tsRaw: Long?,
-    val tsQuality: TsQuality,
-    val file: String?,
-)
-
-/**
- * How [Record.ts] was derived, so receivers can weigh or filter rows. [wire] is the `ts_quality`
- * value written into the row.
+ * How a stored row's `ts` was derived, so receivers can weigh or filter rows. [wire] is the
+ * `ts_quality` value written into the row.
  */
 enum class TsQuality(val wire: String) {
     /** Re-based by at least one journal clock set that the row was stamped before. */
@@ -73,6 +72,6 @@ enum class TsQuality(val wire: String) {
      */
     ANCHOR("anchor"),
 
-    /** No basis for repair; [Record.ts] is null. */
+    /** No basis for repair; `ts` is null. */
     UNKNOWN("unknown"),
 }

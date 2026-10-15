@@ -1,5 +1,6 @@
 package app.btcourier.core.source.colmi
 
+import app.btcourier.core.lines.StoredLine
 import app.btcourier.core.source.ClockEvent
 import app.btcourier.core.source.Page
 import app.btcourier.core.source.Source
@@ -86,7 +87,7 @@ class ColmiRingSource(
 
         val rows = (heartRateRows(day) + stepsRows(day, today)).sortedBy { it.ts }
         val lines = buildList {
-            add("""{"_file":"$FILE_PREFIX$day"}""")
+            add(StoredLine.marker("$FILE_PREFIX$day"))
             rows.forEach { add(it.json()) }
             if (!batteryReported) {
                 val battery = link.colmiRequest(ColmiPacketCodec.batteryRequest(), responseTimeout) { ColmiPacketCodec.parseBattery(it) }

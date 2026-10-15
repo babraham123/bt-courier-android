@@ -25,11 +25,3 @@ internal fun JsonObject.long(key: String): Long? =
 internal fun JsonObject.string(key: String): String? = primitive(key)?.takeIf { it.isString }?.content
 
 internal fun JsonObject.boolean(key: String): Boolean? = primitive(key)?.takeIf { !it.isString }?.booleanOrNull
-
-/**
- * The file name if [line] is an export `{"_file":"dl_<epoch>.jsonl"}` marker, else null.
- *
- * The substring check keeps data rows from being parsed twice on the hot path.
- */
-fun fileMarkerName(line: String): String? =
-    if (!line.contains("\"_file\"")) null else parseObjectOrNull(line)?.string("_file")

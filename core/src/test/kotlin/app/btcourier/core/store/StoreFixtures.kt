@@ -1,5 +1,6 @@
 package app.btcourier.core.store
 
+import app.btcourier.core.lines.StoredLine
 import java.nio.file.Path
 
 /** Synthetic data row; no real vehicle data. */
@@ -7,7 +8,7 @@ fun row(i: Int): String = """{"ts":${1_700_000_000_000L + i},"param":"SPEED","va
 
 fun rows(range: IntRange): List<String> = range.map(::row)
 
-fun marker(file: String): String = """{"_file":"$file"}"""
+fun marker(file: String): String = StoredLine.marker(file)
 
 /** Spec: a line costs its UTF-8 bytes plus the JSONL newline. */
 fun sizeOf(lines: List<String>): Long = lines.sumOf { it.toByteArray(Charsets.UTF_8).size + 1L }
@@ -42,4 +43,4 @@ val neverByAgeOrSize = SealPolicy(maxBatchBytes = Long.MAX_VALUE, maxBatchAgeMs 
 
 /** Lines of every pending batch for [sinkId], minus marker lines restated at batch starts. */
 suspend fun Store.pendingRows(sinkId: String): List<List<String>> =
-    pending(sinkId).map { b -> b.lines.filterNot(::isFileMarker) }
+    pending(sinkId).map { b -> b.lines.filterNot(StoredLine::isMarker) }

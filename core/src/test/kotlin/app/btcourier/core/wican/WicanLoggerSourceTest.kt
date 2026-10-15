@@ -11,6 +11,7 @@ import app.btcourier.core.testing.WicanLines.row
 import app.btcourier.core.transport.Response
 import app.btcourier.core.transport.StreamingResponse
 import app.btcourier.core.transport.Transport
+import app.btcourier.core.transport.blehttp.BleHttpException
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -85,6 +86,17 @@ class WicanLoggerSourceTest {
         assertEquals("params stream is not jsonl or csv", e.detail)
         assertThrows<SourceException.Truncated> { source(export(fileMarker(file), row(1))).pull(null) }
         assertThrows<SourceException.Truncated> { source(ok("")).pull(null) }
+    }
+
+    @Test
+    fun `a ble_http body cut short is Truncated, other link failures stay IOExceptions`() = runTest {
+        val cut = WicanLoggerSource(CannedTransport { throw BleHttpException.Truncated(expectedBytes = 100, receivedBytes = 50) })
+        val pull = assertThrows<SourceException.Truncated> { cut.pull(null) }
+        assertTrue(pull.cause is BleHttpException.Truncated)
+        assertEquals(WicanLoggerSource.JOURNAL_PATH, assertThrows<SourceException.Truncated> { cut.clockJournal() }.path)
+
+        val dropped = WicanLoggerSource(CannedTransport { throw BleHttpException.LinkLost() })
+        assertThrows<BleHttpException.LinkLost> { dropped.pull(null) }
     }
 
     @Test

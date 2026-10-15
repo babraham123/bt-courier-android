@@ -1,5 +1,6 @@
 package app.btcourier.core.wican
 
+import app.btcourier.core.lines.StoredLine
 import app.btcourier.core.source.Page
 
 /**
@@ -21,7 +22,7 @@ data class ExportPage(
     fun toPage(): Page = Page(lines = lines, nextCursor = cursor, more = more)
 }
 
-/** A `{"_file":"dl_<epoch>.jsonl"}` line at [index] of [ExportPage.lines]. */
+/** A [StoredLine.Marker] (`{"_file":"dl_<epoch>.jsonl"}`) at [index] of [ExportPage.lines]. */
 data class FileMarker(val index: Int, val name: String)
 
 /** Why an export response was rejected; the caller retries from the same cursor. */
@@ -55,7 +56,7 @@ object ExportPageParser {
         val body = lines.dropLast(1)
         val files = body.mapIndexedNotNull { index, line ->
             if (metaOrNull(line) != null) throw ExportPageException.MisplacedMeta(index)
-            fileMarkerName(line)?.let { FileMarker(index, it) }
+            StoredLine.markerFile(line)?.let { FileMarker(index, it) }
         }
         return ExportPage(lines = body, files = files, cursor = meta.first, more = meta.second)
     }
