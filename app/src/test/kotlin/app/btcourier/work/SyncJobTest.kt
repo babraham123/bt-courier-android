@@ -474,8 +474,8 @@ class SyncJobTest {
             val outcome = job(ringLinks(ring)).run(ringAddress, sealEverything) { foreground++ } as Recorded
 
             assertEquals(SyncStopKind.CAUGHT_UP, outcome.stop)
-            // No cursor yet: the ring's week, today - 6 up to yesterday; today is never pulled.
-            val days = (6 downTo 1).map { today.minusDays(it.toLong()) }
+            // No cursor yet: the ring's history, today - 7 up to yesterday; today is never pulled.
+            val days = (7 downTo 1).map { today.minusDays(it.toLong()) }
             assertEquals(days.size, outcome.pages)
             assertEquals(yesterday.toString(), store.cursor(ringSource))
             assertNull(store.cursor(wicanSource), "the dongle is untouched")

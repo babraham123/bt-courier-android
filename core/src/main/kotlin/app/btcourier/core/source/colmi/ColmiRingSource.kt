@@ -29,8 +29,8 @@ import kotlin.time.Duration.Companion.seconds
  * the one pulled is still before today. Once caught up, [pull] answers an empty page with the
  * same cursor and `more:false`.
  *
- * The ring keeps about a week. A null cursor starts at the oldest day it is assumed to hold
- * (`today - (historyDays - 1)`), and an older cursor is clamped to that day: anything in between
+ * The ring is assumed to keep today and the 7 days before it ([historyDays]). A null cursor
+ * starts at the oldest day it holds (`today - (historyDays - 1)`), and an older cursor is clamped to that day: anything in between
  * was overwritten on the ring and is gone.
  *
  * Clock: the first [pull] of an instance sets the ring to the phone's wall clock in [zone]
@@ -56,7 +56,7 @@ import kotlin.time.Duration.Companion.seconds
  * - Answers are not acknowledged, and the ring may send packets of other commands at any time;
  *   those are skipped, as are notifications that are not whole 16-byte packets or fail the checksum
  *   (a corrupted packet of the answer then surfaces as a timeout).
- * - [historyDays] = 7.
+ * - [historyDays] = 8, as Gadgetbridge and PulseLoopiOS both ask for day offsets 0..7.
  *
  * Not thread-safe: one pull at a time, as `SyncRunner` does.
  *
@@ -164,7 +164,7 @@ class ColmiRingSource(
     }
 
     companion object {
-        const val DEFAULT_HISTORY_DAYS: Int = 7
+        const val DEFAULT_HISTORY_DAYS: Int = 8
         const val FILE_PREFIX: String = "colmi/"
         const val PARAM_HR: String = "colmi.hr"
         const val PARAM_STEPS: String = "colmi.steps"
