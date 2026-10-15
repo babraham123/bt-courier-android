@@ -1,5 +1,7 @@
 package app.btcourier.ble
 
+import app.btcourier.core.transport.ChannelUnavailableException
+import app.btcourier.core.transport.GattChannel
 import app.btcourier.core.transport.GattLink
 import com.juul.kable.AndroidPeripheral
 import com.juul.kable.Peripheral
@@ -10,9 +12,12 @@ import com.juul.kable.toIdentifier
 import com.juul.kable.write
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
@@ -48,8 +53,10 @@ internal fun State.toLinkState(): LinkState =
     }
 
 /**
- * [GattLink] over Kable to the characteristics of a [GattProfile]: notifications from
- * [GattProfile.notify], writes to [GattProfile.write].
+ * [GattLink] over Kable to the characteristics of a [GattProfile]: primary notifications from
+ * [GattProfile.notify], primary writes to [GattProfile.write], and, when the profile declares
+ * a [secondary][GattProfile.secondary] channel, that channel's pair as well. Only a declared
+ * secondary channel is subscribed to.
  *
  * One instance is one connection: once the link drops or is [closed][close] it stays dead and
  * the caller connects again, which also matches how the WiCAN tunnel resets all state on
@@ -66,17 +73,26 @@ class KableGattLink private constructor(
 ) : GattLink {
     private val closed = AtomicBoolean(false)
 
-    // Whether the profile's write characteristic declares write with response; false until
+    // Whether each channel's write characteristic declares write with response; false until
     // discovery, which only a profile with WriteTypeRule.AS_ASKED_IF_SUPPORTED consults.
     @Volatile
     private var writeWithResponseSupported = false
+
+    @Volatile
+    private var secondaryWriteWithResponseSupported = false
 
     // Unbounded so a slow consumer never loses a PDU here. The WiCAN's 16 KB credit window bounds
     // what can pile up, and its frame counter would catch a loss elsewhere anyway; the ring only
     // sends what it is asked for.
     private val pending = Channel<ByteArray>(Channel.UNLIMITED)
+    private val secondaryPending = Channel<ByteArray>(Channel.UNLIMITED)
 
     override val notifications: Flow<ByteArray> = pending.receiveAsFlow()
+    private val secondaryNotifications: Flow<ByteArray> = secondaryPending.receiveAsFlow()
+
+    // The profile declares no secondary channel, or the device turned out not to expose it.
+    @Volatile
+    private var secondaryMissing = profile.secondary == null
 
     override val mtu: Int
         get() = peripheral.mtu.value ?: GattProfile.DEFAULT_MTU
@@ -90,13 +106,8 @@ class KableGattLink private constructor(
     private suspend fun open() {
         val connection = peripheral.connect()
         // connect() returns after service discovery, so the declared properties are known here.
-        writeWithResponseSupported =
-            peripheral.services.value
-                ?.firstOrNull { it.serviceUuid == profile.service.toKotlinUuid() }
-                ?.characteristics
-                ?.firstOrNull { it.characteristicUuid == profile.write.toKotlinUuid() }
-                ?.properties
-                ?.write == true
+        writeWithResponseSupported = declaresWriteWithResponse(profile.service, profile.write)
+        profile.secondary?.let { secondaryWriteWithResponseSupported = declaresWriteWithResponse(it.service, it.write) }
         // Shorter connection interval: more connection events per second for frames written with
         // response and for multi-packet answers. Only a hint; the controller may refuse it.
         peripheral.requestConnectionPriority(AndroidPeripheral.Priority.High)
@@ -109,7 +120,7 @@ class KableGattLink private constructor(
             var failure: Throwable? = null
             try {
                 peripheral
-                    .observe(characteristic(profile.notify)) { subscribed.complete(Unit) }
+                    .observe(characteristic(profile.service, profile.notify)) { subscribed.complete(Unit) }
                     .collect { pending.send(it) }
             } catch (e: CancellationException) {
                 throw e
@@ -120,23 +131,111 @@ class KableGattLink private constructor(
                 pending.close(failure)
             }
         }
+        // A model whose discovered services lack the secondary one is known to lack the channel
+        // before any subscription is tried.
+        val secondary =
+            profile.secondary?.takeIf { spec ->
+                peripheral.services.value?.any {
+                    it.serviceUuid ==
+                        spec.service.toKotlinUuid()
+                } ==
+                    true
+            }
+        if (secondary == null) {
+            secondaryMissing = true
+            secondaryPending.close(ChannelUnavailableException(GattChannel.SECONDARY))
+        }
+        val secondarySettled = secondary?.let { observeSecondary(connection, it) }
         // The source sends its first request right after this returns; a response arriving
         // before the CCCD write would be lost, so wait for the subscription.
         subscribed.await()
+        secondarySettled?.await()
     }
+
+    /**
+     * Subscribes to the secondary channel's notify characteristic into [secondaryPending]; the
+     * result completes once subscribed or failed. A failure before the subscription means the
+     * device lacks the channel (Kable finds no such characteristic): the connection carries on
+     * with the primary channel alone, and the secondary one reports [ChannelUnavailableException].
+     */
+    private fun observeSecondary(
+        connection: CoroutineScope,
+        spec: GattProfile.ChannelSpec,
+    ): Deferred<Unit> {
+        val settled = CompletableDeferred<Unit>()
+        connection.launch {
+            var failure: Throwable? = null
+            try {
+                peripheral
+                    .observe(characteristic(spec.service, spec.notify)) { settled.complete(Unit) }
+                    .collect { secondaryPending.send(it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                failure =
+                    if (settled.isCompleted) {
+                        e as? IOException ?: IOException("secondary notify observation failed", e)
+                    } else {
+                        secondaryMissing = true
+                        ChannelUnavailableException(GattChannel.SECONDARY, e)
+                    }
+            } finally {
+                settled.complete(Unit)
+                secondaryPending.close(failure)
+            }
+        }
+        return settled
+    }
+
+    private fun declaresWriteWithResponse(
+        service: UUID,
+        write: UUID,
+    ): Boolean =
+        peripheral.services.value
+            ?.firstOrNull { it.serviceUuid == service.toKotlinUuid() }
+            ?.characteristics
+            ?.firstOrNull { it.characteristicUuid == write.toKotlinUuid() }
+            ?.properties
+            ?.write == true
+
+    override fun notifications(channel: GattChannel): Flow<ByteArray> =
+        when {
+            channel == GattChannel.PRIMARY -> notifications
+
+            profile.secondary == null -> flow { throw ChannelUnavailableException(channel) }
+
+            // Closed with ChannelUnavailableException when the device lacks the channel.
+            else -> secondaryNotifications
+        }
 
     override suspend fun write(
         bytes: ByteArray,
         withResponse: Boolean,
+    ) = write(bytes, withResponse, GattChannel.PRIMARY)
+
+    override suspend fun write(
+        bytes: ByteArray,
+        withResponse: Boolean,
+        channel: GattChannel,
     ) {
         if (closed.get()) throw IOException("link closed")
         require(bytes.size <= mtu - 3) { "PDU of ${bytes.size} bytes exceeds MTU payload ${mtu - 3}" }
-        val route = profile.routeWrite(withResponse, writeWithResponseSupported)
+        if (channel == GattChannel.SECONDARY && secondaryMissing) throw ChannelUnavailableException(channel)
+        val supported =
+            if (channel ==
+                GattChannel.PRIMARY
+            ) {
+                writeWithResponseSupported
+            } else {
+                secondaryWriteWithResponseSupported
+            }
+        // Only an undeclared secondary channel has no route, and secondaryMissing covers that.
+        val target = checkNotNull(profile.routeWrite(withResponse, supported, channel))
         // Kable serialises GATT operations behind a FIFO mutex, so concurrent writers (request
         // body vs CREDIT) reach the air in call order, and each write suspends until the stack's
         // onCharacteristicWrite.
         try {
-            peripheral.write(characteristic(route.characteristic), bytes, route.writeType)
+            peripheral.write(characteristic(target.service, target.route.characteristic), bytes, target.route.writeType)
         } catch (e: CancellationException) {
             // Kable reports a dropped connection as a CancellationException wrapping
             // NotConnectedException; only our caller's own cancellation should propagate as such.
@@ -144,6 +243,9 @@ class KableGattLink private constructor(
             throw e
         } catch (e: IOException) {
             throw e
+        } catch (e: NoSuchElementException) {
+            // Kable's lookup of a characteristic the device does not expose.
+            throw ChannelUnavailableException(channel, e)
         } catch (e: Exception) {
             // GattRequestRejectedException (an IllegalStateException): stack busy or link gone.
             throw IOException("GATT write rejected", e)
@@ -154,11 +256,15 @@ class KableGattLink private constructor(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         pending.close()
+        secondaryPending.close()
         // Cancelling the peripheral's scope closes the BluetoothGatt, which drops the link.
         peripheral.close()
     }
 
-    private fun characteristic(uuid: UUID) = characteristicOf(profile.service.toKotlinUuid(), uuid.toKotlinUuid())
+    private fun characteristic(
+        service: UUID,
+        uuid: UUID,
+    ) = characteristicOf(service.toKotlinUuid(), uuid.toKotlinUuid())
 
     companion object {
         /**
