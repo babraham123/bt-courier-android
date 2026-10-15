@@ -10,23 +10,18 @@ import app.btcourier.core.auth.TokenSet
 import app.btcourier.core.sink.sftp.SftpUploadTransport
 import app.btcourier.data.AuthConfig
 import app.btcourier.data.AuthKind
+import app.btcourier.data.CredentialEdits
 import app.btcourier.data.FormatKind
 import app.btcourier.data.OidcClientAuth
 import app.btcourier.data.PostEncoding
-import app.btcourier.data.SecretStore
 import app.btcourier.data.SettingsRepository
 import app.btcourier.data.SinkConfig
-import app.btcourier.data.SinkSecrets
-import app.btcourier.data.SshKeys
+import app.btcourier.data.SinkCredentials
 import app.btcourier.data.TransportConfig
 import app.btcourier.data.TransportKind
 import app.btcourier.data.defaultMqttPort
-import app.btcourier.data.deleteSink
-import app.btcourier.data.deleteSinkCredentials
 import app.btcourier.data.newMqttClientId
 import app.btcourier.data.newSinkId
-import app.btcourier.data.openSshPublicKey
-import app.btcourier.data.sftpKeyAlias
 import app.btcourier.ui.WorkControl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -42,7 +37,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.io.IOException
 import java.security.GeneralSecurityException
-import java.security.interfaces.ECPublicKey
 import kotlin.coroutines.CoroutineContext
 
 /**
@@ -151,19 +145,19 @@ fun interface HostKeyFetcher {
  *
  * Nothing but that key reaches storage before [save]: an OIDC sign-in only stages its tokens here,
  * since they belong to the issuer, client and sink URL in the form, which may differ from the saved
- * sink until the save commits them together.
+ * sink until the save commits them together. What is stored, and when it is forgotten, is
+ * [credentials]' business.
  *
  * @param appScope runs cleanup that must finish after the screen has closed and this view model
  *   is cleared.
  * @param oidcSleep waits between device-flow polls; tests skip the interval.
- * @param io where blocking Keystore and network calls run; tests keep them on the test dispatcher.
+ * @param io where network calls run; tests keep them on the test dispatcher.
  */
 class SinkEditorViewModel(
     sinkId: String?,
     private val settings: SettingsRepository,
-    private val secrets: SecretStore,
+    private val credentials: SinkCredentials,
     private val work: WorkControl,
-    private val sshKeys: SshKeys,
     private val http: OkHttpClient,
     private val appScope: CoroutineScope,
     private val hostKeys: HostKeyFetcher = HostKeyFetcher { host, port -> SftpUploadTransport.fetchHostKeyFingerprint(host, port) },
@@ -183,15 +177,15 @@ class SinkEditorViewModel(
         viewModelScope.launch {
             val stored = settings.current().sinks.firstOrNull { it.id == id }
             val form = stored?.toForm() ?: SinkForm(mqttClientId = newMqttClientId())
-            val tokens = secrets.get(SinkSecrets.oidcTokens(id))
-            val signedIn = tokens != null && (stored?.auth as? AuthConfig.Oidc)?.signedInEndpoints == true
+            val held = credentials.stored(id)
+            val signedIn = held.tokens && (stored?.auth as? AuthConfig.Oidc)?.signedInEndpoints == true
             mutableState.value = SinkEditorState(
                 loaded = true,
                 id = id,
                 isNew = stored == null,
                 form = form,
-                hasStoredSecret = secrets.get(SinkSecrets.secret(id)) != null,
-                hasStoredClientSecret = secrets.get(SinkSecrets.oidcClientSecret(id)) != null,
+                hasStoredSecret = held.secret,
+                hasStoredClientSecret = held.clientSecret,
                 signIn = if (signedIn) SignInState.SignedIn else SignInState.SignedOut,
             )
             if (form.kind == TransportKind.SFTP) ensureKey()
@@ -224,7 +218,7 @@ class SinkEditorViewModel(
 
     fun clearSecret() {
         viewModelScope.launch {
-            secrets.put(SinkSecrets.secret(id), null)
+            credentials.clearSecret(id)
             mutableState.update { it.copy(hasStoredSecret = false) }
             replaceUpload()
         }
@@ -298,7 +292,7 @@ class SinkEditorViewModel(
         val clientSecret = when {
             form.oidcClientAuth == OidcClientAuth.NONE -> null
             form.oidcClientSecretInput.isNotEmpty() -> form.oidcClientSecretInput
-            else -> secrets.get(SinkSecrets.oidcClientSecret(id))
+            else -> credentials.clientSecret(id)
                 ?: throw IllegalArgumentException("enter the client secret, or choose a public client")
         }
         // OkHttp reads a response body on the calling thread, so every exchange runs on io.
@@ -328,20 +322,14 @@ class SinkEditorViewModel(
     }
 
     /**
-     * Drops a staged sign-in and, at once, the saved sink's stored tokens. A running upload holds
-     * those tokens in memory and could refresh them back into the store, so it is cancelled before
-     * they are deleted; the replacing upload lets the other sinks carry on.
+     * Drops a staged sign-in and, at once, the saved sink's stored tokens, cancelling a running
+     * upload first ([SinkCredentials.signOut]); the replacing upload lets the other sinks carry on.
      */
     fun signOut() {
         signInJob?.cancel()
         stagedTokens = null
         viewModelScope.launch {
-            val tokens = SinkSecrets.oidcTokens(id)
-            if (secrets.get(tokens) != null) {
-                work.cancelUpload()
-                secrets.put(tokens, null)
-                replaceUpload()
-            }
+            if (credentials.signOut(id, stopUploads = work::cancelUpload)) replaceUpload()
             mutableState.update { it.copy(signIn = SignInState.SignedOut) }
         }
     }
@@ -366,25 +354,18 @@ class SinkEditorViewModel(
 
         val config = form.toConfig()
         val staged = stagedTokens
+        val edits = CredentialEdits(form.secretInput.ifEmpty { null }, form.oidcClientSecretInput.ifEmpty { null }, staged)
         viewModelScope.launch {
-            val previous = settings.current().sinks.firstOrNull { it.id == id }
-            // Secrets first, so an upload that builds the saved sink finds its credentials.
-            storeSecrets(form, staged)
-            settings.update { s ->
-                val sinks = if (s.sinks.any { it.id == id }) s.sinks.map { if (it.id == id) config else it } else s.sinks + config
-                s.copy(sinks = sinks)
-            }
-            if (previous?.transport is TransportConfig.Sftp && config.transport !is TransportConfig.Sftp) {
-                withContext(io) { sshKeys.delete(sftpKeyAlias(id)) }
-            }
-            if (previous != config || form.secretInput.isNotEmpty() || form.oidcClientSecretInput.isNotEmpty() || staged != null) replaceUpload()
+            val previous = credentials.save(config, edits, settings)
+            if (previous != config || !edits.isEmpty) replaceUpload()
             if (stagedTokens === staged) stagedTokens = null
+            val stored = credentials.stored(id)
             mutableState.update {
                 it.copy(
                     isNew = false,
                     form = it.form.copy(secretInput = "", oidcClientSecretInput = ""),
-                    hasStoredSecret = config.auth.usesSecret && (it.hasStoredSecret || form.secretInput.isNotEmpty()),
-                    hasStoredClientSecret = config.auth.usesClientSecret && (it.hasStoredClientSecret || form.oidcClientSecretInput.isNotEmpty()),
+                    hasStoredSecret = stored.secret,
+                    hasStoredClientSecret = stored.clientSecret,
                     signIn = if ((config.auth as? AuthConfig.Oidc)?.signedInEndpoints == true) it.signIn else SignInState.SignedOut,
                     saved = true,
                 )
@@ -395,22 +376,22 @@ class SinkEditorViewModel(
     fun delete() {
         signInJob?.cancel()
         viewModelScope.launch {
-            deleteSink(id, settings, secrets, sshKeys, io)
+            credentials.delete(id, settings)
             replaceUpload()
             mutableState.update { it.copy(deleted = true) }
         }
     }
 
     /**
-     * Leaving without saving drops a staged sign-in; for a never-saved sink also whatever was
-     * stored for its id meanwhile (the SFTP key). The deletion runs in [appScope] because the
-     * screen closes, and clears this view model, right away.
+     * Leaving without saving drops a staged sign-in, and [SinkCredentials.discard] undoes what the
+     * visit stored (a never-saved sink's SFTP key, the grant on a folder picked but not saved). That
+     * runs in [appScope] because the screen closes, and clears this view model, right away.
      */
     fun discard() {
         signInJob?.cancel()
         stagedTokens = null
-        if (!mutableState.value.isNew) return
-        appScope.launch { deleteSinkCredentials(id, secrets, sshKeys, io) }
+        val pickedTree = mutableState.value.form.treeUri
+        appScope.launch { credentials.discard(id, settings, pickedTree) }
     }
 
     /** Typed secrets and staged tokens must not stay in memory once the visit is over. */
@@ -419,36 +400,10 @@ class SinkEditorViewModel(
         mutableState.update { it.copy(form = it.form.copy(secretInput = "", oidcClientSecretInput = "")) }
     }
 
-    /**
-     * Writes typed secrets and [staged] tokens, and deletes the ones the saved auth no longer uses,
-     * so switching a sink from Basic to None does not leave its password behind.
-     */
-    private suspend fun storeSecrets(form: SinkForm, staged: TokenSet?) {
-        val auth = form.toAuth()
-        val secretName = SinkSecrets.secret(id)
-        when {
-            !auth.usesSecret -> secrets.put(secretName, null)
-            form.secretInput.isNotEmpty() -> secrets.put(secretName, form.secretInput)
-        }
-        val clientSecretName = SinkSecrets.oidcClientSecret(id)
-        when {
-            !auth.usesClientSecret -> secrets.put(clientSecretName, null)
-            form.oidcClientSecretInput.isNotEmpty() -> secrets.put(clientSecretName, form.oidcClientSecretInput)
-        }
-        val tokensName = SinkSecrets.oidcTokens(id)
-        when {
-            // Tokens from another issuer or client must not be offered to this one.
-            auth !is AuthConfig.Oidc || !auth.signedInEndpoints -> secrets.put(tokensName, null)
-            staged != null -> secrets.put(tokensName, staged.encode())
-        }
-    }
-
     private suspend fun ensureKey() {
         if (mutableState.value.publicKey != null) return
         val line = try {
-            val pair = withContext(io) { sshKeys.loadOrCreate(sftpKeyAlias(id)) }
-            val public = pair.public as? ECPublicKey ?: throw GeneralSecurityException("not an EC key")
-            openSshPublicKey(public, comment = "btcourier-$id")
+            credentials.sftpPublicKey(id)
         } catch (e: GeneralSecurityException) {
             mutableState.update { it.copy(keyError = e.message ?: e.javaClass.simpleName) }
             return
@@ -492,7 +447,6 @@ class SinkEditorViewModel(
                 username = sftpUser.trim(),
                 remoteDir = remoteDir.trim(),
                 hostKeyFingerprint = hostKeyFingerprint,
-                keyAlias = sftpKeyAlias(id),
             )
             TransportKind.MQTT -> TransportConfig.Mqtt(host.trim(), mqttPort.trim().toInt(), mqttTls, mqttClientId.trim(), baseTopic.trim())
             TransportKind.LOCAL_FOLDER -> TransportConfig.LocalFolder(checkNotNull(treeUri))
@@ -524,10 +478,6 @@ internal fun SinkForm.toAuth(): AuthConfig {
         }
     }
 }
-
-private val AuthConfig.usesSecret get() = this is AuthConfig.Basic || this is AuthConfig.Bearer
-
-private val AuthConfig.usesClientSecret get() = this is AuthConfig.Oidc && clientAuthMethod != OidcClientAuth.NONE
 
 internal fun SinkConfig.toForm(): SinkForm {
     val base = SinkForm(name = name, enabled = enabled, kind = transport.kind, format = format, mqttClientId = newMqttClientId())

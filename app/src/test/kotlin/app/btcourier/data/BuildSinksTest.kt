@@ -67,12 +67,12 @@ class BuildSinksTest {
 
     @Test
     fun `one sink per enabled config, with the transport and format each names`() = runTest {
-        sshKeys.loadOrCreate(sftpKeyAlias("sftp"))
+        sshKeys.loadOrCreate(StoredNames.keyAlias("sftp"))
         val sinks = build(
             SinkConfig("put", "Put", transport = TransportConfig.HttpPut(url())),
             SinkConfig("off", "Off", enabled = false, transport = TransportConfig.HttpPut(url())),
             SinkConfig("post", "Post", transport = TransportConfig.HttpPost(url()), format = FormatKind.PROMETHEUS),
-            SinkConfig("sftp", "Sftp", transport = TransportConfig.Sftp("sftp.invalid", 22, "u", "d", "SHA256:abc", sftpKeyAlias("sftp")), format = FormatKind.CSV),
+            SinkConfig("sftp", "Sftp", transport = TransportConfig.Sftp("sftp.invalid", 22, "u", "d", "SHA256:abc"), format = FormatKind.CSV),
             SinkConfig("mqtt", "Mqtt", transport = TransportConfig.Mqtt("mqtt.invalid", clientId = "c", baseTopic = "t")),
             SinkConfig("dir", "Dir", transport = TransportConfig.LocalFolder("content://tree/a")),
         )
@@ -101,8 +101,8 @@ class BuildSinksTest {
 
     @Test
     fun `HTTP PUT with Basic auth sends the user and the sink's own secret`() = runTest {
-        secrets.put(SinkSecrets.secret("put"), "s3cret")
-        secrets.put(SinkSecrets.secret("other"), "wrong")
+        secrets.put(StoredNames.secret("put"), "s3cret")
+        secrets.put(StoredNames.secret("other"), "wrong")
         ok()
 
         val sink = build(SinkConfig("put", "Put", transport = TransportConfig.HttpPut(url("/ingest/"), compress = false), auth = AuthConfig.Basic("courier"))).single()
@@ -116,7 +116,7 @@ class BuildSinksTest {
 
     @Test
     fun `HTTP POST with a bearer token and CSV goes to the fixed URL with the name in a header and the query`() = runTest {
-        secrets.put(SinkSecrets.secret("post"), "tok")
+        secrets.put(StoredNames.secret("post"), "tok")
         ok()
 
         val sink = build(
@@ -135,7 +135,7 @@ class BuildSinksTest {
 
     @Test
     fun `an OIDC sink sends the stored access token and refreshes it into the sink's token secret`() = runTest {
-        val tokenName = SinkSecrets.oidcTokens("o")
+        val tokenName = StoredNames.tokens("o")
         // Expired, so the first upload refreshes before sending.
         secrets.put(tokenName, TokenSet("old-access", "refresh-1", expiresAtMs = 0).encode())
         server.enqueue(
@@ -166,7 +166,7 @@ class BuildSinksTest {
             transport = TransportConfig.HttpPut(url()),
             auth = AuthConfig.Oidc(url("/auth"), "c", OidcClientAuth.SECRET_BASIC, url("/auth/token"), url("/auth/device")),
         )
-        secrets.put(SinkSecrets.oidcTokens("s"), TokenSet("a", "r", Long.MAX_VALUE).encode())
+        secrets.put(StoredNames.tokens("s"), TokenSet("a", "r", Long.MAX_VALUE).encode())
 
         val results = build(unsigned, noSecret).map { it.upload(batch) }
 
@@ -186,9 +186,9 @@ class BuildSinksTest {
 
     @Test
     fun `SFTP without a confirmed host key or without its key fails instead of connecting`() = runTest {
-        sshKeys.loadOrCreate(sftpKeyAlias("unpinned"))
-        val unpinned = SinkConfig("unpinned", "U", transport = TransportConfig.Sftp("sftp.invalid", 22, "u", "d", null, sftpKeyAlias("unpinned")))
-        val keyless = SinkConfig("keyless", "K", transport = TransportConfig.Sftp("sftp.invalid", 22, "u", "d", "SHA256:abc", sftpKeyAlias("keyless")))
+        sshKeys.loadOrCreate(StoredNames.keyAlias("unpinned"))
+        val unpinned = SinkConfig("unpinned", "U", transport = TransportConfig.Sftp("sftp.invalid", 22, "u", "d", null))
+        val keyless = SinkConfig("keyless", "K", transport = TransportConfig.Sftp("sftp.invalid", 22, "u", "d", "SHA256:abc"))
 
         val (a, b) = build(unpinned, keyless).map { it.upload(batch) }
 
@@ -212,7 +212,7 @@ class BuildSinksTest {
         ok()
         val sinks = build(
             SinkConfig("bad", "Bad", transport = TransportConfig.HttpPut("not a url")),
-            SinkConfig("sftpbasic", "S", transport = TransportConfig.Sftp("h", 22, "u", "d", "SHA256:abc", "k"), auth = AuthConfig.Basic("x")),
+            SinkConfig("sftpbasic", "S", transport = TransportConfig.Sftp("h", 22, "u", "d", "SHA256:abc"), auth = AuthConfig.Basic("x")),
             SinkConfig("dirbearer", "D", transport = TransportConfig.LocalFolder("content://tree/b"), auth = AuthConfig.Bearer),
             SinkConfig("good", "Good", transport = TransportConfig.HttpPut(url())),
         )
