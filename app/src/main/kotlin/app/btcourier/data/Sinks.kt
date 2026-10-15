@@ -40,26 +40,37 @@ fun configuredSinkIds(settings: AppSettings): Set<String> =
  * Some transports ([MqttUploadTransport]) are [java.io.Closeable]; the caller closes them after
  * the upload round.
  */
-suspend fun buildSinks(settings: AppSettings, secrets: SecretStore, env: SinkEnvironment): List<Sink> =
+suspend fun buildSinks(
+    settings: AppSettings,
+    secrets: SecretStore,
+    env: SinkEnvironment,
+): List<Sink> =
     settings.sinks.filter { it.enabled }.map { config ->
-        val transport = try {
-            buildTransport(config, SinkCredentials(secrets, env.sshKeys), env)
-        } catch (e: IllegalArgumentException) {
-            FailingTransport("invalid sink configuration: ${e.message}")
-        } catch (e: GeneralSecurityException) {
-            FailingTransport("SFTP key unavailable: ${e.javaClass.simpleName}")
-        }
+        val transport =
+            try {
+                buildTransport(config, SinkCredentials(secrets, env.sshKeys), env)
+            } catch (e: IllegalArgumentException) {
+                FailingTransport("invalid sink configuration: ${e.message}")
+            } catch (e: GeneralSecurityException) {
+                FailingTransport("SFTP key unavailable: ${e.javaClass.simpleName}")
+            }
         CompositeSink(config.id, transport, config.format.format)
     }
 
-private suspend fun buildTransport(config: SinkConfig, credentials: SinkCredentials, env: SinkEnvironment): UploadTransport {
+private suspend fun buildTransport(
+    config: SinkConfig,
+    credentials: SinkCredentials,
+    env: SinkEnvironment,
+): UploadTransport {
     val kind = config.transport.kind
     require(config.auth.kind in kind.module.allowedAuth) { "$kind does not support ${config.auth.kind} authentication" }
     return kind.module.build(config, credentials, env)
 }
 
 /** Stands in for a transport that can't be built, so the sink's uploads report why. */
-internal class FailingTransport(private val reason: String) : UploadTransport {
+internal class FailingTransport(
+    private val reason: String,
+) : UploadTransport {
     override suspend fun upload(batch: Batch): UploadResult = UploadResult.Failed(reason)
 
     override fun toString() = "FailingTransport($reason)"

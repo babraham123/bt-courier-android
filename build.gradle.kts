@@ -15,7 +15,12 @@ plugins {
 // ktlint for every project, the root included so its own build scripts are checked too. The style
 // (ktlint_official, 120 columns) comes from .editorconfig.
 allprojects {
-    apply(plugin = rootProject.libs.plugins.ktlint.get().pluginId)
+    apply(
+        plugin =
+            rootProject.libs.plugins.ktlint
+                .get()
+                .pluginId,
+    )
     extensions.configure<KtlintExtension> {
         version.set(rootProject.libs.versions.ktlint.engine)
     }

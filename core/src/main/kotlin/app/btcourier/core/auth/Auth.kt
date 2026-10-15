@@ -21,7 +21,10 @@ sealed interface Auth {
     }
 
     /** RFC 7617, encoded as UTF-8 so non-ASCII passwords survive (OkHttp defaults to Latin-1). */
-    class Basic(private val user: String, private val password: String) : Auth {
+    class Basic(
+        private val user: String,
+        private val password: String,
+    ) : Auth {
         override fun applyTo(builder: Request.Builder) {
             builder.header("Authorization", Credentials.basic(user, password, Charsets.UTF_8))
         }
@@ -33,7 +36,9 @@ sealed interface Auth {
      * RFC 6750 bearer token, read from [tokens] on every request so a refreshing source (OIDC)
      * can rotate it without callers rebuilding transports.
      */
-    class Bearer(private val tokens: TokenSource) : Auth {
+    class Bearer(
+        private val tokens: TokenSource,
+    ) : Auth {
         constructor(token: String) : this(TokenSource { token })
 
         override fun applyTo(builder: Request.Builder) {

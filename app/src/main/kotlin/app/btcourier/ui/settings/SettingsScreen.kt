@@ -18,9 +18,9 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,7 +39,11 @@ import app.btcourier.ui.BackButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit, onEditSink: (id: String?) -> Unit) {
+fun SettingsScreen(
+    viewModel: SettingsViewModel,
+    onBack: () -> Unit,
+    onEditSink: (id: String?) -> Unit,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     // Each visit starts from what is stored, not from edits abandoned on a previous visit.
     LaunchedEffect(Unit) { viewModel.reload() }
@@ -85,12 +89,24 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit, onEditSink:
                 onValueChange = { v -> viewModel.edit { it.copy(cacheCapMb = v) } },
                 label = { Text(stringResource(R.string.settings_cache_cap)) },
                 supportingText = {
-                    val text = when (state.capProblem) {
-                        null -> stringResource(R.string.settings_cache_cap_help)
-                        CacheCapProblem.NOT_A_NUMBER -> stringResource(R.string.settings_cache_cap_nan)
-                        CacheCapProblem.OUT_OF_RANGE ->
-                            stringResource(R.string.settings_cache_cap_range, MIN_CACHE_CAP_MB.toString(), MAX_CACHE_CAP_MB.toString())
-                    }
+                    val text =
+                        when (state.capProblem) {
+                            null -> {
+                                stringResource(R.string.settings_cache_cap_help)
+                            }
+
+                            CacheCapProblem.NOT_A_NUMBER -> {
+                                stringResource(R.string.settings_cache_cap_nan)
+                            }
+
+                            CacheCapProblem.OUT_OF_RANGE -> {
+                                stringResource(
+                                    R.string.settings_cache_cap_range,
+                                    MIN_CACHE_CAP_MB.toString(),
+                                    MAX_CACHE_CAP_MB.toString(),
+                                )
+                            }
+                        }
                     Text(text)
                 },
                 isError = state.capProblem != null,
@@ -100,7 +116,10 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit, onEditSink:
             )
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = viewModel::save, enabled = state.loaded) { Text(stringResource(R.string.settings_save)) }
+                Button(
+                    onClick = viewModel::save,
+                    enabled = state.loaded,
+                ) { Text(stringResource(R.string.settings_save)) }
                 if (state.saved) Text(stringResource(R.string.settings_saved))
             }
         }
@@ -108,7 +127,11 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit, onEditSink:
 }
 
 @Composable
-private fun SinkRow(sink: SinkConfig, onClick: () -> Unit, onEnabled: (Boolean) -> Unit) {
+private fun SinkRow(
+    sink: SinkConfig,
+    onClick: () -> Unit,
+    onEnabled: (Boolean) -> Unit,
+) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -119,7 +142,11 @@ private fun SinkRow(sink: SinkConfig, onClick: () -> Unit, onEnabled: (Boolean) 
         Column(Modifier.weight(1f)) {
             Text(sink.name, style = MaterialTheme.typography.bodyLarge)
             Text(
-                stringResource(R.string.status_two_values, stringResource(sink.transport.kind.module.label), stringResource(formatLabel(sink.format))),
+                stringResource(
+                    R.string.status_two_values,
+                    stringResource(sink.transport.kind.module.label),
+                    stringResource(formatLabel(sink.format)),
+                ),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -128,12 +155,19 @@ private fun SinkRow(sink: SinkConfig, onClick: () -> Unit, onEnabled: (Boolean) 
 }
 
 @Composable
-internal fun Heading(@StringRes text: Int) {
+internal fun Heading(
+    @StringRes text: Int,
+) {
     Text(stringResource(text), style = MaterialTheme.typography.titleMedium)
 }
 
 @Composable
-internal fun Toggle(@StringRes title: Int, @StringRes help: Int?, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun Toggle(
+    @StringRes title: Int,
+    @StringRes help: Int?,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
     // The whole row is the switch, so its title labels it for screen readers and the touch target.
     Row(
         Modifier
@@ -148,4 +182,3 @@ internal fun Toggle(@StringRes title: Int, @StringRes help: Int?, checked: Boole
         Switch(checked = checked, onCheckedChange = null)
     }
 }
-

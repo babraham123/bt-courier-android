@@ -96,13 +96,19 @@ sealed interface SignInState {
     data object Starting : SignInState
 
     /** Waiting for the user to approve [userCode] at [verificationUri]; polling meanwhile. */
-    data class AwaitingUser(val userCode: String, val verificationUri: String, val openUri: String) : SignInState
+    data class AwaitingUser(
+        val userCode: String,
+        val verificationUri: String,
+        val openUri: String,
+    ) : SignInState
 
     /** Tokens are stored, or staged by this visit's sign-in until the next save. */
     data object SignedIn : SignInState
 
     /** [message] names the OAuth error or network failure, never a token or secret. */
-    data class Failed(val message: String) : SignInState
+    data class Failed(
+        val message: String,
+    ) : SignInState
 }
 
 sealed interface HostKeyState {
@@ -111,9 +117,13 @@ sealed interface HostKeyState {
     data object Fetching : HostKeyState
 
     /** Shown for the user to compare with the server's own `ssh-keygen -lf`; not trusted yet. */
-    data class Presented(val fingerprint: String) : HostKeyState
+    data class Presented(
+        val fingerprint: String,
+    ) : HostKeyState
 
-    data class Failed(val message: String) : HostKeyState
+    data class Failed(
+        val message: String,
+    ) : HostKeyState
 }
 
 data class SinkEditorState(
@@ -140,7 +150,10 @@ data class SinkEditorState(
 
 /** Fetches an SSH server's host key fingerprint; a seam over [SftpUploadTransport.fetchHostKeyFingerprint]. */
 fun interface HostKeyFetcher {
-    suspend fun fetch(host: String, port: Int): String
+    suspend fun fetch(
+        host: String,
+        port: Int,
+    ): String
 }
 
 /**
@@ -164,7 +177,13 @@ class SinkEditorViewModel(
     private val work: WorkControl,
     private val http: OkHttpClient,
     private val appScope: CoroutineScope,
-    private val hostKeys: HostKeyFetcher = HostKeyFetcher { host, port -> SftpUploadTransport.fetchHostKeyFingerprint(host, port) },
+    private val hostKeys: HostKeyFetcher =
+        HostKeyFetcher {
+            host,
+            port,
+            ->
+            SftpUploadTransport.fetchHostKeyFingerprint(host, port)
+        },
     private val oidcSleep: suspend (Long) -> Unit = { delay(it) },
     private val io: CoroutineContext = Dispatchers.IO,
 ) : ViewModel() {
@@ -183,15 +202,16 @@ class SinkEditorViewModel(
             val form = stored?.toForm() ?: SinkForm()
             val held = credentials.stored(id)
             val signedIn = held.tokens && (stored?.auth as? AuthConfig.Oidc)?.signedInEndpoints == true
-            mutableState.value = SinkEditorState(
-                loaded = true,
-                id = id,
-                isNew = stored == null,
-                form = form,
-                hasStoredSecret = held.secret,
-                hasStoredClientSecret = held.clientSecret,
-                signIn = if (signedIn) SignInState.SignedIn else SignInState.SignedOut,
-            )
+            mutableState.value =
+                SinkEditorState(
+                    loaded = true,
+                    id = id,
+                    isNew = stored == null,
+                    form = form,
+                    hasStoredSecret = held.secret,
+                    hasStoredClientSecret = held.clientSecret,
+                    signIn = if (signedIn) SignInState.SignedIn else SignInState.SignedOut,
+                )
             if (form.transport.capability<TransportCapability.ClientKey>() != null) ensureKey()
         }
     }
@@ -209,9 +229,16 @@ class SinkEditorViewModel(
     fun setTransport(kind: TransportKind) {
         val next = kind.module
         edit { f ->
-            val carried = next.fields.filterIsInstance<TransportField.Text>().fold(f.transports.getValue(kind)) { values, field ->
-                if (values[field.key].isBlank() && f.values[field.key].isNotBlank()) values.with(field.key, f.values[field.key]) else values
-            }
+            val carried =
+                next.fields.filterIsInstance<TransportField.Text>().fold(f.transports.getValue(kind)) { values, field ->
+                    if (values[field.key].isBlank() &&
+                        f.values[field.key].isNotBlank()
+                    ) {
+                        values.with(field.key, f.values[field.key])
+                    } else {
+                        values
+                    }
+                }
             val auth = if (f.authKind in next.allowedAuth) f.authKind else next.allowedAuth.first()
             f.copy(kind = kind, authKind = auth).withValues(carried)
         }
@@ -219,7 +246,10 @@ class SinkEditorViewModel(
     }
 
     /** Sets one of the current kind's values; the kind may adjust others with it ([SinkTransportKind.adjust]). */
-    fun setField(key: String, value: String?) = edit { f -> f.withValues(f.transport.adjust(f.values, f.values.with(key, value))) }
+    fun setField(
+        key: String,
+        value: String?,
+    ) = edit { f -> f.withValues(f.transport.adjust(f.values, f.values.with(key, value))) }
 
     /** Ignored for kinds the transport does not allow, so the UI can't store an impossible pair. */
     fun setAuth(kind: AuthKind) {
@@ -247,11 +277,12 @@ class SinkEditorViewModel(
         val port = form.values[pin.portKey].trim().toInt()
         mutableState.update { it.copy(hostKey = HostKeyState.Fetching) }
         viewModelScope.launch {
-            val next = try {
-                HostKeyState.Presented(hostKeys.fetch(host, port))
-            } catch (e: IOException) {
-                HostKeyState.Failed(e.message ?: e.javaClass.simpleName)
-            }
+            val next =
+                try {
+                    HostKeyState.Presented(hostKeys.fetch(host, port))
+                } catch (e: IOException) {
+                    HostKeyState.Failed(e.message ?: e.javaClass.simpleName)
+                }
             mutableState.update { it.copy(hostKey = next) }
         }
     }
@@ -265,9 +296,15 @@ class SinkEditorViewModel(
     fun forgetHostKey() = setPin(null)
 
     private fun setPin(fingerprint: String?) {
-        val pin = mutableState.value.form.transport.capability<TransportCapability.HostKeyPin>() ?: return
+        val pin =
+            mutableState.value.form.transport
+                .capability<TransportCapability.HostKeyPin>() ?: return
         mutableState.update {
-            it.copy(form = it.form.withValues(it.form.values.with(pin.fingerprintKey, fingerprint)), hostKey = HostKeyState.Idle, saved = false)
+            it.copy(
+                form = it.form.withValues(it.form.values.with(pin.fingerprintKey, fingerprint)),
+                hostKey = HostKeyState.Idle,
+                saved = false,
+            )
         }
     }
 
@@ -281,53 +318,87 @@ class SinkEditorViewModel(
         val issuerProblem = validateSinkUrl(form.oidcIssuer, required = true)
         val clientIdMissing = form.oidcClientId.isBlank()
         mutableState.update {
-            it.copy(issuerProblem = issuerProblem, invalid = if (clientIdMissing) it.invalid + SinkField.OIDC_CLIENT_ID else it.invalid - SinkField.OIDC_CLIENT_ID)
+            it.copy(
+                issuerProblem = issuerProblem,
+                invalid =
+                    if (clientIdMissing) {
+                        it.invalid + SinkField.OIDC_CLIENT_ID
+                    } else {
+                        it.invalid -
+                            SinkField.OIDC_CLIENT_ID
+                    },
+            )
         }
         if (issuerProblem != null || clientIdMissing) return
 
         signInJob?.cancel()
-        signInJob = viewModelScope.launch {
-            mutableState.update { it.copy(signIn = SignInState.Starting) }
-            val next = try {
-                runSignIn(form)
-                SignInState.SignedIn
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: OidcException) {
-                SignInState.Failed(e.message.orEmpty())
-            } catch (e: IOException) {
-                SignInState.Failed("network error: ${e.message ?: e.javaClass.simpleName}")
-            } catch (e: IllegalArgumentException) {
-                SignInState.Failed(e.message.orEmpty())
+        signInJob =
+            viewModelScope.launch {
+                mutableState.update { it.copy(signIn = SignInState.Starting) }
+                val next =
+                    try {
+                        runSignIn(form)
+                        SignInState.SignedIn
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: OidcException) {
+                        SignInState.Failed(e.message.orEmpty())
+                    } catch (e: IOException) {
+                        SignInState.Failed("network error: ${e.message ?: e.javaClass.simpleName}")
+                    } catch (e: IllegalArgumentException) {
+                        SignInState.Failed(e.message.orEmpty())
+                    }
+                mutableState.update { it.copy(signIn = next) }
             }
-            mutableState.update { it.copy(signIn = next) }
-        }
     }
 
     private suspend fun runSignIn(form: SinkForm) {
         val issuer = form.oidcIssuer.trim()
         val clientId = form.oidcClientId.trim()
-        val clientSecret = when {
-            form.oidcClientAuth == OidcClientAuth.NONE -> null
-            form.oidcClientSecretInput.isNotEmpty() -> form.oidcClientSecretInput
-            else -> credentials.clientSecret(id)
-                ?: throw IllegalArgumentException("enter the client secret, or choose a public client")
-        }
+        val clientSecret =
+            when {
+                form.oidcClientAuth == OidcClientAuth.NONE -> {
+                    null
+                }
+
+                form.oidcClientSecretInput.isNotEmpty() -> {
+                    form.oidcClientSecretInput
+                }
+
+                else -> {
+                    credentials.clientSecret(id)
+                        ?: throw IllegalArgumentException("enter the client secret, or choose a public client")
+                }
+            }
         // OkHttp reads a response body on the calling thread, so every exchange runs on io.
         val provider = withContext(io) { OidcDiscovery(http).discover(issuer) }
-        val flow = DeviceAuthorization(provider, OidcClient(clientId, clientSecret, form.oidcClientAuth.core), http, sleep = oidcSleep)
+        val flow =
+            DeviceAuthorization(
+                provider,
+                OidcClient(clientId, clientSecret, form.oidcClientAuth.core),
+                http,
+                sleep = oidcSleep,
+            )
         val grant = withContext(io) { flow.start() }
         mutableState.update {
-            it.copy(signIn = SignInState.AwaitingUser(grant.userCode, grant.verificationUri, grant.verificationUriComplete ?: grant.verificationUri))
+            it.copy(
+                signIn =
+                    SignInState.AwaitingUser(
+                        grant.userCode,
+                        grant.verificationUri,
+                        grant.verificationUriComplete ?: grant.verificationUri,
+                    ),
+            )
         }
         stagedTokens = withContext(io) { flow.poll(grant) }
         mutableState.update {
             it.copy(
-                form = it.form.copy(
-                    oidcTokenEndpoint = provider.tokenEndpoint.toString(),
-                    oidcDeviceEndpoint = provider.deviceAuthorizationEndpoint.toString(),
-                    oidcSignedInAs = issuer to clientId,
-                ),
+                form =
+                    it.form.copy(
+                        oidcTokenEndpoint = provider.tokenEndpoint.toString(),
+                        oidcDeviceEndpoint = provider.deviceAuthorizationEndpoint.toString(),
+                        oidcSignedInAs = issuer to clientId,
+                    ),
             )
         }
     }
@@ -359,14 +430,28 @@ class SinkEditorViewModel(
     fun save() {
         val form = mutableState.value.form
         val transportProblems = form.transport.validate(form.values)
-        val issuerProblem = if (form.authKind == AuthKind.OIDC) validateSinkUrl(form.oidcIssuer, required = true) else null
+        val issuerProblem =
+            if (form.authKind ==
+                AuthKind.OIDC
+            ) {
+                validateSinkUrl(form.oidcIssuer, required = true)
+            } else {
+                null
+            }
         val invalid = invalidFields(form)
-        mutableState.update { it.copy(transportProblems = transportProblems, issuerProblem = issuerProblem, invalid = invalid) }
+        mutableState.update {
+            it.copy(
+                transportProblems = transportProblems,
+                issuerProblem = issuerProblem,
+                invalid = invalid,
+            )
+        }
         if (transportProblems.isNotEmpty() || issuerProblem != null || invalid.isNotEmpty()) return
 
         val config = form.toConfig()
         val staged = stagedTokens
-        val edits = CredentialEdits(form.secretInput.ifEmpty { null }, form.oidcClientSecretInput.ifEmpty { null }, staged)
+        val edits =
+            CredentialEdits(form.secretInput.ifEmpty { null }, form.oidcClientSecretInput.ifEmpty { null }, staged)
         viewModelScope.launch {
             val previous = credentials.save(config, edits, settings)
             work.forgetRetries(id)
@@ -379,7 +464,14 @@ class SinkEditorViewModel(
                     form = it.form.copy(secretInput = "", oidcClientSecretInput = ""),
                     hasStoredSecret = stored.secret,
                     hasStoredClientSecret = stored.clientSecret,
-                    signIn = if ((config.auth as? AuthConfig.Oidc)?.signedInEndpoints == true) it.signIn else SignInState.SignedOut,
+                    signIn =
+                        if ((config.auth as? AuthConfig.Oidc)?.signedInEndpoints ==
+                            true
+                        ) {
+                            it.signIn
+                        } else {
+                            SignInState.SignedOut
+                        },
                     saved = true,
                 )
             }
@@ -405,9 +497,10 @@ class SinkEditorViewModel(
     fun discard() {
         signInJob?.cancel()
         stagedTokens = null
-        val pickedTree = mutableState.value.form.transports.firstNotNullOfOrNull { (kind, values) ->
-            kind.module.capability<TransportCapability.FolderPick>()?.let { values.orNull(it.treeUriKey) }
-        }
+        val pickedTree =
+            mutableState.value.form.transports.firstNotNullOfOrNull { (kind, values) ->
+                kind.module.capability<TransportCapability.FolderPick>()?.let { values.orNull(it.treeUriKey) }
+            }
         appScope.launch { credentials.discard(id, settings, pickedTree) }
     }
 
@@ -419,40 +512,52 @@ class SinkEditorViewModel(
 
     private suspend fun ensureKey() {
         if (mutableState.value.publicKey != null) return
-        val line = try {
-            credentials.sftpPublicKey(id)
-        } catch (e: GeneralSecurityException) {
-            mutableState.update { it.copy(keyError = e.message ?: e.javaClass.simpleName) }
-            return
-        }
+        val line =
+            try {
+                credentials.sftpPublicKey(id)
+            } catch (e: GeneralSecurityException) {
+                mutableState.update { it.copy(keyError = e.message ?: e.javaClass.simpleName) }
+                return
+            }
         mutableState.update { it.copy(publicKey = line, keyError = null) }
     }
 
     private suspend fun replaceUpload() = work.uploadNow(settings.current().uploadOverCellular, replace = true)
 
-    private fun invalidFields(f: SinkForm): Set<SinkField> = buildSet {
-        if (f.name.isBlank()) add(SinkField.NAME)
-        if (f.authKind == AuthKind.BASIC && f.basicUser.isBlank()) add(SinkField.BASIC_USER)
-        if (f.authKind == AuthKind.OIDC && f.oidcClientId.isBlank()) add(SinkField.OIDC_CLIENT_ID)
-    }
+    private fun invalidFields(f: SinkForm): Set<SinkField> =
+        buildSet {
+            if (f.name.isBlank()) add(SinkField.NAME)
+            if (f.authKind == AuthKind.BASIC && f.basicUser.isBlank()) add(SinkField.BASIC_USER)
+            if (f.authKind == AuthKind.OIDC && f.oidcClientId.isBlank()) add(SinkField.OIDC_CLIENT_ID)
+        }
 
-    private fun SinkForm.toConfig() = SinkConfig(
-        id = id,
-        name = name.trim(),
-        enabled = enabled,
-        transport = transport.toConfig(values),
-        format = format,
-        auth = toAuth(),
-    )
+    private fun SinkForm.toConfig() =
+        SinkConfig(
+            id = id,
+            name = name.trim(),
+            enabled = enabled,
+            transport = transport.toConfig(values),
+            format = format,
+            auth = toAuth(),
+        )
 }
 
 /** The form's auth, constrained to what its transport allows. */
 internal fun SinkForm.toAuth(): AuthConfig {
     val kind = if (authKind in allowedAuth) authKind else AuthKind.NONE
     return when (kind) {
-        AuthKind.NONE -> AuthConfig.None
-        AuthKind.BASIC -> AuthConfig.Basic(basicUser.trim())
-        AuthKind.BEARER -> AuthConfig.Bearer
+        AuthKind.NONE -> {
+            AuthConfig.None
+        }
+
+        AuthKind.BASIC -> {
+            AuthConfig.Basic(basicUser.trim())
+        }
+
+        AuthKind.BEARER -> {
+            AuthConfig.Bearer
+        }
+
         AuthKind.OIDC -> {
             val issuer = oidcIssuer.trim()
             val clientId = oidcClientId.trim()
@@ -473,17 +578,28 @@ internal fun SinkConfig.toForm(): SinkForm {
     val base = SinkForm(name = name, enabled = enabled, kind = transport.kind, format = format)
     val withTransport = base.withValues(transport.kind.module.toValues(transport))
     return when (val a = auth) {
-        AuthConfig.None -> withTransport.copy(authKind = AuthKind.NONE)
-        is AuthConfig.Basic -> withTransport.copy(authKind = AuthKind.BASIC, basicUser = a.user)
-        AuthConfig.Bearer -> withTransport.copy(authKind = AuthKind.BEARER)
-        is AuthConfig.Oidc -> withTransport.copy(
-            authKind = AuthKind.OIDC,
-            oidcIssuer = a.issuer,
-            oidcClientId = a.clientId,
-            oidcClientAuth = a.clientAuthMethod,
-            oidcTokenEndpoint = a.tokenEndpoint,
-            oidcDeviceEndpoint = a.deviceAuthorizationEndpoint,
-            oidcSignedInAs = if (a.signedInEndpoints) a.issuer to a.clientId else null,
-        )
+        AuthConfig.None -> {
+            withTransport.copy(authKind = AuthKind.NONE)
+        }
+
+        is AuthConfig.Basic -> {
+            withTransport.copy(authKind = AuthKind.BASIC, basicUser = a.user)
+        }
+
+        AuthConfig.Bearer -> {
+            withTransport.copy(authKind = AuthKind.BEARER)
+        }
+
+        is AuthConfig.Oidc -> {
+            withTransport.copy(
+                authKind = AuthKind.OIDC,
+                oidcIssuer = a.issuer,
+                oidcClientId = a.clientId,
+                oidcClientAuth = a.clientAuthMethod,
+                oidcTokenEndpoint = a.tokenEndpoint,
+                oidcDeviceEndpoint = a.deviceAuthorizationEndpoint,
+                oidcSignedInAs = if (a.signedInEndpoints) a.issuer to a.clientId else null,
+            )
+        }
     }
 }

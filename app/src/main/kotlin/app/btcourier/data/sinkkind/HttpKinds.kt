@@ -15,10 +15,18 @@ import app.btcourier.data.TransportKind
 private const val URL = "url"
 
 private fun urlField(help: Int) =
-    TransportField.Text(URL, R.string.settings_sink_url, help, FieldKeyboard.URI, R.string.settings_sink_url_placeholder)
+    TransportField.Text(
+        URL,
+        R.string.settings_sink_url,
+        help,
+        FieldKeyboard.URI,
+        R.string.settings_sink_url_placeholder,
+    )
 
-private fun urlProblems(values: FieldValues, allowQuery: Boolean) =
-    problemsOf(URL to validateSinkUrl(values[URL], allowQuery, required = true)?.let(FieldProblem::Url))
+private fun urlProblems(
+    values: FieldValues,
+    allowQuery: Boolean,
+) = problemsOf(URL to validateSinkUrl(values[URL], allowQuery, required = true)?.let(FieldProblem::Url))
 
 /** `PUT <url>/<batch name>`; HTTP takes every auth kind. */
 object HttpPutKind : SinkTransportKind {
@@ -28,10 +36,11 @@ object HttpPutKind : SinkTransportKind {
     override val kind = TransportKind.HTTP_PUT
     override val label = R.string.transport_http_put
     override val allowedAuth = AuthKind.entries
-    override val fields = listOf(
-        urlField(R.string.settings_sink_url_help),
-        TransportField.Toggle(COMPRESS, R.string.settings_compress, R.string.settings_compress_help),
-    )
+    override val fields =
+        listOf(
+            urlField(R.string.settings_sink_url_help),
+            TransportField.Toggle(COMPRESS, R.string.settings_compress, R.string.settings_compress_help),
+        )
 
     override fun defaults() = FieldValues(COMPRESS to "true")
 
@@ -44,7 +53,11 @@ object HttpPutKind : SinkTransportKind {
 
     override fun toConfig(values: FieldValues) = TransportConfig.HttpPut(values[URL].trim(), values.flag(COMPRESS))
 
-    override suspend fun build(config: SinkConfig, credentials: SinkCredentials, env: SinkEnvironment): HttpPutUploadTransport {
+    override suspend fun build(
+        config: SinkConfig,
+        credentials: SinkCredentials,
+        env: SinkEnvironment,
+    ): HttpPutUploadTransport {
         val t = config.transport as TransportConfig.HttpPut
         return HttpPutUploadTransport(t.url.trim(), env.http, credentials.httpAuth(config, env.http), t.compress)
     }
@@ -59,15 +72,16 @@ object HttpPostKind : SinkTransportKind {
     override val kind = TransportKind.HTTP_POST
     override val label = R.string.transport_http_post
     override val allowedAuth = AuthKind.entries
-    override val fields = listOf(
-        urlField(R.string.sink_post_url_help),
-        TransportField.Choice(
-            ENCODING,
-            R.string.sink_post_encoding,
-            PostEncoding.entries.map { ChoiceOption(it.name, it.label) },
-        ),
-        TransportField.Toggle(NAME_QUERY, R.string.sink_name_query, R.string.sink_name_query_help),
-    )
+    override val fields =
+        listOf(
+            urlField(R.string.sink_post_url_help),
+            TransportField.Choice(
+                ENCODING,
+                R.string.sink_post_encoding,
+                PostEncoding.entries.map { ChoiceOption(it.name, it.label) },
+            ),
+            TransportField.Toggle(NAME_QUERY, R.string.sink_name_query, R.string.sink_name_query_help),
+        )
 
     override fun defaults() = FieldValues(ENCODING to PostEncoding.GZIP_FILE.name, NAME_QUERY to "false")
 
@@ -81,15 +95,26 @@ object HttpPostKind : SinkTransportKind {
     override fun toConfig(values: FieldValues) =
         TransportConfig.HttpPost(values[URL].trim(), PostEncoding.valueOf(values[ENCODING]), values.flag(NAME_QUERY))
 
-    override suspend fun build(config: SinkConfig, credentials: SinkCredentials, env: SinkEnvironment): HttpPostUploadTransport {
+    override suspend fun build(
+        config: SinkConfig,
+        credentials: SinkCredentials,
+        env: SinkEnvironment,
+    ): HttpPostUploadTransport {
         val t = config.transport as TransportConfig.HttpPost
-        return HttpPostUploadTransport(t.url.trim(), env.http, credentials.httpAuth(config, env.http), t.encoding.core, t.nameQuery)
+        return HttpPostUploadTransport(
+            t.url.trim(),
+            env.http,
+            credentials.httpAuth(config, env.http),
+            t.encoding.core,
+            t.nameQuery,
+        )
     }
 
     private val PostEncoding.label
-        get() = when (this) {
-            PostEncoding.GZIP_FILE -> R.string.post_encoding_gzip_file
-            PostEncoding.CONTENT_ENCODING_GZIP -> R.string.post_encoding_content_encoding
-            PostEncoding.IDENTITY -> R.string.post_encoding_identity
-        }
+        get() =
+            when (this) {
+                PostEncoding.GZIP_FILE -> R.string.post_encoding_gzip_file
+                PostEncoding.CONTENT_ENCODING_GZIP -> R.string.post_encoding_content_encoding
+                PostEncoding.IDENTITY -> R.string.post_encoding_identity
+            }
 }

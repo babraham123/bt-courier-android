@@ -28,7 +28,11 @@ enum class DeviceKind {
  * @property name the advertised name picked in the chooser, if known.
  */
 @Serializable
-data class DeviceConfig(val address: String, val kind: DeviceKind, val name: String? = null)
+data class DeviceConfig(
+    val address: String,
+    val kind: DeviceKind,
+    val name: String? = null,
+)
 
 /** The kind of the device at [address] (case-insensitive), [DeviceKind.WICAN] when unknown. */
 fun List<DeviceConfig>.kindOf(address: String): DeviceKind =
@@ -37,7 +41,10 @@ fun List<DeviceConfig>.kindOf(address: String): DeviceKind =
 /** Adds [device], replacing any entry for the same address. */
 fun List<DeviceConfig>.with(device: DeviceConfig): List<DeviceConfig> = without(device.address) + device
 
-fun List<DeviceConfig>.without(address: String): List<DeviceConfig> = filterNot { it.address.equals(address, ignoreCase = true) }
+fun List<DeviceConfig>.without(address: String): List<DeviceConfig> =
+    filterNot {
+        it.address.equals(address, ignoreCase = true)
+    }
 
 private val deviceListSerializer = ListSerializer(DeviceConfig.serializer())
 

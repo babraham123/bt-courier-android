@@ -19,7 +19,9 @@ class BtCourierApp : Application() {
         )
         Notifications.createChannels(this)
         AppGraph.scope.launch {
-            restoreSchedules(AppGraph.settings, AppGraph.pairedDevices, AppGraph.work) { DevicePresence.startObserving(this@BtCourierApp, it) }
+            restoreSchedules(AppGraph.settings, AppGraph.pairedDevices, AppGraph.work) {
+                DevicePresence.startObserving(this@BtCourierApp, it)
+            }
         }
     }
 }

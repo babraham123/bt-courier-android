@@ -56,15 +56,22 @@ class DeviceSupportTest {
     }
 
     @Test
-    fun `each kind opens its own source on a connected link and leaves the link open`() = runTest {
-        val wicanLink = FakeGattLink()
-        val ringLink = FakeGattLink(mtu = 23)
+    fun `each kind opens its own source on a connected link and leaves the link open`() =
+        runTest {
+            val wicanLink = FakeGattLink()
+            val ringLink = FakeGattLink(mtu = 23)
 
-        // Returning at all shows the WiCAN tunnel's reader stopped with the block.
-        assertInstanceOf(WicanLoggerSource::class.java, DeviceKind.WICAN.support.withSource(wicanLink, options) { it })
-        assertInstanceOf(ColmiRingSource::class.java, DeviceKind.COLMI_RING.support.withSource(ringLink, options) { it })
+            // Returning at all shows the WiCAN tunnel's reader stopped with the block.
+            assertInstanceOf(
+                WicanLoggerSource::class.java,
+                DeviceKind.WICAN.support.withSource(wicanLink, options) { it },
+            )
+            assertInstanceOf(
+                ColmiRingSource::class.java,
+                DeviceKind.COLMI_RING.support.withSource(ringLink, options) { it },
+            )
 
-        assertFalse(wicanLink.closed)
-        assertFalse(ringLink.closed)
-    }
+            assertFalse(wicanLink.closed)
+            assertFalse(ringLink.closed)
+        }
 }

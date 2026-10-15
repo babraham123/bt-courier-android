@@ -24,14 +24,21 @@ object Csv : Format {
 
     private val columns = listOf("ts", "ts_quality", "ts_raw", "param", "value")
 
-    override fun encode(lines: List<String>, sourceId: String): ByteArray {
+    override fun encode(
+        lines: List<String>,
+        sourceId: String,
+    ): ByteArray {
         val source = field(sourceId)
         val sb = StringBuilder(lines.sumOf { it.length + source.length + 2 } + 64)
         sb.append(columns.joinToString(",")).append(",file,source\n")
         forEachRow(lines) { file, row, _ ->
             if (row == null) return@forEachRow
             for (c in columns) sb.append(field(row.text(c))).append(',')
-            sb.append(field(file.orEmpty())).append(',').append(source).append('\n')
+            sb
+                .append(field(file.orEmpty()))
+                .append(',')
+                .append(source)
+                .append('\n')
         }
         return sb.toString().encodeToByteArray()
     }

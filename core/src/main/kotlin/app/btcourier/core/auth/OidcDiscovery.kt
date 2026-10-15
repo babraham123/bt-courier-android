@@ -20,7 +20,9 @@ data class OidcProviderMetadata(
 )
 
 /** Fetches `<issuer>/.well-known/openid-configuration` (OIDC Discovery §4). */
-class OidcDiscovery(private val http: OkHttpClient) {
+class OidcDiscovery(
+    private val http: OkHttpClient,
+) {
     /**
      * @param issuer the issuer URL as the user typed it, e.g. `https://auth.example.com`.
      * @throws OidcException.IssuerMismatch if the document is for another issuer.
@@ -36,7 +38,10 @@ class OidcDiscovery(private val http: OkHttpClient) {
         return parse(issuer, json)
     }
 
-    private fun parse(expectedIssuer: String, json: JsonObject): OidcProviderMetadata {
+    private fun parse(
+        expectedIssuer: String,
+        json: JsonObject,
+    ): OidcProviderMetadata {
         val issuer = json.string("issuer") ?: throw OidcException.InvalidMetadata("discovery document has no issuer")
         // Discovery requires an identical issuer; only a trailing '/' is forgiven, since users
         // type one and providers differ on whether their issuer carries it.
@@ -45,12 +50,14 @@ class OidcDiscovery(private val http: OkHttpClient) {
         }
         return OidcProviderMetadata(
             issuer = issuer,
-            tokenEndpoint = json.endpoint("token_endpoint")
-                ?: throw OidcException.InvalidMetadata("discovery document has no token_endpoint"),
-            deviceAuthorizationEndpoint = json.endpoint("device_authorization_endpoint")
-                ?: throw OidcException.InvalidMetadata(
-                    "provider has no device_authorization_endpoint; enable the device authorization grant for it",
-                ),
+            tokenEndpoint =
+                json.endpoint("token_endpoint")
+                    ?: throw OidcException.InvalidMetadata("discovery document has no token_endpoint"),
+            deviceAuthorizationEndpoint =
+                json.endpoint("device_authorization_endpoint")
+                    ?: throw OidcException.InvalidMetadata(
+                        "provider has no device_authorization_endpoint; enable the device authorization grant for it",
+                    ),
             revocationEndpoint = json.endpoint("revocation_endpoint"),
             endSessionEndpoint = json.endpoint("end_session_endpoint"),
         )

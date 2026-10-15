@@ -42,19 +42,28 @@ data class SyncStatus(
     val lastError: String? = null,
     val lastErrorAtMs: Long? = null,
 ) {
-    fun withCounters(c: StoreCounters) = copy(
-        pendingBatches = c.pendingBatches,
-        bytesStored = c.bytesStored,
-        droppedLines = c.droppedLines,
-        droppedBytes = c.droppedBytes,
-    )
+    fun withCounters(c: StoreCounters) =
+        copy(
+            pendingBatches = c.pendingBatches,
+            bytesStored = c.bytesStored,
+            droppedLines = c.droppedLines,
+            droppedBytes = c.droppedBytes,
+        )
 
-    fun withError(message: String?, atMs: Long) =
-        if (message == null) this else copy(lastError = message, lastErrorAtMs = atMs)
+    fun withError(
+        message: String?,
+        atMs: Long,
+    ) = if (message == null) this else copy(lastError = message, lastErrorAtMs = atMs)
 
     fun syncOf(address: String): DeviceSync? = lastSyncByDevice[address.uppercase()]
 
-    fun withSync(address: String, sync: DeviceSync) = copy(lastSyncByDevice = lastSyncByDevice + (address.uppercase() to sync))
+    fun withSync(
+        address: String,
+        sync: DeviceSync,
+    ) = copy(
+        lastSyncByDevice =
+            lastSyncByDevice + (address.uppercase() to sync),
+    )
 }
 
 /**
@@ -94,7 +103,10 @@ enum class SyncResultKind {
 enum class SyncStopKind { CAUGHT_UP, NO_PROGRESS, LINK_LOST, TRUNCATED, BUSY, DEVICE_ERROR }
 
 @Serializable
-data class SinkUpload(val atMs: Long, val result: UploadResultKind)
+data class SinkUpload(
+    val atMs: Long,
+    val result: UploadResultKind,
+)
 
 enum class UploadResultKind {
     /** Every pending batch reached every sink. */
@@ -118,7 +130,9 @@ interface SyncStatusRepository {
     suspend fun update(transform: (SyncStatus) -> SyncStatus)
 }
 
-class InMemorySyncStatus(initial: SyncStatus = SyncStatus()) : SyncStatusRepository {
+class InMemorySyncStatus(
+    initial: SyncStatus = SyncStatus(),
+) : SyncStatusRepository {
     private val state = MutableStateFlow(initial)
     override val status: StateFlow<SyncStatus> = state
 
@@ -131,7 +145,10 @@ class InMemorySyncStatus(initial: SyncStatus = SyncStatus()) : SyncStatusReposit
  *
  * @param legacyDevice address of the device the single-device versions synced, for the migration.
  */
-fun statusDataStore(context: Context, legacyDevice: suspend () -> String?): DataStore<Preferences> =
+fun statusDataStore(
+    context: Context,
+    legacyDevice: suspend () -> String?,
+): DataStore<Preferences> =
     PreferenceDataStoreFactory.create(migrations = listOf(LegacySyncStatusMigration(legacyDevice))) {
         context.applicationContext.preferencesDataStoreFile("status")
     }
@@ -143,11 +160,16 @@ private val statusJson = Json { ignoreUnknownKeys = true }
  * Persists [SyncStatus] as one JSON value so each update is a single atomic write and the screen
  * sees the last outcome after a process restart (workers often run while no UI process exists).
  */
-class DataStoreSyncStatus(private val store: DataStore<Preferences>) : SyncStatusRepository {
+class DataStoreSyncStatus(
+    private val store: DataStore<Preferences>,
+) : SyncStatusRepository {
     override val status: Flow<SyncStatus> = store.data.map { decodeStatus(it[STATUS_KEY]) }
 
     override suspend fun update(transform: (SyncStatus) -> SyncStatus) {
-        store.edit { it[STATUS_KEY] = statusJson.encodeToString(SyncStatus.serializer(), transform(decodeStatus(it[STATUS_KEY]))) }
+        store.edit {
+            it[STATUS_KEY] =
+                statusJson.encodeToString(SyncStatus.serializer(), transform(decodeStatus(it[STATUS_KEY])))
+        }
     }
 }
 
@@ -155,7 +177,10 @@ class DataStoreSyncStatus(private val store: DataStore<Preferences>) : SyncStatu
 private fun decodeStatus(value: String?): SyncStatus =
     value?.let { decodeOrNull(it, SyncStatus.serializer()) } ?: SyncStatus()
 
-private fun <T> decodeOrNull(value: String, serializer: KSerializer<T>): T? =
+private fun <T> decodeOrNull(
+    value: String,
+    serializer: KSerializer<T>,
+): T? =
     try {
         statusJson.decodeFromString(serializer, value)
     } catch (_: SerializationException) {
@@ -178,7 +203,8 @@ private data class LegacySync(
     val cursor: String? = null,
 )
 
-private val LEGACY_SYNC_FIELDS = setOf("lastSyncAtMs", "lastSync", "lastSyncLinesStored", "lastSyncPages", "lastSyncStop", "cursor")
+private val LEGACY_SYNC_FIELDS =
+    setOf("lastSyncAtMs", "lastSync", "lastSyncLinesStored", "lastSyncPages", "lastSyncStop", "cursor")
 
 /**
  * Status JSON with the single-device sync record moved into [SyncStatus.lastSyncByDevice] under
@@ -186,25 +212,38 @@ private val LEGACY_SYNC_FIELDS = setOf("lastSyncAtMs", "lastSync", "lastSyncLine
  * when the record holds no sync, the record is dropped. Everything else is kept. Null when [json]
  * has no legacy record or is unreadable, so there is nothing to rewrite.
  */
-internal fun migrateLegacyStatus(json: String, address: String?): String? {
+internal fun migrateLegacyStatus(
+    json: String,
+    address: String?,
+): String? {
     val fields = (decodeOrNull(json, JsonObject.serializer()) ?: return null).keys
     if (fields.none { it in LEGACY_SYNC_FIELDS }) return null
     val status = decodeOrNull(json, SyncStatus.serializer()) ?: return null
     val legacy = decodeOrNull(json, LegacySync.serializer())
     val result = legacy?.lastSync
-    val migrated = if (address == null || result == null || status.syncOf(address) != null) {
-        status
-    } else {
-        status.withSync(
-            address,
-            DeviceSync(legacy.lastSyncAtMs ?: 0, result, legacy.lastSyncLinesStored, legacy.lastSyncPages, legacy.lastSyncStop, legacy.cursor),
-        )
-    }
+    val migrated =
+        if (address == null || result == null || status.syncOf(address) != null) {
+            status
+        } else {
+            status.withSync(
+                address,
+                DeviceSync(
+                    legacy.lastSyncAtMs ?: 0,
+                    result,
+                    legacy.lastSyncLinesStored,
+                    legacy.lastSyncPages,
+                    legacy.lastSyncStop,
+                    legacy.cursor,
+                ),
+            )
+        }
     return statusJson.encodeToString(SyncStatus.serializer(), migrated)
 }
 
 /** Runs [migrateLegacyStatus] on the stored status before DataStore serves its first read. */
-class LegacySyncStatusMigration(private val legacyDevice: suspend () -> String?) : DataMigration<Preferences> {
+class LegacySyncStatusMigration(
+    private val legacyDevice: suspend () -> String?,
+) : DataMigration<Preferences> {
     override suspend fun shouldMigrate(currentData: Preferences): Boolean =
         currentData[STATUS_KEY]?.let { migrateLegacyStatus(it, null) } != null
 

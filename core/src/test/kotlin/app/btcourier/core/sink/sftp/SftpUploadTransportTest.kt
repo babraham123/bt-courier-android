@@ -58,16 +58,17 @@ class SftpUploadTransportTest {
 
     private fun startServer(port: Int = 0) {
         Files.createDirectories(inbox)
-        server = SshServer.setUpDefaultServer().apply {
-            host = "127.0.0.1"
-            this.port = port
-            keyPairProvider = KeyPairProvider.wrap(hostKey)
-            publickeyAuthenticator =
-                PublickeyAuthenticator { user, key, _ -> user == USER && KeyUtils.compareKeys(key, userKey.public) }
-            subsystemFactories = listOf(SftpSubsystemFactory())
-            fileSystemFactory = VirtualFileSystemFactory(root)
-            start()
-        }
+        server =
+            SshServer.setUpDefaultServer().apply {
+                host = "127.0.0.1"
+                this.port = port
+                keyPairProvider = KeyPairProvider.wrap(hostKey)
+                publickeyAuthenticator =
+                    PublickeyAuthenticator { user, key, _ -> user == USER && KeyUtils.compareKeys(key, userKey.public) }
+                subsystemFactories = listOf(SftpSubsystemFactory())
+                fileSystemFactory = VirtualFileSystemFactory(root)
+                start()
+            }
     }
 
     @AfterEach
@@ -98,94 +99,105 @@ class SftpUploadTransportTest {
     private fun assertInboxEmpty() = assertEquals(emptyList<Path>(), inbox.listDirectoryEntries())
 
     @Test
-    fun `uploads under the final name with exact bytes, signing with an opaque key, and leaves no part file`() = runTest {
-        assertEquals(UploadResult.Acked, transport().upload(batch))
+    fun `uploads under the final name with exact bytes, signing with an opaque key, and leaves no part file`() =
+        runTest {
+            assertEquals(UploadResult.Acked, transport().upload(batch))
 
-        assertArrayEquals(batch.bytes, inbox.resolve(batch.name).readBytes())
-        assertEquals(listOf(batch.name), inbox.listDirectoryEntries().map { it.name })
-    }
-
-    @Test
-    fun `uploads a batch larger than one SFTP write intact`() = runTest {
-        val big = batch.copy(bytes = ByteArray(1_000_000).also { SecureRandom().nextBytes(it) })
-        assertEquals(UploadResult.Acked, transport().upload(big))
-        assertArrayEquals(big.bytes, inbox.resolve(big.name).readBytes())
-    }
+            assertArrayEquals(batch.bytes, inbox.resolve(batch.name).readBytes())
+            assertEquals(listOf(batch.name), inbox.listDirectoryEntries().map { it.name })
+        }
 
     @Test
-    fun `an absolute remote directory with a trailing slash works`() = runTest {
-        assertEquals(UploadResult.Acked, transport(remoteDir = "/inbox/").upload(batch))
-        assertArrayEquals(batch.bytes, inbox.resolve(batch.name).readBytes())
-    }
+    fun `uploads a batch larger than one SFTP write intact`() =
+        runTest {
+            val big = batch.copy(bytes = ByteArray(1_000_000).also { SecureRandom().nextBytes(it) })
+            assertEquals(UploadResult.Acked, transport().upload(big))
+            assertArrayEquals(big.bytes, inbox.resolve(big.name).readBytes())
+        }
 
     @Test
-    fun `re-uploading an identical object acks without rewriting it`() = runTest {
-        val sftp = transport()
-        assertEquals(UploadResult.Acked, sftp.upload(batch))
-        val target = inbox.resolve(batch.name)
-        val old = FileTime.fromMillis(1_000_000_000_000)
-        Files.setLastModifiedTime(target, old)
-
-        assertEquals(UploadResult.Acked, sftp.upload(batch))
-        assertEquals(old, Files.getLastModifiedTime(target), "object was rewritten")
-        assertEquals(listOf(batch.name), inbox.listDirectoryEntries().map { it.name })
-    }
+    fun `an absolute remote directory with a trailing slash works`() =
+        runTest {
+            assertEquals(UploadResult.Acked, transport(remoteDir = "/inbox/").upload(batch))
+            assertArrayEquals(batch.bytes, inbox.resolve(batch.name).readBytes())
+        }
 
     @Test
-    fun `an object of a different length under the same name is replaced`() = runTest {
-        Files.write(inbox.resolve(batch.name), byteArrayOf(1, 2, 3))
-        assertEquals(UploadResult.Acked, transport().upload(batch))
-        assertArrayEquals(batch.bytes, inbox.resolve(batch.name).readBytes())
-        assertEquals(listOf(batch.name), inbox.listDirectoryEntries().map { it.name })
-    }
+    fun `re-uploading an identical object acks without rewriting it`() =
+        runTest {
+            val sftp = transport()
+            assertEquals(UploadResult.Acked, sftp.upload(batch))
+            val target = inbox.resolve(batch.name)
+            val old = FileTime.fromMillis(1_000_000_000_000)
+            Files.setLastModifiedTime(target, old)
+
+            assertEquals(UploadResult.Acked, sftp.upload(batch))
+            assertEquals(old, Files.getLastModifiedTime(target), "object was rewritten")
+            assertEquals(listOf(batch.name), inbox.listDirectoryEntries().map { it.name })
+        }
 
     @Test
-    fun `a host key not matching the pin fails and writes nothing`() = runTest {
-        val other = KeyUtils.getFingerPrint(ecKeyPair().public)
-        val result = failed(transport(hostKeyFingerprint = other).upload(batch))
-
-        assertTrue(KeyUtils.getFingerPrint(hostKey.public) in result.reason, result.reason)
-        assertInboxEmpty()
-    }
-
-    @Test
-    fun `a user key the server does not accept fails`() = runTest {
-        val stranger = ecKeyPair()
-        failed(transport(privateKey = stranger.private, publicKey = stranger.public).upload(batch))
-        assertInboxEmpty()
-    }
+    fun `an object of a different length under the same name is replaced`() =
+        runTest {
+            Files.write(inbox.resolve(batch.name), byteArrayOf(1, 2, 3))
+            assertEquals(UploadResult.Acked, transport().upload(batch))
+            assertArrayEquals(batch.bytes, inbox.resolve(batch.name).readBytes())
+            assertEquals(listOf(batch.name), inbox.listDirectoryEntries().map { it.name })
+        }
 
     @Test
-    fun `a missing remote directory fails`() = runTest {
-        failed(transport(remoteDir = "nope").upload(batch))
-        assertFalse(root.resolve("nope").exists())
-    }
+    fun `a host key not matching the pin fails and writes nothing`() =
+        runTest {
+            val other = KeyUtils.getFingerPrint(ecKeyPair().public)
+            val result = failed(transport(hostKeyFingerprint = other).upload(batch))
+
+            assertTrue(KeyUtils.getFingerPrint(hostKey.public) in result.reason, result.reason)
+            assertInboxEmpty()
+        }
 
     @Test
-    fun `an unreachable port is retried without a hint`() = runTest {
-        val closedPort = ServerSocket(0).use { it.localPort }
-        assertNull(retry(transport(port = closedPort).upload(batch)).retryAfterMs)
-    }
+    fun `a user key the server does not accept fails`() =
+        runTest {
+            val stranger = ecKeyPair()
+            failed(transport(privateKey = stranger.private, publicKey = stranger.public).upload(batch))
+            assertInboxEmpty()
+        }
 
     @Test
-    fun `a server that went away and came back is retried, then acked`() = runTest {
-        val port = server.port
-        val sftp = transport(port = port)
-        server.stop(true)
-        retry(sftp.upload(batch))
-
-        startServer(port)
-        assertEquals(UploadResult.Acked, sftp.upload(batch))
-    }
+    fun `a missing remote directory fails`() =
+        runTest {
+            failed(transport(remoteDir = "nope").upload(batch))
+            assertFalse(root.resolve("nope").exists())
+        }
 
     @Test
-    fun `fetchHostKeyFingerprint returns the OpenSSH SHA256 fingerprint of the server key`() = runTest {
-        val fingerprint = SftpUploadTransport.fetchHostKeyFingerprint("127.0.0.1", server.port)
+    fun `an unreachable port is retried without a hint`() =
+        runTest {
+            val closedPort = ServerSocket(0).use { it.localPort }
+            assertNull(retry(transport(port = closedPort).upload(batch)).retryAfterMs)
+        }
 
-        assertEquals(KeyUtils.getFingerPrint(hostKey.public), fingerprint)
-        assertTrue(fingerprint.startsWith("SHA256:"))
-        assertEquals(UploadResult.Acked, transport(hostKeyFingerprint = fingerprint).upload(batch))
-    }
+    @Test
+    fun `a server that went away and came back is retried, then acked`() =
+        runTest {
+            val port = server.port
+            val sftp = transport(port = port)
+            server.stop(true)
+            retry(sftp.upload(batch))
+
+            startServer(port)
+            assertEquals(UploadResult.Acked, sftp.upload(batch))
+        }
+
+    @Test
+    fun `fetchHostKeyFingerprint returns the OpenSSH SHA256 fingerprint of the server key`() =
+        runTest {
+            val fingerprint = SftpUploadTransport.fetchHostKeyFingerprint("127.0.0.1", server.port)
+
+            assertEquals(KeyUtils.getFingerPrint(hostKey.public), fingerprint)
+            assertTrue(fingerprint.startsWith("SHA256:"))
+            assertEquals(UploadResult.Acked, transport(hostKeyFingerprint = fingerprint).upload(batch))
+        }
 
     @Test
     fun `toString leaves out the keys`() {
@@ -216,7 +228,10 @@ class SftpUploadTransportTest {
  * the provider that owns it can sign. Like `AndroidKeyStoreECPrivateKey`, it is an [ECKey] but
  * not an [ECPrivateKey], and has no encoding.
  */
-class OpaqueEcPrivateKey(internal val real: ECPrivateKey) : PrivateKey, ECKey {
+class OpaqueEcPrivateKey(
+    internal val real: ECPrivateKey,
+) : PrivateKey,
+    ECKey {
     override fun getAlgorithm() = "EC"
 
     override fun getFormat(): String? = null
@@ -232,7 +247,11 @@ object OpaqueKeyProvider : Provider("OpaqueTestKeyStore", "1.0", "signs with Opa
     init {
         putService(
             object : Service(
-                this, "Signature", "SHA256withECDSA", OpaqueSigner::class.java.name, null,
+                this,
+                "Signature",
+                "SHA256withECDSA",
+                OpaqueSigner::class.java.name,
+                null,
                 mapOf("SupportedKeyClasses" to OpaqueEcPrivateKey::class.java.name),
             ) {
                 override fun newInstance(constructorParameter: Any?) = OpaqueSigner()
@@ -253,14 +272,21 @@ class OpaqueSigner : SignatureSpi() {
 
     override fun engineUpdate(b: Byte) = delegate!!.update(b)
 
-    override fun engineUpdate(b: ByteArray, off: Int, len: Int) = delegate!!.update(b, off, len)
+    override fun engineUpdate(
+        b: ByteArray,
+        off: Int,
+        len: Int,
+    ) = delegate!!.update(b, off, len)
 
     override fun engineSign(): ByteArray = delegate!!.sign()
 
     override fun engineVerify(sigBytes: ByteArray) = throw UnsupportedOperationException()
 
     @Deprecated("JCA legacy API")
-    override fun engineSetParameter(param: String?, value: Any?) = throw UnsupportedOperationException()
+    override fun engineSetParameter(
+        param: String?,
+        value: Any?,
+    ) = throw UnsupportedOperationException()
 
     @Deprecated("JCA legacy API")
     override fun engineGetParameter(param: String?) = throw UnsupportedOperationException()

@@ -22,10 +22,14 @@ import kotlinx.serialization.json.put
  */
 sealed interface StoredLine {
     /** A `{"_file":"<name>"}` line opening [file]. */
-    data class Marker(val file: String) : StoredLine
+    data class Marker(
+        val file: String,
+    ) : StoredLine
 
     /** Any other JSON object; data rows are `{"ts","param","value",...}`. */
-    data class Row(val fields: JsonObject) : StoredLine
+    data class Row(
+        val fields: JsonObject,
+    ) : StoredLine
 
     /** Not a JSON object: blank, garbage, a cut-off line, an array or a bare value. */
     data object Other : StoredLine

@@ -29,7 +29,11 @@ fun interface FolderGrants {
 }
 
 /** Which credentials are stored for a sink; never their values. */
-data class StoredCredentials(val secret: Boolean, val clientSecret: Boolean, val tokens: Boolean)
+data class StoredCredentials(
+    val secret: Boolean,
+    val clientSecret: Boolean,
+    val tokens: Boolean,
+)
 
 /**
  * Credentials typed or obtained during one editor visit, for [SinkCredentials.save]; null keeps
@@ -72,11 +76,12 @@ class SinkCredentials(
     private val folders: FolderGrants = FolderGrants {},
     private val io: CoroutineContext = Dispatchers.IO,
 ) {
-    suspend fun stored(sinkId: String) = StoredCredentials(
-        secret = secrets.get(Names.secret(sinkId)) != null,
-        clientSecret = secrets.get(Names.clientSecret(sinkId)) != null,
-        tokens = secrets.get(Names.tokens(sinkId)) != null,
-    )
+    suspend fun stored(sinkId: String) =
+        StoredCredentials(
+            secret = secrets.get(Names.secret(sinkId)) != null,
+            clientSecret = secrets.get(Names.clientSecret(sinkId)) != null,
+            tokens = secrets.get(Names.tokens(sinkId)) != null,
+        )
 
     /** The stored OIDC client secret, for a sign-in when none was typed. */
     suspend fun clientSecret(sinkId: String): String? = secrets.get(Names.clientSecret(sinkId))
@@ -88,12 +93,20 @@ class SinkCredentials(
      *
      * @return the config previously saved under this id, null for a new sink.
      */
-    suspend fun save(config: SinkConfig, edits: CredentialEdits, settings: SettingsRepository): SinkConfig? {
+    suspend fun save(
+        config: SinkConfig,
+        edits: CredentialEdits,
+        settings: SettingsRepository,
+    ): SinkConfig? {
         val id = config.id
         writeOrForget(Names.secret(id), config.auth.usesSecret, edits.secret)
         writeOrForget(Names.clientSecret(id), config.auth.usesClientSecret, edits.clientSecret)
         // Tokens from another issuer or client must not be offered to this one.
-        writeOrForget(Names.tokens(id), (config.auth as? AuthConfig.Oidc)?.signedInEndpoints == true, edits.tokens?.encode())
+        writeOrForget(
+            Names.tokens(id),
+            (config.auth as? AuthConfig.Oidc)?.signedInEndpoints == true,
+            edits.tokens?.encode(),
+        )
 
         var previous: SinkConfig? = null
         var saved = emptyList<SinkConfig>()
@@ -116,7 +129,10 @@ class SinkCredentials(
      *
      * @return whether tokens were deleted, i.e. whether uploads need restarting.
      */
-    suspend fun signOut(sinkId: String, stopUploads: () -> Unit): Boolean {
+    suspend fun signOut(
+        sinkId: String,
+        stopUploads: () -> Unit,
+    ): Boolean {
         val name = Names.tokens(sinkId)
         if (secrets.get(name) == null) return false
         stopUploads()
@@ -140,7 +156,10 @@ class SinkCredentials(
      * builds the sink after its credentials are gone; an upload already running fails its batches
      * for this sink, which no longer matters since the store stops waiting for it.
      */
-    suspend fun delete(sinkId: String, settings: SettingsRepository) {
+    suspend fun delete(
+        sinkId: String,
+        settings: SettingsRepository,
+    ) {
         var removed: SinkConfig? = null
         var remaining = emptyList<SinkConfig>()
         settings.update { s ->
@@ -157,7 +176,11 @@ class SinkCredentials(
      * not in [settings] (the SFTP key is created before the first save), and the grant on
      * [pickedTree] if no saved sink points at it.
      */
-    suspend fun discard(sinkId: String, settings: SettingsRepository, pickedTree: String?) {
+    suspend fun discard(
+        sinkId: String,
+        settings: SettingsRepository,
+        pickedTree: String?,
+    ) {
         val sinks = settings.current().sinks
         if (sinks.none { it.id == sinkId }) forget(sinkId)
         releaseUnused(pickedTree, sinks)
@@ -168,12 +191,16 @@ class SinkCredentials(
      * server's refusal surfaces; an OIDC sink that can't refresh fails each request asking to sign
      * in again.
      */
-    suspend fun httpAuth(config: SinkConfig, http: OkHttpClient): Auth = when (val auth = config.auth) {
-        AuthConfig.None -> Auth.None
-        is AuthConfig.Basic -> Auth.Basic(auth.user, secrets.get(Names.secret(config.id)).orEmpty())
-        AuthConfig.Bearer -> Auth.Bearer(secrets.get(Names.secret(config.id)).orEmpty())
-        is AuthConfig.Oidc -> Auth.Bearer(oidcTokens(config.id, auth, http))
-    }
+    suspend fun httpAuth(
+        config: SinkConfig,
+        http: OkHttpClient,
+    ): Auth =
+        when (val auth = config.auth) {
+            AuthConfig.None -> Auth.None
+            is AuthConfig.Basic -> Auth.Basic(auth.user, secrets.get(Names.secret(config.id)).orEmpty())
+            AuthConfig.Bearer -> Auth.Bearer(secrets.get(Names.secret(config.id)).orEmpty())
+            is AuthConfig.Oidc -> Auth.Bearer(oidcTokens(config.id, auth, http))
+        }
 
     /** The broker credentials of an MQTT sink with Basic auth; null for an anonymous one. */
     suspend fun mqttCredentials(config: SinkConfig): MqttCredentials? =
@@ -200,7 +227,11 @@ class SinkCredentials(
     /** Deletes the legacy secret, which no sink uses once the migration is done. */
     suspend fun dropLegacySecret() = secrets.put(Names.LEGACY_SECRET, null)
 
-    private suspend fun writeOrForget(name: String, used: Boolean, typed: String?) {
+    private suspend fun writeOrForget(
+        name: String,
+        used: Boolean,
+        typed: String?,
+    ) {
         when {
             !used -> secrets.put(name, null)
             typed != null -> secrets.put(name, typed)
@@ -213,17 +244,35 @@ class SinkCredentials(
     }
 
     // A grant belongs to the tree, not the sink: two sinks may share a folder.
-    private suspend fun releaseUnused(treeUri: String?, sinks: List<SinkConfig>) {
+    private suspend fun releaseUnused(
+        treeUri: String?,
+        sinks: List<SinkConfig>,
+    ) {
         if (treeUri == null || sinks.any { it.treeUri == treeUri }) return
         withContext(io) { folders.release(treeUri) }
     }
 
-    private suspend fun oidcTokens(id: String, auth: AuthConfig.Oidc, http: OkHttpClient): TokenSource {
+    private suspend fun oidcTokens(
+        id: String,
+        auth: AuthConfig.Oidc,
+        http: OkHttpClient,
+    ): TokenSource {
         val tokenEndpoint = auth.tokenEndpoint
         val deviceEndpoint = auth.deviceAuthorizationEndpoint
         if (tokenEndpoint == null || deviceEndpoint == null) return notSignedIn("not signed in yet")
-        val clientSecret = if (auth.clientAuthMethod == OidcClientAuth.NONE) null else secrets.get(Names.clientSecret(id))
-        if (auth.clientAuthMethod != OidcClientAuth.NONE && clientSecret == null) return notSignedIn("the client secret is missing")
+        val clientSecret =
+            if (auth.clientAuthMethod ==
+                OidcClientAuth.NONE
+            ) {
+                null
+            } else {
+                secrets.get(Names.clientSecret(id))
+            }
+        if (auth.clientAuthMethod != OidcClientAuth.NONE &&
+            clientSecret == null
+        ) {
+            return notSignedIn("the client secret is missing")
+        }
         val provider = OidcProviderMetadata(auth.issuer, tokenEndpoint.toHttpUrl(), deviceEndpoint.toHttpUrl())
         val client = OidcClient(auth.clientId, clientSecret, auth.clientAuthMethod.core)
         return RefreshingTokenSource(provider, client, http, SecretTokenStore(secrets, Names.tokens(id)))
@@ -277,7 +326,10 @@ private val SinkConfig.treeUri get() = (transport as? TransportConfig.LocalFolde
  * slot empty is one that raced a sign-out (WorkManager cancellation is cooperative, a refresh in
  * flight still completes) and is dropped rather than resurrecting the deleted credentials.
  */
-private class SecretTokenStore(private val secrets: SecretStore, private val name: String) : TokenStore {
+private class SecretTokenStore(
+    private val secrets: SecretStore,
+    private val name: String,
+) : TokenStore {
     override fun load(): TokenSet? {
         val json = runBlocking { secrets.get(name) } ?: return null
         return try {
@@ -287,10 +339,11 @@ private class SecretTokenStore(private val secrets: SecretStore, private val nam
         }
     }
 
-    override fun save(tokens: TokenSet?) = runBlocking {
-        if (tokens != null && secrets.get(name) == null) return@runBlocking
-        secrets.put(name, tokens?.encode())
-    }
+    override fun save(tokens: TokenSet?) =
+        runBlocking {
+            if (tokens != null && secrets.get(name) == null) return@runBlocking
+            secrets.put(name, tokens?.encode())
+        }
 
     override fun toString() = "SecretTokenStore(***)"
 }

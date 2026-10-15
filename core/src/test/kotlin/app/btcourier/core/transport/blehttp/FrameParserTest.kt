@@ -22,9 +22,10 @@ class FrameParserTest {
         val parser = FrameParser()
         val cut1 = a.encode().size - 5
         val cut2 = a.encode().size + b.encode().size + 3
-        val out = parser.feed(stream.copyOfRange(0, cut1)) +
-            parser.feed(stream.copyOfRange(cut1, cut2)) +
-            parser.feed(stream.copyOfRange(cut2, stream.size))
+        val out =
+            parser.feed(stream.copyOfRange(0, cut1)) +
+                parser.feed(stream.copyOfRange(cut1, cut2)) +
+                parser.feed(stream.copyOfRange(cut2, stream.size))
         assertEquals(listOf(a, b, c), out)
     }
 

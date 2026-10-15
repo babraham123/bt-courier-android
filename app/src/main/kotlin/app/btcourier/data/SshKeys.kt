@@ -53,12 +53,18 @@ class AndroidKeystoreSshKeys : SshKeys {
     }
 
     private fun generate(alias: String): KeyPair {
-        val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
-            .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-            .setDigests(KeyProperties.DIGEST_SHA256)
-            .setUserAuthenticationRequired(false)
-            .build()
-        return KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, KEYSTORE).apply { initialize(spec) }.generateKeyPair()
+        val spec =
+            KeyGenParameterSpec
+                .Builder(alias, KeyProperties.PURPOSE_SIGN)
+                .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                .setDigests(KeyProperties.DIGEST_SHA256)
+                .setUserAuthenticationRequired(false)
+                .build()
+        return KeyPairGenerator
+            .getInstance(KeyProperties.KEY_ALGORITHM_EC, KEYSTORE)
+            .apply {
+                initialize(spec)
+            }.generateKeyPair()
     }
 
     private companion object {
@@ -73,16 +79,21 @@ class AndroidKeystoreSshKeys : SshKeys {
  *
  * @throws IllegalArgumentException for a key on another curve.
  */
-fun openSshPublicKey(key: ECPublicKey, comment: String? = null): String {
+fun openSshPublicKey(
+    key: ECPublicKey,
+    comment: String? = null,
+): String {
     require(key.params.curve.field.fieldSize == P256_BYTES * 8) { "only P-256 keys are supported" }
     val point = byteArrayOf(0x04) + fixedWidth(key.w.affineX) + fixedWidth(key.w.affineY)
-    val blob = ByteArrayOutputStream().also { bytes ->
-        DataOutputStream(bytes).use { out ->
-            out.sshString(KEY_TYPE.toByteArray(Charsets.US_ASCII))
-            out.sshString(CURVE.toByteArray(Charsets.US_ASCII))
-            out.sshString(point)
-        }
-    }.toByteArray()
+    val blob =
+        ByteArrayOutputStream()
+            .also { bytes ->
+                DataOutputStream(bytes).use { out ->
+                    out.sshString(KEY_TYPE.toByteArray(Charsets.US_ASCII))
+                    out.sshString(CURVE.toByteArray(Charsets.US_ASCII))
+                    out.sshString(point)
+                }
+            }.toByteArray()
     val line = KEY_TYPE + " " + Base64.getEncoder().encodeToString(blob)
     return if (comment.isNullOrBlank()) line else "$line $comment"
 }

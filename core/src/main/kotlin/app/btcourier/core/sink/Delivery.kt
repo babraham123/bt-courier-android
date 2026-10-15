@@ -24,8 +24,15 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * @param clock wall clock for the schedule.
  */
-class Delivery(private val store: Store, private val clock: () -> Long = System::currentTimeMillis) {
-    private class Backoff(val streak: Int, val nextAttemptAtMs: Long, val reason: String)
+class Delivery(
+    private val store: Store,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
+    private class Backoff(
+        val streak: Int,
+        val nextAttemptAtMs: Long,
+        val reason: String,
+    )
 
     private val backoffs = ConcurrentHashMap<String, Backoff>()
 
@@ -33,7 +40,11 @@ class Delivery(private val store: Store, private val clock: () -> Long = System:
     suspend fun deliverPending(sink: Sink): DeliveryResult {
         var batch = store.pending(sink.id, limit = 1).firstOrNull() ?: return DeliveryResult.Delivered
         backoffs[sink.id]?.let { waiting ->
-            if (waiting.nextAttemptAtMs > clock()) return DeliveryResult.Deferred(waiting.reason, waiting.nextAttemptAtMs)
+            if (waiting.nextAttemptAtMs >
+                clock()
+            ) {
+                return DeliveryResult.Deferred(waiting.reason, waiting.nextAttemptAtMs)
+            }
         }
         while (true) {
             val result = sink.upload(batch)
@@ -52,7 +63,10 @@ class Delivery(private val store: Store, private val clock: () -> Long = System:
         backoffs.remove(sinkId)
     }
 
-    private fun record(sinkId: String, result: UploadResult) {
+    private fun record(
+        sinkId: String,
+        result: UploadResult,
+    ) {
         if (result !is UploadResult.Retry) {
             backoffs.remove(sinkId)
             return
@@ -93,12 +107,17 @@ sealed interface DeliveryResult {
     data object Delivered : DeliveryResult
 
     /** A batch was sent and the sink answered [result] (Retry or Failed); it and later batches stay pending. */
-    data class Stopped(val result: UploadResult) : DeliveryResult
+    data class Stopped(
+        val result: UploadResult,
+    ) : DeliveryResult
 
     /**
      * Nothing was sent: the sink is waiting out its schedule after [reason] and is due at
      * [dueAtMs] (the delivery's clock). Not an attempt, so a caller counting attempts must not
      * count it, and should come back at [dueAtMs] rather than on its own back-off.
      */
-    data class Deferred(val reason: String, val dueAtMs: Long) : DeliveryResult
+    data class Deferred(
+        val reason: String,
+        val dueAtMs: Long,
+    ) : DeliveryResult
 }

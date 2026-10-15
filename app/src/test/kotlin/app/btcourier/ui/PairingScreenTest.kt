@@ -19,11 +19,15 @@ import org.junit.Test
 class PairingScreenTest : ScreenTest() {
     private val devices = FakePairedDevices()
     private var probeResult: ProbeResult = ProbeResult.Busy
-    private val platform = object : PairingPlatform {
-        override fun observePresence(address: String) = true
+    private val platform =
+        object : PairingPlatform {
+            override fun observePresence(address: String) = true
 
-        override suspend fun probe(address: String, kind: DeviceKind) = probeResult
-    }
+            override suspend fun probe(
+                address: String,
+                kind: DeviceKind,
+            ) = probeResult
+        }
     private val vm = PairingViewModel(devices, platform)
     private var done = 0
 

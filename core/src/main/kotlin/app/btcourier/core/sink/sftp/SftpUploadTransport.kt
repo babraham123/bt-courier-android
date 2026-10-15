@@ -93,10 +93,14 @@ class SftpUploadTransport(
         }
     }
 
-    private fun put(sftp: SFTPClient, batch: Batch): UploadResult {
+    private fun put(
+        sftp: SFTPClient,
+        batch: Batch,
+    ): UploadResult {
         if (remoteDir.isNotEmpty()) {
-            val dir = sftp.statExistence(remoteDir)
-                ?: return UploadResult.Failed("remote directory $remoteDir does not exist")
+            val dir =
+                sftp.statExistence(remoteDir)
+                    ?: return UploadResult.Failed("remote directory $remoteDir does not exist")
             if (dir.type != FileMode.Type.DIRECTORY) {
                 return UploadResult.Failed("remote path $remoteDir is not a directory")
             }
@@ -121,7 +125,10 @@ class SftpUploadTransport(
 
     // sshj sends each write() as one SSH_FXP_WRITE; servers cap those (OpenSSH at 256 KiB), so
     // send standard-size chunks, pipelined.
-    private fun write(file: RemoteFile, bytes: ByteArray) {
+    private fun write(
+        file: RemoteFile,
+        bytes: ByteArray,
+    ) {
         file.RemoteFileOutputStream(0, MAX_UNCONFIRMED_WRITES).use { out ->
             var off = 0
             while (off < bytes.size) {
@@ -132,24 +139,40 @@ class SftpUploadTransport(
         }
     }
 
-    private fun remotePath(name: String) = when {
-        remoteDir.isEmpty() -> name
-        remoteDir.endsWith('/') -> remoteDir + name
-        else -> "$remoteDir/$name"
-    }
+    private fun remotePath(name: String) =
+        when {
+            remoteDir.isEmpty() -> name
+            remoteDir.endsWith('/') -> remoteDir + name
+            else -> "$remoteDir/$name"
+        }
 
-    private fun classify(e: Exception, name: String, verifier: PinnedHostKey): UploadResult {
+    private fun classify(
+        e: Exception,
+        name: String,
+        verifier: PinnedHostKey,
+    ): UploadResult {
         val presented = verifier.presented
         return when {
-            presented != null && presented != pin ->
+            presented != null && presented != pin -> {
                 UploadResult.Failed("host key of $host:$port is $presented, not the pinned $pin")
+            }
+
             // Checked before UserAuthException, which sshj also raises when local signing fails.
-            e.causes().any { it is GeneralSecurityException } ->
+            e.causes().any { it is GeneralSecurityException } -> {
                 UploadResult.Failed("client key unusable: ${e.causes().first { it is GeneralSecurityException }}")
-            e is UserAuthException -> UploadResult.Failed("server rejected key authentication for user $username")
-            e is SFTPException && e.statusCode in PERMANENT_SFTP_STATUS ->
+            }
+
+            e is UserAuthException -> {
+                UploadResult.Failed("server rejected key authentication for user $username")
+            }
+
+            e is SFTPException && e.statusCode in PERMANENT_SFTP_STATUS -> {
                 UploadResult.Failed("SFTP ${e.statusCode} for $name: ${e.message}")
-            else -> UploadResult.Retry("${e.javaClass.simpleName} for $name: ${e.message}")
+            }
+
+            else -> {
+                UploadResult.Retry("${e.javaClass.simpleName} for $name: ${e.message}")
+            }
         }
     }
 
@@ -160,18 +183,27 @@ class SftpUploadTransport(
         "SftpUploadTransport(host=$host, port=$port, username=$username, remoteDir=$remoteDir, hostKey=$pin)"
 
     /** Accepts exactly the host key whose fingerprint equals [pin]; records what it was shown. */
-    private class PinnedHostKey(private val pin: String?) : HostKeyVerifier {
+    private class PinnedHostKey(
+        private val pin: String?,
+    ) : HostKeyVerifier {
         @Volatile
         var presented: String? = null
             private set
 
-        override fun verify(hostname: String, port: Int, key: PublicKey): Boolean {
+        override fun verify(
+            hostname: String,
+            port: Int,
+            key: PublicKey,
+        ): Boolean {
             val fingerprint = fingerprintOf(key)
             presented = fingerprint
             return fingerprint == pin
         }
 
-        override fun findExistingAlgorithms(hostname: String, port: Int): List<String> = emptyList()
+        override fun findExistingAlgorithms(
+            hostname: String,
+            port: Int,
+        ): List<String> = emptyList()
     }
 
     companion object {
@@ -185,9 +217,10 @@ class SftpUploadTransport(
 
         private val config: Config by lazy {
             DefaultConfig().apply {
-                keyAlgorithms = keyAlgorithms.map {
-                    if (it.name == ProviderNeutralEcdsa.keyAlgorithm.name) ProviderNeutralEcdsa.keyAlgorithm else it
-                }
+                keyAlgorithms =
+                    keyAlgorithms.map {
+                        if (it.name == ProviderNeutralEcdsa.keyAlgorithm.name) ProviderNeutralEcdsa.keyAlgorithm else it
+                    }
             }
         }
 
@@ -203,16 +236,17 @@ class SftpUploadTransport(
             port: Int = 22,
             connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
             ioTimeoutMs: Int = DEFAULT_IO_TIMEOUT_MS,
-        ): String = runInterruptible(Dispatchers.IO) {
-            val verifier = PinnedHostKey(pin = null)
-            try {
-                openSession(host, port, verifier, connectTimeoutMs, ioTimeoutMs).close()
-            } catch (e: IOException) {
-                // Rejecting every key aborts key exchange right after the key is shown.
-                verifier.presented ?: throw e
+        ): String =
+            runInterruptible(Dispatchers.IO) {
+                val verifier = PinnedHostKey(pin = null)
+                try {
+                    openSession(host, port, verifier, connectTimeoutMs, ioTimeoutMs).close()
+                } catch (e: IOException) {
+                    // Rejecting every key aborts key exchange right after the key is shown.
+                    verifier.presented ?: throw e
+                }
+                verifier.presented ?: throw IOException("$host:$port presented no host key")
             }
-            verifier.presented ?: throw IOException("$host:$port presented no host key")
-        }
 
         /** OpenSSH `SHA256:` fingerprint: unpadded base64 of SHA-256 over the SSH key blob. */
         fun fingerprintOf(key: PublicKey): String {
@@ -230,18 +264,23 @@ class SftpUploadTransport(
         }
 
         // Closes the client if connecting throws, since the caller never gets it to close.
-        private fun openSession(host: String, port: Int, verifier: HostKeyVerifier, connectTimeoutMs: Int, ioTimeoutMs: Int) =
-            SSHClient(config).apply {
-                connectTimeout = connectTimeoutMs
-                timeout = ioTimeoutMs
-                transport.timeoutMs = ioTimeoutMs
-                addHostKeyVerifier(verifier)
-                try {
-                    connect(host, port)
-                } catch (e: Throwable) {
-                    runCatching { close() }
-                    throw e
-                }
+        private fun openSession(
+            host: String,
+            port: Int,
+            verifier: HostKeyVerifier,
+            connectTimeoutMs: Int,
+            ioTimeoutMs: Int,
+        ) = SSHClient(config).apply {
+            connectTimeout = connectTimeoutMs
+            timeout = ioTimeoutMs
+            transport.timeoutMs = ioTimeoutMs
+            addHostKeyVerifier(verifier)
+            try {
+                connect(host, port)
+            } catch (e: Throwable) {
+                runCatching { close() }
+                throw e
             }
+        }
     }
 }

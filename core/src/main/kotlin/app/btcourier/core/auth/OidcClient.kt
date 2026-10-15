@@ -7,7 +7,9 @@ import okhttp3.Request
 import java.net.URLEncoder
 
 /** How the client authenticates to the token and device authorization endpoints (RFC 6749 §2.3). */
-enum class ClientAuthMethod(val wireName: String) {
+enum class ClientAuthMethod(
+    val wireName: String,
+) {
     /** Public client: `client_id` in the form, no secret (Authelia `token_endpoint_auth_method: none`). */
     None("none"),
 
@@ -36,17 +38,27 @@ class OidcClient(
     }
 
     /** A form POST to [url] carrying [fields] and this client's credentials. */
-    internal fun post(url: HttpUrl, fields: Map<String, String>): Request {
+    internal fun post(
+        url: HttpUrl,
+        fields: Map<String, String>,
+    ): Request {
         val form = FormBody.Builder()
         fields.forEach(form::add)
         val request = Request.Builder().url(url).header("Accept", "application/json")
         when (authMethod) {
-            ClientAuthMethod.None -> form.add("client_id", clientId)
-            ClientAuthMethod.ClientSecretPost -> form.add("client_id", clientId).add("client_secret", clientSecret!!)
+            ClientAuthMethod.None -> {
+                form.add("client_id", clientId)
+            }
+
+            ClientAuthMethod.ClientSecretPost -> {
+                form.add("client_id", clientId).add("client_secret", clientSecret!!)
+            }
+
             // RFC 6749 §2.3.1 encodes both parts as application/x-www-form-urlencoded before Basic,
             // so a secret containing ':' or non-ASCII survives.
-            ClientAuthMethod.ClientSecretBasic ->
+            ClientAuthMethod.ClientSecretBasic -> {
                 request.header("Authorization", Credentials.basic(formEncode(clientId), formEncode(clientSecret!!)))
+            }
         }
         return request.post(form.build()).build()
     }

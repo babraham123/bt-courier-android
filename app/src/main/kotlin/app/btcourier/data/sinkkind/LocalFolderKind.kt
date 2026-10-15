@@ -21,12 +21,21 @@ object LocalFolderKind : SinkTransportKind {
 
     override fun defaults() = FieldValues()
 
-    override fun toValues(config: TransportConfig) = FieldValues(TREE_URI to (config as TransportConfig.LocalFolder).treeUri)
+    override fun toValues(config: TransportConfig) =
+        FieldValues(TREE_URI to (config as TransportConfig.LocalFolder).treeUri)
 
     override fun validate(values: FieldValues) = problemsOf(TREE_URI to values.blankProblem(TREE_URI))
 
-    override fun toConfig(values: FieldValues) = TransportConfig.LocalFolder(requireNotNull(values.orNull(TREE_URI)) { "no folder picked" })
+    override fun toConfig(values: FieldValues) =
+        TransportConfig.LocalFolder(
+            requireNotNull(values.orNull(TREE_URI)) {
+                "no folder picked"
+            },
+        )
 
-    override suspend fun build(config: SinkConfig, credentials: SinkCredentials, env: SinkEnvironment) =
-        SafUploadTransport(env.folders.tree((config.transport as TransportConfig.LocalFolder).treeUri))
+    override suspend fun build(
+        config: SinkConfig,
+        credentials: SinkCredentials,
+        env: SinkEnvironment,
+    ) = SafUploadTransport(env.folders.tree((config.transport as TransportConfig.LocalFolder).treeUri))
 }

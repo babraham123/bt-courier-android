@@ -27,7 +27,10 @@ class GattProfileTest {
     @Test
     fun `ring commands written without response go to 6E400002 without response`() {
         val route = ColmiRingGatt.PROFILE.routeWrite(false)
-        assertEquals(GattProfile.WriteRoute(UUID.fromString("6E400002-B5A3-F393-E0A9-E50E24DCCA9E"), WriteType.WithoutResponse), route)
+        assertEquals(
+            GattProfile.WriteRoute(UUID.fromString("6E400002-B5A3-F393-E0A9-E50E24DCCA9E"), WriteType.WithoutResponse),
+            route,
+        )
     }
 
     @Test

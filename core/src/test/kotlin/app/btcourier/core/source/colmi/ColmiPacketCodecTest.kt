@@ -17,7 +17,11 @@ import java.time.LocalDateTime
  */
 class ColmiPacketCodecTest {
     private fun hex(s: String): ByteArray =
-        s.split(' ').filter { it.isNotEmpty() }.map { it.toInt(16).toByte() }.toByteArray()
+        s
+            .split(' ')
+            .filter { it.isNotEmpty() }
+            .map { it.toInt(16).toByte() }
+            .toByteArray()
 
     /** A received packet with a correct checksum, for assembler input. */
     private fun answer(vararg bytes: Int): ByteArray =
@@ -68,7 +72,10 @@ class ColmiPacketCodecTest {
 
     @Test
     fun `battery answer is level then charging`() {
-        assertEquals(Battery(level = 87, charging = true), ColmiPacketCodec.parseBattery(hex("03 57 01 00 00 00 00 00 00 00 00 00 00 00 00 5B")))
+        assertEquals(
+            Battery(level = 87, charging = true),
+            ColmiPacketCodec.parseBattery(hex("03 57 01 00 00 00 00 00 00 00 00 00 00 00 00 5B")),
+        )
         assertEquals(Battery(level = 100, charging = false), ColmiPacketCodec.parseBattery(answer(0x03, 100, 0)))
     }
 
@@ -83,12 +90,13 @@ class ColmiPacketCodecTest {
         assertNull(a.feed(sub1))
         val log = a.feed(answer(0x15, 2, 62, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200))
 
-        val expected = MutableList(9 + 13) { 0 }.apply {
-            this[0] = 60
-            this[8] = 61
-            this[9] = 62
-            this[21] = 200
-        }
+        val expected =
+            MutableList(9 + 13) { 0 }.apply {
+                this[0] = 60
+                this[8] = 61
+                this[9] = 62
+                this[21] = 200
+            }
         assertEquals(HeartRateLog(5, expected), log)
     }
 
@@ -106,12 +114,13 @@ class ColmiPacketCodecTest {
         val log = a.feed(answer(0x15, 2, 70, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 80))
 
         // 9 readings in sub-type 1, then 13 each in sub-types 2 and 3: slots 0..34.
-        val expected = MutableList(9 + 13 + 13) { 0 }.apply {
-            this[0] = 60
-            this[9] = 70
-            this[21] = 80
-            this[34] = 90
-        }
+        val expected =
+            MutableList(9 + 13 + 13) { 0 }.apply {
+                this[0] = 60
+                this[9] = 70
+                this[21] = 80
+                this[34] = 90
+            }
         assertEquals(HeartRateLog(5, expected), log)
     }
 

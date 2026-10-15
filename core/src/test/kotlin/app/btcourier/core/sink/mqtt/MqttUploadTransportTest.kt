@@ -80,25 +80,39 @@ class MqttUploadTransportTest {
 
     private fun retry(result: UploadResult) = assertInstanceOf(UploadResult.Retry::class.java, result) { "got $result" }
 
-    private fun failed(result: UploadResult) = assertInstanceOf(UploadResult.Failed::class.java, result) { "got $result" }
+    private fun failed(result: UploadResult) =
+        assertInstanceOf(UploadResult.Failed::class.java, result) { "got $result" }
 
     private fun mqtt5Stub(puback: (Int) -> StubBroker.Reply = { v5Puback(it, 0) }) =
         StubBroker(connack = { v5Connack() }, puback = puback).closedAfterTest()
 
     /** A receiver with a QoS 1 subscription to everything under the base topic. */
-    private inner class Subscriber(port: Int, credentials: MqttCredentials? = null) : AutoCloseable {
+    private inner class Subscriber(
+        port: Int,
+        credentials: MqttCredentials? = null,
+    ) : AutoCloseable {
         private val messages = LinkedBlockingQueue<Mqtt3Publish>()
-        private val client = Mqtt3Client.builder()
-            .identifier("receiver")
-            .serverHost("127.0.0.1")
-            .serverPort(port)
-            .buildBlocking()
+        private val client =
+            Mqtt3Client
+                .builder()
+                .identifier("receiver")
+                .serverHost("127.0.0.1")
+                .serverPort(port)
+                .buildBlocking()
 
         init {
             val connect = client.connectWith()
-            credentials?.let { connect.simpleAuth().username(it.username).password(it.password!!.encodeToByteArray()).applySimpleAuth() }
+            credentials?.let {
+                connect
+                    .simpleAuth()
+                    .username(it.username)
+                    .password(it.password!!.encodeToByteArray())
+                    .applySimpleAuth()
+            }
             connect.send()
-            client.toAsync().subscribeWith()
+            client
+                .toAsync()
+                .subscribeWith()
                 .topicFilter("btcourier/uploads/#")
                 .qos(MqttQos.AT_LEAST_ONCE)
                 .callback { messages.add(it) }
@@ -116,7 +130,9 @@ class MqttUploadTransportTest {
 
     @ParameterizedTest
     @EnumSource(MqttVersion::class)
-    fun `a 3_1_1 broker delivers the exact batch bytes at QoS 1 without retain to base topic slash batch name`(version: MqttVersion) = runTest {
+    fun `a 3_1_1 broker delivers the exact batch bytes at QoS 1 without retain to base topic slash batch name`(
+        version: MqttVersion,
+    ) = runTest {
         val broker = EmbeddedBroker().closedAfterTest()
         val receiver = Subscriber(broker.port)
 
@@ -132,167 +148,208 @@ class MqttUploadTransportTest {
     }
 
     @Test
-    fun `MQTT 5 publishes carry QoS 1, no retain, the exact bytes, content type and the batch name`() = runTest {
-        val stub = mqtt5Stub()
+    fun `MQTT 5 publishes carry QoS 1, no retain, the exact bytes, content type and the batch name`() =
+        runTest {
+            val stub = mqtt5Stub()
 
-        assertEquals(UploadResult.Acked, transport(config(stub.port)).upload(batch))
+            assertEquals(UploadResult.Acked, transport(config(stub.port)).upload(batch))
 
-        val message = stub.published.single()
-        assertEquals(topic, message.topic)
-        assertEquals(1, message.qos)
-        assertFalse(message.retain)
-        assertArrayEquals(batch.bytes, message.payload)
-        assertEquals("application/gzip", message.contentType)
-        assertEquals(listOf("name" to batch.name), message.userProperties)
-        assertEquals(listOf(5), stub.protocolLevels)
-        assertTrue(stub.awaitNoConnections(), "connection left open after an upload")
-    }
+            val message = stub.published.single()
+            assertEquals(topic, message.topic)
+            assertEquals(1, message.qos)
+            assertFalse(message.retain)
+            assertArrayEquals(batch.bytes, message.payload)
+            assertEquals("application/gzip", message.contentType)
+            assertEquals(listOf("name" to batch.name), message.userProperties)
+            assertEquals(listOf(5), stub.protocolLevels)
+            assertTrue(stub.awaitNoConnections(), "connection left open after an upload")
+        }
 
     @Test
-    fun `uploading the same batch twice delivers two identical messages that the receiver dedupes by topic`() = runTest {
-        val broker = EmbeddedBroker().closedAfterTest()
-        val receiver = Subscriber(broker.port)
-        val transport = transport(config(broker.port))
+    fun `uploading the same batch twice delivers two identical messages that the receiver dedupes by topic`() =
+        runTest {
+            val broker = EmbeddedBroker().closedAfterTest()
+            val receiver = Subscriber(broker.port)
+            val transport = transport(config(broker.port))
 
-        assertEquals(UploadResult.Acked, transport.upload(batch))
-        assertEquals(UploadResult.Acked, transport.upload(batch))
+            assertEquals(UploadResult.Acked, transport.upload(batch))
+            assertEquals(UploadResult.Acked, transport.upload(batch))
 
-        val first = receiver.next()
-        val second = receiver.next()
-        assertEquals(topic, first.topic.toString())
-        assertEquals(first.topic, second.topic)
-        assertArrayEquals(first.payloadAsBytes, second.payloadAsBytes)
-    }
+            val first = receiver.next()
+            val second = receiver.next()
+            assertEquals(topic, first.topic.toString())
+            assertEquals(first.topic, second.topic)
+            assertArrayEquals(first.payloadAsBytes, second.payloadAsBytes)
+        }
 
     @ParameterizedTest
     @EnumSource(MqttVersion::class)
-    fun `wrong or missing credentials fail permanently and right ones are accepted`(version: MqttVersion) = runTest {
-        val good = MqttCredentials("courier", "s3cret")
-        val broker = EmbeddedBroker(IAuthenticator { _, user, password -> user == "courier" && password?.decodeToString() == "s3cret" })
-            .closedAfterTest()
-        val receiver = Subscriber(broker.port, good)
+    fun `wrong or missing credentials fail permanently and right ones are accepted`(version: MqttVersion) =
+        runTest {
+            val good = MqttCredentials("courier", "s3cret")
+            val broker =
+                EmbeddedBroker(
+                    IAuthenticator { _, user, password ->
+                        user == "courier" &&
+                            password?.decodeToString() == "s3cret"
+                    },
+                ).closedAfterTest()
+            val receiver = Subscriber(broker.port, good)
 
-        failed(transport(config(broker.port, version, MqttCredentials("courier", "wrong"))).upload(batch))
-        failed(transport(config(broker.port, version)).upload(batch))
-        assertEquals(UploadResult.Acked, transport(config(broker.port, version, good)).upload(batch))
-        assertEquals(topic, receiver.next().topic.toString())
-        receiver.assertNoMore()
-    }
-
-    @Test
-    fun `MQTT 5 CONNACK - bad credentials fail, server unavailable retries`() = runTest {
-        val badCredentials = StubBroker(connack = { v5Connack(0x86) }).closedAfterTest()
-        val unavailable = StubBroker(connack = { v5Connack(0x88) }).closedAfterTest()
-
-        failed(transport(config(badCredentials.port, credentials = MqttCredentials("courier", "wrong"))).upload(batch))
-        retry(transport(config(unavailable.port)).upload(batch))
-        assertEquals(listOf(5), badCredentials.protocolLevels, "a refusal is not a reason to fall back to 3.1.1")
-    }
+            failed(transport(config(broker.port, version, MqttCredentials("courier", "wrong"))).upload(batch))
+            failed(transport(config(broker.port, version)).upload(batch))
+            assertEquals(UploadResult.Acked, transport(config(broker.port, version, good)).upload(batch))
+            assertEquals(topic, receiver.next().topic.toString())
+            receiver.assertNoMore()
+        }
 
     @Test
-    fun `an unreachable broker is retried without a hint`() = runTest {
-        val port = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
-        assertNull(retry(transport(config(port)).upload(batch)).retryAfterMs)
-    }
+    fun `MQTT 5 CONNACK - bad credentials fail, server unavailable retries`() =
+        runTest {
+            val badCredentials = StubBroker(connack = { v5Connack(0x86) }).closedAfterTest()
+            val unavailable = StubBroker(connack = { v5Connack(0x88) }).closedAfterTest()
+
+            failed(
+                transport(config(badCredentials.port, credentials = MqttCredentials("courier", "wrong"))).upload(batch),
+            )
+            retry(transport(config(unavailable.port)).upload(batch))
+            assertEquals(listOf(5), badCredentials.protocolLevels, "a refusal is not a reason to fall back to 3.1.1")
+        }
 
     @Test
-    fun `a missing PUBACK times out as a retry and closes the connection, and the next PUBACK acks`() = runTest {
-        val publishes = AtomicInteger()
-        val stub = mqtt5Stub(puback = { id -> if (publishes.incrementAndGet() == 2) v5Puback(id, 0) else StubBroker.Reply.Silent })
-        val transport = transport(config(stub.port, publishTimeoutMs = 300))
-
-        retry(transport.upload(batch))
-        assertTrue(stub.awaitNoConnections(), "connection left open after a publish timeout")
-        assertEquals(UploadResult.Acked, transport.upload(batch))
-        retry(transport.upload(batch))
-        assertEquals(listOf(topic, topic, topic), stub.published.map { it.topic })
-        assertTrue(stub.awaitNoConnections())
-    }
+    fun `an unreachable broker is retried without a hint`() =
+        runTest {
+            val port = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
+            assertNull(retry(transport(config(port)).upload(batch)).retryAfterMs)
+        }
 
     @Test
-    fun `a broker that never answers CONNECT times out as a retry without falling back`() = runTest {
-        val stub = StubBroker(connack = { StubBroker.Reply.Silent }).closedAfterTest()
+    fun `a missing PUBACK times out as a retry and closes the connection, and the next PUBACK acks`() =
+        runTest {
+            val publishes = AtomicInteger()
+            val stub =
+                mqtt5Stub(puback = { id ->
+                    if (publishes.incrementAndGet() ==
+                        2
+                    ) {
+                        v5Puback(id, 0)
+                    } else {
+                        StubBroker.Reply.Silent
+                    }
+                })
+            val transport = transport(config(stub.port, publishTimeoutMs = 300))
 
-        retry(transport(config(stub.port, connectTimeoutMs = 300)).upload(batch))
-        assertTrue(stub.awaitNoConnections(), "connection left open after a connect timeout")
-        assertEquals(listOf(5), stub.protocolLevels)
-        assertEquals(emptyList<StubBroker.Published>(), stub.published)
-    }
-
-    @Test
-    fun `a payload above the broker's maximum packet size fails without being sent`() = runTest {
-        val stub = StubBroker(connack = { v5Connack(properties = maximumPacketSize(1024)) }).closedAfterTest()
-        val big = batch.copy(bytes = Random(1).nextBytes(4096))
-
-        failed(transport(config(stub.port)).upload(big))
-        assertEquals(emptyList<StubBroker.Published>(), stub.published)
-        assertTrue(stub.awaitNoConnections())
-    }
-
-    @Test
-    fun `a broker DISCONNECT for packet too large fails`() = runTest {
-        val stub = mqtt5Stub(puback = { v5Disconnect(0x95) })
-        failed(transport(config(stub.port)).upload(batch))
-    }
+            retry(transport.upload(batch))
+            assertTrue(stub.awaitNoConnections(), "connection left open after a publish timeout")
+            assertEquals(UploadResult.Acked, transport.upload(batch))
+            retry(transport.upload(batch))
+            assertEquals(listOf(topic, topic, topic), stub.published.map { it.topic })
+            assertTrue(stub.awaitNoConnections())
+        }
 
     @Test
-    fun `MQTT 5 PUBACK - no matching subscribers retries, not authorized fails`() = runTest {
-        val noSubscribers = mqtt5Stub(puback = { v5Puback(it, 0x10) })
-        val notAuthorized = mqtt5Stub(puback = { v5Puback(it, 0x87) })
+    fun `a broker that never answers CONNECT times out as a retry without falling back`() =
+        runTest {
+            val stub = StubBroker(connack = { StubBroker.Reply.Silent }).closedAfterTest()
 
-        retry(transport(config(noSubscribers.port)).upload(batch))
-        failed(transport(config(notAuthorized.port)).upload(batch))
-    }
-
-    @Test
-    fun `a broker without MQTT 5 is retried with 3_1_1, which is then used for later batches`() = runTest {
-        val stub = StubBroker(
-            connack = { level -> if (level == 5) v3Connack(1) else v3Connack(0) },
-            puback = { v3Puback(it) },
-        ).closedAfterTest()
-        val transport = transport(config(stub.port))
-
-        assertEquals(UploadResult.Acked, transport.upload(batch))
-        assertEquals(UploadResult.Acked, transport.upload(batch))
-        assertEquals(listOf(5, 4, 4), stub.protocolLevels)
-        assertEquals(listOf(topic, topic), stub.published.map { it.topic })
-        assertArrayEquals(batch.bytes, stub.published.last().payload)
-    }
+            retry(transport(config(stub.port, connectTimeoutMs = 300)).upload(batch))
+            assertTrue(stub.awaitNoConnections(), "connection left open after a connect timeout")
+            assertEquals(listOf(5), stub.protocolLevels)
+            assertEquals(emptyList<StubBroker.Published>(), stub.published)
+        }
 
     @Test
-    fun `without fallback a broker without MQTT 5 fails`() = runTest {
-        val stub = StubBroker(connack = { level -> if (level == 5) v3Connack(1) else v3Connack(0) }).closedAfterTest()
+    fun `a payload above the broker's maximum packet size fails without being sent`() =
+        runTest {
+            val stub = StubBroker(connack = { v5Connack(properties = maximumPacketSize(1024)) }).closedAfterTest()
+            val big = batch.copy(bytes = Random(1).nextBytes(4096))
 
-        failed(transport(config(stub.port, fallbackToV311 = false)).upload(batch))
-        assertEquals(listOf(5), stub.protocolLevels)
-    }
+            failed(transport(config(stub.port)).upload(big))
+            assertEquals(emptyList<StubBroker.Published>(), stub.published)
+            assertTrue(stub.awaitNoConnections())
+        }
 
     @Test
-    fun `close aborts an in-flight upload, is idempotent, and refuses later uploads`() = runTest {
-        val stub = mqtt5Stub(puback = { StubBroker.Reply.Silent })
-        val transport = transport(config(stub.port, publishTimeoutMs = 60_000))
+    fun `a broker DISCONNECT for packet too large fails`() =
+        runTest {
+            val stub = mqtt5Stub(puback = { v5Disconnect(0x95) })
+            failed(transport(config(stub.port)).upload(batch))
+        }
 
-        val pending = async(Dispatchers.Default) { transport.upload(batch) }
-        withContext(Dispatchers.Default) {
-            withTimeout(10_000) {
-                select {
-                    stub.firstPublish.onAwait {}
-                    pending.onAwait { fail("upload ended before publishing: $it") }
+    @Test
+    fun `MQTT 5 PUBACK - no matching subscribers retries, not authorized fails`() =
+        runTest {
+            val noSubscribers = mqtt5Stub(puback = { v5Puback(it, 0x10) })
+            val notAuthorized = mqtt5Stub(puback = { v5Puback(it, 0x87) })
+
+            retry(transport(config(noSubscribers.port)).upload(batch))
+            failed(transport(config(notAuthorized.port)).upload(batch))
+        }
+
+    @Test
+    fun `a broker without MQTT 5 is retried with 3_1_1, which is then used for later batches`() =
+        runTest {
+            val stub =
+                StubBroker(
+                    connack = { level -> if (level == 5) v3Connack(1) else v3Connack(0) },
+                    puback = { v3Puback(it) },
+                ).closedAfterTest()
+            val transport = transport(config(stub.port))
+
+            assertEquals(UploadResult.Acked, transport.upload(batch))
+            assertEquals(UploadResult.Acked, transport.upload(batch))
+            assertEquals(listOf(5, 4, 4), stub.protocolLevels)
+            assertEquals(listOf(topic, topic), stub.published.map { it.topic })
+            assertArrayEquals(batch.bytes, stub.published.last().payload)
+        }
+
+    @Test
+    fun `without fallback a broker without MQTT 5 fails`() =
+        runTest {
+            val stub =
+                StubBroker(connack = { level ->
+                    if (level ==
+                        5
+                    ) {
+                        v3Connack(1)
+                    } else {
+                        v3Connack(0)
+                    }
+                }).closedAfterTest()
+
+            failed(transport(config(stub.port, fallbackToV311 = false)).upload(batch))
+            assertEquals(listOf(5), stub.protocolLevels)
+        }
+
+    @Test
+    fun `close aborts an in-flight upload, is idempotent, and refuses later uploads`() =
+        runTest {
+            val stub = mqtt5Stub(puback = { StubBroker.Reply.Silent })
+            val transport = transport(config(stub.port, publishTimeoutMs = 60_000))
+
+            val pending = async(Dispatchers.Default) { transport.upload(batch) }
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) {
+                    select {
+                        stub.firstPublish.onAwait {}
+                        pending.onAwait { fail("upload ended before publishing: $it") }
+                    }
                 }
             }
-        }
-        transport.close()
-        transport.close()
+            transport.close()
+            transport.close()
 
-        retry(withContext(Dispatchers.Default) { withTimeout(10_000) { pending.await() } })
-        assertTrue(stub.awaitNoConnections(), "connection left open after close")
-        failed(transport.upload(batch))
-        assertEquals(1, stub.protocolLevels.size)
-    }
+            retry(withContext(Dispatchers.Default) { withTimeout(10_000) { pending.await() } })
+            assertTrue(stub.awaitNoConnections(), "connection left open after close")
+            failed(transport.upload(batch))
+            assertEquals(1, stub.protocolLevels.size)
+        }
 
     @ParameterizedTest
     @EnumSource(MqttVersion::class)
-    fun `a client id or password the MQTT client rejects fails the upload without reaching the broker or leaking it`(version: MqttVersion) = runTest {
+    fun `a client id or password the MQTT client rejects fails the upload without reaching the broker or leaking it`(
+        version: MqttVersion,
+    ) = runTest {
         val stub = mqtt5Stub()
         // MQTT strings and binary fields are length-prefixed with 16 bits; MqttConfig doesn't check that.
         val tooLong = "x".repeat(65_536)
@@ -308,7 +365,8 @@ class MqttUploadTransportTest {
 
     @Test
     fun `config defaults to TLS on 8883, hides credentials, and validates the base topic`() {
-        val config = MqttConfig("broker.example", "phone-1", "cars/", credentials = MqttCredentials("courier", "hunter2"))
+        val config =
+            MqttConfig("broker.example", "phone-1", "cars/", credentials = MqttCredentials("courier", "hunter2"))
 
         assertTrue(config.tls)
         assertEquals(8883, config.port)

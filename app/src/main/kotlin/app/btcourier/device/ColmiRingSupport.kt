@@ -26,16 +26,24 @@ object ColmiRingSupport : DeviceSupport {
     override val syncsOnCarTrigger = false
 
     override val label = R.string.kind_colmi_ring
-    override val pairingText = PairingText(
-        help = R.string.pairing_kind_colmi_ring_help,
-        explain = listOf(R.string.pairing_explain_ring),
-        associate = R.string.pairing_associate_body_ring,
-        test = R.string.pairing_test_body_ring,
-    )
+    override val pairingText =
+        PairingText(
+            help = R.string.pairing_kind_colmi_ring_help,
+            explain = listOf(R.string.pairing_explain_ring),
+            associate = R.string.pairing_associate_body_ring,
+            test = R.string.pairing_test_body_ring,
+        )
 
-    override suspend fun <T> withSource(link: GattLink, options: SourceOptions, block: suspend (Source) -> T): T =
-        block(ColmiRingSource(link, options.zone, options.clock))
+    override suspend fun <T> withSource(
+        link: GattLink,
+        options: SourceOptions,
+        block: suspend (Source) -> T,
+    ): T = block(ColmiRingSource(link, options.zone, options.clock))
 
     override suspend fun probe(link: GattLink): ProbeResult =
-        ProbeResult.Ring(link.colmiRequest(ColmiPacketCodec.batteryRequest(), PROBE_TIMEOUT) { ColmiPacketCodec.parseBattery(it) })
+        ProbeResult.Ring(
+            link.colmiRequest(ColmiPacketCodec.batteryRequest(), PROBE_TIMEOUT) {
+                ColmiPacketCodec.parseBattery(it)
+            },
+        )
 }

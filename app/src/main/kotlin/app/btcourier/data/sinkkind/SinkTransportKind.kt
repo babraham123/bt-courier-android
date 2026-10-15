@@ -50,7 +50,10 @@ interface SinkTransportKind {
      * The values after the user changed [before] into [after]; lets one field follow another
      * (MQTT's port tracking its TLS default). Identity by default.
      */
-    fun adjust(before: FieldValues, after: FieldValues): FieldValues = after
+    fun adjust(
+        before: FieldValues,
+        after: FieldValues,
+    ): FieldValues = after
 
     /**
      * The transport for [config], whose transport is this kind's and whose auth is in
@@ -60,27 +63,37 @@ interface SinkTransportKind {
      * @throws IllegalArgumentException for values core refuses.
      * @throws java.security.GeneralSecurityException when a Keystore key can't be loaded.
      */
-    suspend fun build(config: SinkConfig, credentials: SinkCredentials, env: SinkEnvironment): UploadTransport
+    suspend fun build(
+        config: SinkConfig,
+        credentials: SinkCredentials,
+        env: SinkEnvironment,
+    ): UploadTransport
 }
 
 /** The implementation of [this] kind; adding a [TransportKind] adds a branch here. */
 val TransportKind.module: SinkTransportKind
-    get() = when (this) {
-        TransportKind.HTTP_PUT -> HttpPutKind
-        TransportKind.HTTP_POST -> HttpPostKind
-        TransportKind.SFTP -> SftpKind
-        TransportKind.MQTT -> MqttKind
-        TransportKind.LOCAL_FOLDER -> LocalFolderKind
-    }
+    get() =
+        when (this) {
+            TransportKind.HTTP_PUT -> HttpPutKind
+            TransportKind.HTTP_POST -> HttpPostKind
+            TransportKind.SFTP -> SftpKind
+            TransportKind.MQTT -> MqttKind
+            TransportKind.LOCAL_FOLDER -> LocalFolderKind
+        }
 
-inline fun <reified C : TransportCapability> SinkTransportKind.capability(): C? = capabilities.firstNotNullOfOrNull { it as? C }
+inline fun <reified C : TransportCapability> SinkTransportKind.capability(): C? =
+    capabilities.firstNotNullOfOrNull {
+        it as? C
+    }
 
 /**
  * One transport's editor values by key: text as typed, toggles as `true`/`false`, choices by
  * [ChoiceOption.value], and what capabilities set (a pinned host key, a picked folder). A missing
  * key reads as empty.
  */
-class FieldValues(private val values: Map<String, String> = emptyMap()) {
+class FieldValues(
+    private val values: Map<String, String> = emptyMap(),
+) {
     constructor(vararg pairs: Pair<String, String>) : this(mapOf(*pairs))
 
     operator fun get(key: String): String = values[key].orEmpty()
@@ -90,7 +103,19 @@ class FieldValues(private val values: Map<String, String> = emptyMap()) {
     fun orNull(key: String): String? = values[key]?.ifEmpty { null }
 
     /** [value] null removes the key. */
-    fun with(key: String, value: String?): FieldValues = FieldValues(if (value == null) values - key else values + (key to value))
+    fun with(
+        key: String,
+        value: String?,
+    ): FieldValues =
+        FieldValues(
+            if (value ==
+                null
+            ) {
+                values - key
+            } else {
+                values + (key to value)
+            },
+        )
 
     override fun equals(other: Any?) = other is FieldValues && other.values == values
 
@@ -133,7 +158,10 @@ sealed class TransportField(
     ) : TransportField(key, label, help, visibleWhen)
 }
 
-class ChoiceOption(val value: String, @StringRes val label: Int)
+class ChoiceOption(
+    val value: String,
+    @StringRes val label: Int,
+)
 
 enum class FieldKeyboard { TEXT, URI, NUMBER }
 
@@ -142,7 +170,9 @@ sealed interface FieldProblem {
     data object Invalid : FieldProblem
 
     /** A URL problem, explained under the field. */
-    data class Url(val problem: SinkUrlProblem) : FieldProblem
+    data class Url(
+        val problem: SinkUrlProblem,
+    ) : FieldProblem
 }
 
 /**
@@ -161,13 +191,19 @@ sealed interface TransportCapability {
      * [hostKey] and [portKey] and, once the user trusts it, keeps the fingerprint under
      * [fingerprintKey].
      */
-    class HostKeyPin(val hostKey: String, val portKey: String, val fingerprintKey: String) : TransportCapability
+    class HostKeyPin(
+        val hostKey: String,
+        val portKey: String,
+        val fingerprintKey: String,
+    ) : TransportCapability
 
     /**
      * A folder picked through the Storage Access Framework; its tree URI goes under [treeUriKey].
      * The screen takes the persistable grant, [SinkCredentials] releases it.
      */
-    class FolderPick(val treeUriKey: String) : TransportCapability
+    class FolderPick(
+        val treeUriKey: String,
+    ) : TransportCapability
 }
 
 internal fun FieldValues.portProblem(key: String): FieldProblem? =

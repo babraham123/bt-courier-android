@@ -57,23 +57,35 @@ data class DeviceStatus(
  * the transport's [java.io.IOException]s. In every case nothing was consumed, so the caller
  * repeats the call from the same cursor.
  */
-sealed class SourceException(message: String, cause: Throwable? = null) : Exception(message, cause) {
+sealed class SourceException(
+    message: String,
+    cause: Throwable? = null,
+) : Exception(message, cause) {
     /**
      * HTTP 429: another request holds the device (the `ble_http` tunnel's `busy`, or the web
      * server serving someone else). Backing off is the caller's call.
      */
-    class Busy(val path: String) : SourceException("device busy (429) for $path")
+    class Busy(
+        val path: String,
+    ) : SourceException("device busy (429) for $path")
 
     /** The response ended before its trailing cursor line: the transfer was cut short. */
-    class Truncated(val path: String, cause: Throwable? = null) :
-        SourceException("truncated response for $path", cause)
+    class Truncated(
+        val path: String,
+        cause: Throwable? = null,
+    ) : SourceException("truncated response for $path", cause)
 
     /** Any other non-2xx status. [detail] is the start of the body, for logs. */
-    class DeviceError(val status: Int, val path: String, val detail: String) :
-        SourceException("HTTP $status for $path: $detail")
+    class DeviceError(
+        val status: Int,
+        val path: String,
+        val detail: String,
+    ) : SourceException("HTTP $status for $path: $detail")
 
     /** The device answered in a shape this source cannot use, e.g. its logger writes CSV. */
-    class Unsupported(message: String) : SourceException(message)
+    class Unsupported(
+        message: String,
+    ) : SourceException(message)
 }
 
 /**

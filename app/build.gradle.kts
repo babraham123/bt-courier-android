@@ -54,20 +54,21 @@ android {
     packaging {
         resources {
             // Library build metadata: unused at runtime and a source of non-reproducible bytes.
-            excludes += setOf(
-                "/META-INF/{AL2.0,LGPL2.1}",
-                "/META-INF/*.version",
-                "/META-INF/*.kotlin_module",
-                "/META-INF/versions/**",
-                "/META-INF/INDEX.LIST",
-                "/META-INF/DEPENDENCIES",
-                // Every netty jar (pulled in by the MQTT client) ships its own copy.
-                "/META-INF/io.netty.versions.properties",
-                "/META-INF/LICENSE*",
-                "/META-INF/NOTICE*",
-                "/kotlin-tooling-metadata.json",
-                "DebugProbesKt.bin",
-            )
+            excludes +=
+                setOf(
+                    "/META-INF/{AL2.0,LGPL2.1}",
+                    "/META-INF/*.version",
+                    "/META-INF/*.kotlin_module",
+                    "/META-INF/versions/**",
+                    "/META-INF/INDEX.LIST",
+                    "/META-INF/DEPENDENCIES",
+                    // Every netty jar (pulled in by the MQTT client) ships its own copy.
+                    "/META-INF/io.netty.versions.properties",
+                    "/META-INF/LICENSE*",
+                    "/META-INF/NOTICE*",
+                    "/kotlin-tooling-metadata.json",
+                    "DebugProbesKt.bin",
+                )
         }
     }
 }

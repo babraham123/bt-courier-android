@@ -87,10 +87,25 @@ class FakeColmiRing(
         // 288 slots: 9 in sub-type 1 and 13 in each later one, so 24 packets with the header.
         val dataPackets = 1 + (288 - 9 + 12) / 13
         send(CMD_HEART_RATE_LOG, 0, dataPackets + 1, 5)
-        send(CMD_HEART_RATE_LOG, 1, *IntArray(4) { ((ts shr (8 * it)) and 0xFF).toInt() }, *IntArray(9) { readings.getOrElse(it) { 0 } }, corrupt = corrupt == 1)
+        send(
+            CMD_HEART_RATE_LOG,
+            1,
+            *IntArray(4) {
+                ((ts shr (8 * it)) and 0xFF).toInt()
+            },
+            *IntArray(9) { readings.getOrElse(it) { 0 } },
+            corrupt =
+                corrupt == 1,
+        )
         for (sub in 2..dataPackets) {
             val first = 9 + (sub - 2) * 13
-            send(CMD_HEART_RATE_LOG, sub, *IntArray(13) { readings.getOrElse(first + it) { 0 } }, corrupt = corrupt == sub)
+            send(
+                CMD_HEART_RATE_LOG,
+                sub,
+                *IntArray(13) { readings.getOrElse(first + it) { 0 } },
+                corrupt =
+                    corrupt == sub,
+            )
         }
     }
 
@@ -105,17 +120,28 @@ class FakeColmiRing(
             val distance = n * 7 / 10
             send(
                 CMD_STEPS_LOG,
-                toBcd(day.year % 100), toBcd(day.monthValue), toBcd(day.dayOfMonth),
-                quarter, i, quarters.size,
-                calories and 0xFF, calories shr 8,
-                n and 0xFF, n shr 8,
-                distance and 0xFF, distance shr 8,
+                toBcd(day.year % 100),
+                toBcd(day.monthValue),
+                toBcd(day.dayOfMonth),
+                quarter,
+                i,
+                quarters.size,
+                calories and 0xFF,
+                calories shr 8,
+                n and 0xFF,
+                n shr 8,
+                distance and 0xFF,
+                distance shr 8,
                 corrupt = corrupt == i,
             )
         }
     }
 
-    private fun send(command: Int, vararg payload: Int, corrupt: Boolean = false) {
+    private fun send(
+        command: Int,
+        vararg payload: Int,
+        corrupt: Boolean = false,
+    ) {
         val p = ByteArray(16)
         p[0] = command.toByte()
         payload.forEachIndexed { i, b -> p[i + 1] = b.toByte() }

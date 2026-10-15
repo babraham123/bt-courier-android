@@ -34,7 +34,10 @@ class FakeWicanLogger {
         private set
 
     /** Appends whole lines to `dl_<epoch>.jsonl`, creating it if needed. */
-    fun append(epoch: Long, lines: List<String>) {
+    fun append(
+        epoch: Long,
+        lines: List<String>,
+    ) {
         val file = files.getOrPut(epoch) { StringBuilder() }
         lines.forEach { file.append(it).append('\n') }
     }
@@ -43,13 +46,24 @@ class FakeWicanLogger {
         val (route, query) = split(request.path)
         if (request.method != "GET") return null
         return when (route) {
-            "/api/logger/export" -> export(query)
-            "/api/fs/download" -> if (query["path"] == JOURNAL) download(journal) else null
-            "/api/rtc" -> Reply(
-                200,
-                """{"time":"${Instant.ofEpochSecond(rtcEpochSeconds)}","valid":$clockValid}""",
-            )
-            else -> null
+            "/api/logger/export" -> {
+                export(query)
+            }
+
+            "/api/fs/download" -> {
+                if (query["path"] == JOURNAL) download(journal) else null
+            }
+
+            "/api/rtc" -> {
+                Reply(
+                    200,
+                    """{"time":"${Instant.ofEpochSecond(rtcEpochSeconds)}","valid":$clockValid}""",
+                )
+            }
+
+            else -> {
+                null
+            }
         }
     }
 
@@ -111,8 +125,12 @@ class FakeWicanLogger {
     private fun split(path: String): Pair<String, Map<String, String>> {
         val route = path.substringBefore('?')
         // The device does not URL-decode; neither does this.
-        val query = path.substringAfter('?', "").split('&').filter { it.isNotEmpty() }
-            .associate { it.substringBefore('=') to it.substringAfter('=', "") }
+        val query =
+            path
+                .substringAfter('?', "")
+                .split('&')
+                .filter { it.isNotEmpty() }
+                .associate { it.substringBefore('=') to it.substringAfter('=', "") }
         return route to query
     }
 

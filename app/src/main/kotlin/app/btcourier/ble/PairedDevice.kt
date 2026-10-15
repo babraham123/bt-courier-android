@@ -26,7 +26,11 @@ data class PairedDevice(
 )
 
 /** One `CompanionDeviceManager` association, which carries no app metadata. */
-data class Association(val address: String, val displayName: String?, val id: Int?)
+data class Association(
+    val address: String,
+    val displayName: String?,
+    val id: Int?,
+)
 
 /** The app's associations; the seam that keeps [CompanionDeviceManager] out of JVM tests. */
 interface Associations {
@@ -77,7 +81,9 @@ class CompanionPairedDeviceRepository(
  * Reads associations back from [CompanionDeviceManager]. Addresses are upper-cased, the form
  * Android reports for scanned devices and the key of everything stored per device.
  */
-class CompanionAssociations(context: Context) : Associations {
+class CompanionAssociations(
+    context: Context,
+) : Associations {
     private val cdm: CompanionDeviceManager? = context.getSystemService(CompanionDeviceManager::class.java)
 
     override fun list(): List<Association> {
@@ -111,7 +117,10 @@ class CompanionAssociations(context: Context) : Associations {
  * association for the same address; the newest wins: association ids increase monotonically, and
  * pre-33 lists are in creation order.
  */
-internal fun pairedDevices(associations: List<Association>, configs: List<DeviceConfig>): List<PairedDevice> {
+internal fun pairedDevices(
+    associations: List<Association>,
+    configs: List<DeviceConfig>,
+): List<PairedDevice> {
     val ordered = if (associations.all { it.id != null }) associations.sortedBy { it.id } else associations
     return ordered.associateBy { it.address.uppercase() }.values.map { a ->
         val config = configs.firstOrNull { it.address.equals(a.address, ignoreCase = true) }

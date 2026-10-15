@@ -11,7 +11,10 @@ class AppLogTest {
     @TempDir
     lateinit var dir: File
 
-    private fun log(capacity: Int = 3, file: File? = null) = AppLog(capacity, file, clock = { 0 })
+    private fun log(
+        capacity: Int = 3,
+        file: File? = null,
+    ) = AppLog(capacity, file, clock = { 0 })
 
     @Test
     fun `keeps only the newest entries, oldest first`() {
@@ -40,7 +43,10 @@ class AppLogTest {
             AppLog.redact("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc, Basic Y291cmllcjpodW50ZXIy"),
         )
         assertEquals("GET /x?token=<redacted>&page=2", AppLog.redact("GET /x?token=abc123&page=2"))
-        assertEquals("Basic auth failed for AA:BB:CC:DD:EE:FF", AppLog.redact("Basic auth failed for AA:BB:CC:DD:EE:FF"))
+        assertEquals(
+            "Basic auth failed for AA:BB:CC:DD:EE:FF",
+            AppLog.redact("Basic auth failed for AA:BB:CC:DD:EE:FF"),
+        )
     }
 
     @Test

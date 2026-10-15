@@ -9,8 +9,7 @@ import java.util.UUID
  * Plain JVM values so routing and discovery rules are unit-testable without a device.
  */
 object WicanGatt {
-    private fun bluetoothBase(short: Int): UUID =
-        UUID.fromString("0000%04x-0000-1000-8000-00805f9b34fb".format(short))
+    private fun bluetoothBase(short: Int): UUID = UUID.fromString("0000%04x-0000-1000-8000-00805f9b34fb".format(short))
 
     /** Advertised in the primary advertising PDU, so it is the one field every scan sees. */
     val SERVICE: UUID = bluetoothBase(0xFFF0)

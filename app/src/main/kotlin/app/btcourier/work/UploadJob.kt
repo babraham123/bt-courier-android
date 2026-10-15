@@ -48,14 +48,19 @@ class UploadJob(
      * @param onLargeBacklog runs before delivery when the backlog is large enough that the upload
      *   may outlast a background job's time limit; the worker promotes itself to a foreground service.
      */
-    suspend fun run(attempt: Int, sealPolicy: SealPolicy, onLargeBacklog: suspend () -> Unit = {}): UploadOutcome {
+    suspend fun run(
+        attempt: Int,
+        sealPolicy: SealPolicy,
+        onLargeBacklog: suspend () -> Unit = {},
+    ): UploadOutcome {
         store.seal(sealPolicy, clock())
-        val configured = try {
-            sinks()
-        } catch (e: IllegalArgumentException) {
-            record(UploadResultKind.FAILED, "invalid sink configuration: ${e.message}")
-            return UploadOutcome.Failed
-        }
+        val configured =
+            try {
+                sinks()
+            } catch (e: IllegalArgumentException) {
+                record(UploadResultKind.FAILED, "invalid sink configuration: ${e.message}")
+                return UploadOutcome.Failed
+            }
         return try {
             deliver(configured, attempt, onLargeBacklog)
         } finally {
@@ -66,7 +71,11 @@ class UploadJob(
     /** Lets [sinkId]'s next round try it at once, after it was edited or deleted ([Delivery.forget]). */
     fun forgetRetries(sinkId: String) = delivery.forget(sinkId)
 
-    private suspend fun deliver(configured: List<Sink>, attempt: Int, onLargeBacklog: suspend () -> Unit): UploadOutcome {
+    private suspend fun deliver(
+        configured: List<Sink>,
+        attempt: Int,
+        onLargeBacklog: suspend () -> Unit,
+    ): UploadOutcome {
         if (configured.isEmpty()) {
             record(UploadResultKind.NO_SINK, null, bySink = emptyMap())
             return UploadOutcome.NoSink
@@ -76,54 +85,101 @@ class UploadJob(
         val now = clock()
         val results = configured.map { sink -> sink.id to delivery.deliverPending(sink) }
         val stops = results.filter { (_, result) -> result != DeliveryResult.Delivered }
-        val attempted = stops.any { (_, result) -> result is DeliveryResult.Stopped && result.result is UploadResult.Retry }
-        val dueAtMs = stops.mapNotNull { (_, result) -> (result as? DeliveryResult.Deferred)?.dueAtMs }.minOrNull()
-        val error = stops.takeIf { it.isNotEmpty() }?.joinToString("; ") { (id, result) -> "$id: ${reason(result, now)}" }
-        val (kind, outcome) = when {
-            stops.isEmpty() -> UploadResultKind.DELIVERED to UploadOutcome.Delivered
-            attempted && attempt + 1 < maxAttempts -> UploadResultKind.RETRYING to UploadOutcome.Retry
-            dueAtMs != null -> UploadResultKind.RETRYING to UploadOutcome.Deferred((dueAtMs - now).coerceAtLeast(0))
-            attempted -> UploadResultKind.GAVE_UP to UploadOutcome.GaveUp
-            else -> UploadResultKind.FAILED to UploadOutcome.Failed
-        }
-        val message = if (kind == UploadResultKind.GAVE_UP) "gave up after $maxAttempts attempts: $error" else error
-        val bySink = results.associate { (id, result) ->
-            val sinkKind = when (result) {
-                DeliveryResult.Delivered -> UploadResultKind.DELIVERED
-                is DeliveryResult.Deferred -> UploadResultKind.RETRYING
-                is DeliveryResult.Stopped -> when (result.result) {
-                    is UploadResult.Failed -> UploadResultKind.FAILED
-                    else -> if (kind == UploadResultKind.GAVE_UP) UploadResultKind.GAVE_UP else UploadResultKind.RETRYING
-                }
+        val attempted =
+            stops.any { (_, result) ->
+                result is DeliveryResult.Stopped &&
+                    result.result is UploadResult.Retry
             }
-            id to SinkUpload(now, sinkKind)
-        }
+        val dueAtMs = stops.mapNotNull { (_, result) -> (result as? DeliveryResult.Deferred)?.dueAtMs }.minOrNull()
+        val error =
+            stops.takeIf { it.isNotEmpty() }?.joinToString(
+                "; ",
+            ) { (id, result) -> "$id: ${reason(result, now)}" }
+        val (kind, outcome) =
+            when {
+                stops.isEmpty() -> UploadResultKind.DELIVERED to UploadOutcome.Delivered
+                attempted && attempt + 1 < maxAttempts -> UploadResultKind.RETRYING to UploadOutcome.Retry
+                dueAtMs != null -> UploadResultKind.RETRYING to UploadOutcome.Deferred((dueAtMs - now).coerceAtLeast(0))
+                attempted -> UploadResultKind.GAVE_UP to UploadOutcome.GaveUp
+                else -> UploadResultKind.FAILED to UploadOutcome.Failed
+            }
+        val message = if (kind == UploadResultKind.GAVE_UP) "gave up after $maxAttempts attempts: $error" else error
+        val bySink =
+            results.associate { (id, result) ->
+                val sinkKind =
+                    when (result) {
+                        DeliveryResult.Delivered -> {
+                            UploadResultKind.DELIVERED
+                        }
+
+                        is DeliveryResult.Deferred -> {
+                            UploadResultKind.RETRYING
+                        }
+
+                        is DeliveryResult.Stopped -> {
+                            when (result.result) {
+                                is UploadResult.Failed -> {
+                                    UploadResultKind.FAILED
+                                }
+
+                                else -> {
+                                    if (kind ==
+                                        UploadResultKind.GAVE_UP
+                                    ) {
+                                        UploadResultKind.GAVE_UP
+                                    } else {
+                                        UploadResultKind.RETRYING
+                                    }
+                                }
+                            }
+                        }
+                    }
+                id to SinkUpload(now, sinkKind)
+            }
         record(kind, message, bySink)
         return outcome
     }
 
-    private fun reason(result: DeliveryResult, now: Long): String = when (result) {
-        DeliveryResult.Delivered -> "delivered"
-        is DeliveryResult.Deferred -> "${result.reason} (next attempt in ${(result.dueAtMs - now + 999) / 1000} s)"
-        is DeliveryResult.Stopped -> when (val r = result.result) {
-            is UploadResult.Retry -> r.reason
-            is UploadResult.Failed -> r.reason
-            UploadResult.Acked -> "acked"
+    private fun reason(
+        result: DeliveryResult,
+        now: Long,
+    ): String =
+        when (result) {
+            DeliveryResult.Delivered -> {
+                "delivered"
+            }
+
+            is DeliveryResult.Deferred -> {
+                "${result.reason} (next attempt in ${(result.dueAtMs - now + 999) / 1000} s)"
+            }
+
+            is DeliveryResult.Stopped -> {
+                when (val r = result.result) {
+                    is UploadResult.Retry -> r.reason
+                    is UploadResult.Failed -> r.reason
+                    UploadResult.Acked -> "acked"
+                }
+            }
         }
-    }
 
     /** @param bySink replaces the per-sink outcomes; null keeps the previous ones. */
-    private suspend fun record(kind: UploadResultKind, error: String?, bySink: Map<String, SinkUpload>? = null) {
+    private suspend fun record(
+        kind: UploadResultKind,
+        error: String?,
+        bySink: Map<String, SinkUpload>? = null,
+    ) {
         val counters = store.counters()
         val now = clock()
         status.update {
-            it.copy(lastUploadAtMs = now, lastUpload = kind, lastUploadBySink = bySink ?: it.lastUploadBySink)
+            it
+                .copy(lastUploadAtMs = now, lastUpload = kind, lastUploadBySink = bySink ?: it.lastUploadBySink)
                 .withCounters(counters)
                 .withError(error, now)
         }
         val sinks = bySink?.entries?.joinToString { (id, s) -> "$id ${s.result}" }
-        val line = "upload $kind" + (sinks?.let { " [$it]" } ?: "") + ", ${counters.pendingBatches} batches pending" +
-            (error?.let { ": $it" } ?: "")
+        val line =
+            "upload $kind" + (sinks?.let { " [$it]" } ?: "") + ", ${counters.pendingBatches} batches pending" +
+                (error?.let { ": $it" } ?: "")
         if (error == null) log.info(TAG, line) else log.warn(TAG, line)
     }
 
@@ -158,7 +214,9 @@ sealed interface UploadOutcome {
      * but a follow-up upload is due in [delayMs]. Also the end of a run whose attempts are used
      * up while a sink still waits, since its due time is the better guess than giving up.
      */
-    data class Deferred(val delayMs: Long) : UploadOutcome
+    data class Deferred(
+        val delayMs: Long,
+    ) : UploadOutcome
 
     data object GaveUp : UploadOutcome
 

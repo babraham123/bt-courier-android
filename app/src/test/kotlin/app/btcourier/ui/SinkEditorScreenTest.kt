@@ -31,28 +31,30 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SinkEditorScreenTest : ScreenTest() {
-    private val bearer = SinkConfig(
-        "b",
-        "Token sink",
-        transport = TransportConfig.HttpPut("https://sink.invalid/"),
-        auth = AuthConfig.Bearer,
-    )
+    private val bearer =
+        SinkConfig(
+            "b",
+            "Token sink",
+            transport = TransportConfig.HttpPut("https://sink.invalid/"),
+            auth = AuthConfig.Bearer,
+        )
     private val settings = FakeSettings(AppSettings(sinks = listOf(bearer)))
     private val secrets = MapSecretStore(StoredNames.secret(bearer.id) to STORED_SECRET)
     private val credentials = testCredentials(secrets)
     private var done = 0
 
     private fun show(id: String? = null) {
-        val vm = SinkEditorViewModel(
-            sinkId = id,
-            settings = settings,
-            credentials = credentials,
-            work = RecordingWorkControl(),
-            http = OkHttpClient(),
-            appScope = CoroutineScope(Dispatchers.Unconfined),
-            hostKeys = HostKeyFetcher { _, _ -> error("no host key fetch expected") },
-            io = Dispatchers.Unconfined,
-        )
+        val vm =
+            SinkEditorViewModel(
+                sinkId = id,
+                settings = settings,
+                credentials = credentials,
+                work = RecordingWorkControl(),
+                http = OkHttpClient(),
+                appScope = CoroutineScope(Dispatchers.Unconfined),
+                hostKeys = HostKeyFetcher { _, _ -> error("no host key fetch expected") },
+                io = Dispatchers.Unconfined,
+            )
         setScreen { SinkEditorScreen(vm, onDone = { done++ }) }
     }
 
@@ -177,18 +179,20 @@ class SinkEditorScreenTest : ScreenTest() {
 
     @Test
     fun `a signed-in OIDC sink signs out`() {
-        val oidc = SinkConfig(
-            "o",
-            "OIDC sink",
-            transport = TransportConfig.HttpPut("https://sink.invalid/"),
-            auth = AuthConfig.Oidc(
-                "https://auth.invalid",
-                "c",
-                OidcClientAuth.NONE,
-                "https://auth.invalid/t",
-                "https://auth.invalid/d",
-            ),
-        )
+        val oidc =
+            SinkConfig(
+                "o",
+                "OIDC sink",
+                transport = TransportConfig.HttpPut("https://sink.invalid/"),
+                auth =
+                    AuthConfig.Oidc(
+                        "https://auth.invalid",
+                        "c",
+                        OidcClientAuth.NONE,
+                        "https://auth.invalid/t",
+                        "https://auth.invalid/d",
+                    ),
+            )
         settings.settings.value = AppSettings(sinks = listOf(oidc))
         runBlocking { secrets.put(StoredNames.tokens(oidc.id), TokenSet("a", "r", 0).encode()) }
         show(oidc.id)
@@ -214,11 +218,12 @@ class SinkEditorScreenTest : ScreenTest() {
     private companion object {
         const val STORED_SECRET = "stored-token-value"
         const val TYPED_SECRET = "typed-token-value"
-        val AUTH_KINDS = listOf(
-            R.string.settings_auth_none,
-            R.string.settings_auth_basic,
-            R.string.settings_auth_bearer,
-            R.string.settings_auth_oidc,
-        )
+        val AUTH_KINDS =
+            listOf(
+                R.string.settings_auth_none,
+                R.string.settings_auth_basic,
+                R.string.settings_auth_bearer,
+                R.string.settings_auth_oidc,
+            )
     }
 }

@@ -117,13 +117,14 @@ class WireVectorsTest {
 
     @Test
     fun `64 KB raw upload is the section 6 head and 16 REQ_BODY frames of 4096`() {
-        val frames = BleHttpWire.requestFrames(
-            seq = 7,
-            method = "POST",
-            path = "/api/fs/upload?path=/data/app/cfg.bin",
-            body = patterned(65536),
-            contentType = "application/octet-stream",
-        )
+        val frames =
+            BleHttpWire.requestFrames(
+                seq = 7,
+                method = "POST",
+                path = "/api/fs/upload?path=/data/app/cfg.bin",
+                body = patterned(65536),
+                contentType = "application/octet-stream",
+            )
 
         assertEquals(
             """{"m":"POST","p":"/api/fs/upload?path=/data/app/cfg.bin","ct":"application/octet-stream","len":65536}""",
@@ -144,7 +145,13 @@ class WireVectorsTest {
     fun `device upload credits 8192 to 57344 are u32 LE CREDIT frames`() {
         val credit = Frame.credit(7, 8192)
         assertArrayEquals(hex("57 02 06 00 07 00 04 00 00 20 00 00"), credit.encode())
-        val parsed = FrameParser().feed((8192L..57344L step 8192).flatMap { Frame.credit(7, it).encode().toList() }.toByteArray())
+        val parsed =
+            FrameParser().feed(
+                (8192L..57344L step 8192)
+                    .flatMap {
+                        Frame.credit(7, it).encode().toList()
+                    }.toByteArray(),
+            )
         assertEquals((8192L..57344L step 8192).toList(), parsed.map { it.creditValue })
     }
 
@@ -177,20 +184,24 @@ class WireVectorsTest {
 
     @Test
     fun `other section 6 request heads encode verbatim`() {
-        val cases = listOf(
-            RequestHead("GET", "/api/fs/list?path=/data") to """{"m":"GET","p":"/api/fs/list?path=/data"}""",
-            RequestHead("GET", "/api/fs/info?path=/sd") to """{"m":"GET","p":"/api/fs/info?path=/sd"}""",
-            RequestHead("POST", "/api/fs/mkdir?path=/data/app") to """{"m":"POST","p":"/api/fs/mkdir?path=/data/app"}""",
-            RequestHead("GET", "/api/fs/download?path=/data/app/cfg.bin") to
-                """{"m":"GET","p":"/api/fs/download?path=/data/app/cfg.bin"}""",
-            RequestHead("DELETE", "/api/fs/file?path=/data/app/cfg.bin") to
-                """{"m":"DELETE","p":"/api/fs/file?path=/data/app/cfg.bin"}""",
-            RequestHead("GET", "/api/settings/wifi_manager") to """{"m":"GET","p":"/api/settings/wifi_manager"}""",
-            RequestHead("POST", "/api/settings/submit") to """{"m":"POST","p":"/api/settings/submit"}""",
-            RequestHead("GET", "/api/uds") to """{"m":"GET","p":"/api/uds"}""",
-            RequestHead("POST", "/api/uds/session", "application/json", """{"action":"end"}""".length.toLong()) to
-                """{"m":"POST","p":"/api/uds/session","ct":"application/json","len":16}""",
-        )
+        val cases =
+            listOf(
+                RequestHead("GET", "/api/fs/list?path=/data") to """{"m":"GET","p":"/api/fs/list?path=/data"}""",
+                RequestHead("GET", "/api/fs/info?path=/sd") to """{"m":"GET","p":"/api/fs/info?path=/sd"}""",
+                RequestHead(
+                    "POST",
+                    "/api/fs/mkdir?path=/data/app",
+                ) to """{"m":"POST","p":"/api/fs/mkdir?path=/data/app"}""",
+                RequestHead("GET", "/api/fs/download?path=/data/app/cfg.bin") to
+                    """{"m":"GET","p":"/api/fs/download?path=/data/app/cfg.bin"}""",
+                RequestHead("DELETE", "/api/fs/file?path=/data/app/cfg.bin") to
+                    """{"m":"DELETE","p":"/api/fs/file?path=/data/app/cfg.bin"}""",
+                RequestHead("GET", "/api/settings/wifi_manager") to """{"m":"GET","p":"/api/settings/wifi_manager"}""",
+                RequestHead("POST", "/api/settings/submit") to """{"m":"POST","p":"/api/settings/submit"}""",
+                RequestHead("GET", "/api/uds") to """{"m":"GET","p":"/api/uds"}""",
+                RequestHead("POST", "/api/uds/session", "application/json", """{"action":"end"}""".length.toLong()) to
+                    """{"m":"POST","p":"/api/uds/session","ct":"application/json","len":16}""",
+            )
         for ((head, expected) in cases) {
             assertEquals(expected, head.encode().decodeToString())
             assertEquals(head, RequestHead.decode(expected.encodeToByteArray()))

@@ -52,32 +52,50 @@ class JournalNormalizer : Normalizer {
         val setsByFile = setsByFile(journal)
         val out = ArrayList<String>(page.size)
         var rows = 0
-        val lastFile = walkFiles(page, openFile) { line, kind, file ->
-            when (kind) {
-                is StoredLine.Marker -> out += line
-                is StoredLine.Row -> if (!kind.fields.containsKey("_cursor")) {
-                    out += fixRow(kind.fields, setsByFile[file].orEmpty(), anchor)
-                    rows++
-                }
-                StoredLine.Other -> if (line.isNotBlank()) {
-                    out += line
-                    rows++
+        val lastFile =
+            walkFiles(page, openFile) { line, kind, file ->
+                when (kind) {
+                    is StoredLine.Marker -> {
+                        out += line
+                    }
+
+                    is StoredLine.Row -> {
+                        if (!kind.fields.containsKey("_cursor")) {
+                            out += fixRow(kind.fields, setsByFile[file].orEmpty(), anchor)
+                            rows++
+                        }
+                    }
+
+                    StoredLine.Other -> {
+                        if (line.isNotBlank()) {
+                            out += line
+                            rows++
+                        }
+                    }
                 }
             }
-        }
         return Normalized(if (rows == 0) emptyList() else out, rows, lastFile)
     }
 
-    private fun fixRow(row: JsonObject, sets: List<FileSet>, anchor: Anchor?): String {
+    private fun fixRow(
+        row: JsonObject,
+        sets: List<FileSet>,
+        anchor: Anchor?,
+    ): String {
         val raw = row.long("ts")
-        val (ts, quality) = when {
-            raw == null -> null to TsQuality.UNKNOWN
-            else -> repair(raw, sets, anchor)
-        }
+        val (ts, quality) =
+            when {
+                raw == null -> null to TsQuality.UNKNOWN
+                else -> repair(raw, sets, anchor)
+            }
         return rewrite(row, ts, quality)
     }
 
-    private fun repair(raw: Long, sets: List<FileSet>, anchor: Anchor?): Pair<Long?, TsQuality> {
+    private fun repair(
+        raw: Long,
+        sets: List<FileSet>,
+        anchor: Anchor?,
+    ): Pair<Long?, TsQuality> {
         var ts = raw
         var applied = false
         for (set in sets) {
@@ -90,16 +108,23 @@ class JournalNormalizer : Normalizer {
         }
         return when {
             applied -> ts to TsQuality.JOURNAL
+
             isPlausible(raw) -> raw to TsQuality.DEVICE
+
             // An anchor taken while the device clock was already valid leaves a 1970 stamp in
             // 1970: the row predates the current clock regime, so the offset says nothing about it.
             anchor != null && isPlausible(raw + anchor.offsetMs) -> raw + anchor.offsetMs to TsQuality.ANCHOR
+
             else -> null to TsQuality.UNKNOWN
         }
     }
 
     /** `ts` replaced in place; any device-sent `ts_raw`/`ts_quality` replaced by ours at the end. */
-    private fun rewrite(row: JsonObject, ts: Long?, quality: TsQuality): String =
+    private fun rewrite(
+        row: JsonObject,
+        ts: Long?,
+        quality: TsQuality,
+    ): String =
         buildJsonObject {
             for ((key, value) in row) {
                 when (key) {
@@ -113,14 +138,21 @@ class JournalNormalizer : Normalizer {
         }.toString()
 
     /** A clock set as seen by one file it lists, with its boot's origin at the time of the set. */
-    private data class FileSet(val tsBefore: Long, val deltaMs: Long, val originMs: Long?)
+    private data class FileSet(
+        val tsBefore: Long,
+        val deltaMs: Long,
+        val originMs: Long?,
+    )
 
     private fun setsByFile(journal: List<ClockEvent>): Map<String, List<FileSet>> {
         val out = LinkedHashMap<String, MutableList<FileSet>>()
         var origin: Long? = null
         for (event in journal) {
             when (event) {
-                is ClockEvent.Boot -> origin = event.originMs
+                is ClockEvent.Boot -> {
+                    origin = event.originMs
+                }
+
                 is ClockEvent.ClockSet -> {
                     for (f in event.files.distinct()) {
                         out.getOrPut(f) { mutableListOf() } += FileSet(event.tsBefore, event.deltaMs, origin)
@@ -128,7 +160,10 @@ class JournalNormalizer : Normalizer {
                     // The origin is on the clock as it read at the boot line; each set moves it.
                     origin = origin?.plus(event.deltaMs)
                 }
-                is ClockEvent.Rotate -> Unit
+
+                is ClockEvent.Rotate -> {
+                    Unit
+                }
             }
         }
         return out

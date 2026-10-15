@@ -38,6 +38,7 @@ private const val MB = 1_000_000L
 
 /** Below ~10 MB a single stalled sink would start evicting within one long drive. */
 const val MIN_CACHE_CAP_MB = 10L
+
 /**
  * The store rewrites its whole JSON index on every page append (~250 B per ~40 KB page): ~13 MB per
  * append at 2 GB, ~130 MB at 20 GB.
@@ -72,7 +73,10 @@ class SettingsViewModel(
         mutableState.update { it.copy(form = transform(it.form), saved = false) }
     }
 
-    fun setSinkEnabled(id: String, enabled: Boolean) {
+    fun setSinkEnabled(
+        id: String,
+        enabled: Boolean,
+    ) {
         viewModelScope.launch {
             var after: AppSettings? = null
             settings.update { s ->
@@ -95,24 +99,30 @@ class SettingsViewModel(
             val before = settings.current()
             var after = before
             settings.update { stored ->
-                stored.copy(
-                    uploadOverCellular = form.uploadOverCellular,
-                    cacheCapBytes = form.cacheCapMb.trim().toLong() * MB,
-                    periodicSync = form.periodicSync,
-                    carDeviceAddress = form.carDeviceAddress,
-                ).also { after = it }
+                stored
+                    .copy(
+                        uploadOverCellular = form.uploadOverCellular,
+                        cacheCapBytes = form.cacheCapMb.trim().toLong() * MB,
+                        periodicSync = form.periodicSync,
+                        carDeviceAddress = form.carDeviceAddress,
+                    ).also { after = it }
             }
             // Re-enqueue so a waiting upload picks up the new network constraint at once.
-            if (before.uploadOverCellular != after.uploadOverCellular) work.uploadNow(after.uploadOverCellular, replace = true)
+            if (before.uploadOverCellular !=
+                after.uploadOverCellular
+            ) {
+                work.uploadNow(after.uploadOverCellular, replace = true)
+            }
             if (before.periodicSync != after.periodicSync) work.setPeriodicSync(after.periodicSync)
             mutableState.update { it.copy(form = after.toForm(), sinks = after.sinks, saved = true) }
         }
     }
 
-    private fun AppSettings.toForm() = SettingsForm(
-        uploadOverCellular = uploadOverCellular,
-        cacheCapMb = (cacheCapBytes / MB).toString(),
-        periodicSync = periodicSync,
-        carDeviceAddress = carDeviceAddress,
-    )
+    private fun AppSettings.toForm() =
+        SettingsForm(
+            uploadOverCellular = uploadOverCellular,
+            cacheCapMb = (cacheCapBytes / MB).toString(),
+            periodicSync = periodicSync,
+            carDeviceAddress = carDeviceAddress,
+        )
 }

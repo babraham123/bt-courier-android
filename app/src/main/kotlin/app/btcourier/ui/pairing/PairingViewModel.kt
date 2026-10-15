@@ -40,7 +40,10 @@ interface PairingPlatform {
      * Connects to [address] with [kind]'s GATT profile and runs its "test connection" probe;
      * [ProbeResult.Busy] when a sync holds the device.
      */
-    suspend fun probe(address: String, kind: DeviceKind): ProbeResult
+    suspend fun probe(
+        address: String,
+        kind: DeviceKind,
+    ): ProbeResult
 }
 
 /**
@@ -59,7 +62,10 @@ class PairingViewModel(
     private val mutableState = MutableStateFlow(PairingUiState())
     val state: StateFlow<PairingUiState> = mutableState.asStateFlow()
 
-    fun chooseKind(kind: DeviceKind) = mutableState.update { it.copy(step = PairingStep.Explain, kind = kind, error = null) }
+    fun chooseKind(kind: DeviceKind) =
+        mutableState.update {
+            it.copy(step = PairingStep.Explain, kind = kind, error = null)
+        }
 
     fun permissionGranted() = mutableState.update { it.copy(step = PairingStep.Associate, error = null) }
 
@@ -70,7 +76,10 @@ class PairingViewModel(
     fun failed(message: String?) = mutableState.update { it.copy(busy = false, error = message) }
 
     /** The user picked the device at [address] (advertised as [name]) in the companion chooser. */
-    fun associated(address: String, name: String?) {
+    fun associated(
+        address: String,
+        name: String?,
+    ) {
         val kind = state.value.kind
         val upper = address.uppercase()
         mutableState.update { it.copy(address = upper, busy = true, error = null) }
@@ -100,12 +109,13 @@ class PairingViewModel(
         val address = current.address ?: return
         mutableState.update { it.copy(busy = true, error = null, probe = null) }
         viewModelScope.launch {
-            val next = try {
-                val result = pairingStep("Test connection") { platform.probe(address, current.kind) }
-                state.value.copy(probe = result)
-            } catch (e: PairingException) {
-                state.value.copy(error = e.message)
-            }
+            val next =
+                try {
+                    val result = pairingStep("Test connection") { platform.probe(address, current.kind) }
+                    state.value.copy(probe = result)
+                } catch (e: PairingException) {
+                    state.value.copy(error = e.message)
+                }
             mutableState.value = next.copy(busy = false)
         }
     }

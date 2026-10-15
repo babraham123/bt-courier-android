@@ -39,10 +39,11 @@ class StatusScreenTest : ScreenTest() {
     fun `a paired device shows its name, kind, address and last sync`() {
         show(
             SyncStatus(
-                lastSyncByDevice = mapOf(
-                    device.address to
-                        DeviceSync(1_000, SyncResultKind.INTERRUPTED, 3, 120, SyncStopKind.LINK_LOST, CURSOR),
-                ),
+                lastSyncByDevice =
+                    mapOf(
+                        device.address to
+                            DeviceSync(1_000, SyncResultKind.INTERRUPTED, 3, 120, SyncStopKind.LINK_LOST, CURSOR),
+                    ),
             ),
         )
 

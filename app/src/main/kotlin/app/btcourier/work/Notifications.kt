@@ -23,12 +23,13 @@ object Notifications {
     private const val ID_SYNC_FIRST = 0x1000
 
     fun createChannels(context: Context) {
-        val channel = NotificationChannel(
-            CHANNEL_TRANSFER,
-            context.getString(R.string.notification_channel_transfer),
-            // Low: visible in the shade while a transfer runs, but never sounds or peeks.
-            NotificationManager.IMPORTANCE_LOW,
-        )
+        val channel =
+            NotificationChannel(
+                CHANNEL_TRANSFER,
+                context.getString(R.string.notification_channel_transfer),
+                // Low: visible in the shade while a transfer runs, but never sounds or peeks.
+                NotificationManager.IMPORTANCE_LOW,
+            )
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
@@ -36,7 +37,10 @@ object Notifications {
      * One notification id per device: syncs of different devices run in parallel, and WorkManager
      * cancels a finished worker's notification id even if another worker is showing it.
      */
-    fun syncForeground(context: Context, address: String) = foregroundInfo(
+    fun syncForeground(
+        context: Context,
+        address: String,
+    ) = foregroundInfo(
         context,
         ID_SYNC_FIRST + (address.uppercase().hashCode() and 0xFFFF),
         R.string.notification_syncing,
@@ -44,22 +48,31 @@ object Notifications {
         ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
     )
 
-    fun uploadForeground(context: Context) = foregroundInfo(
-        context,
-        ID_UPLOAD,
-        R.string.notification_uploading,
-        android.R.drawable.stat_sys_upload,
-        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-    )
+    fun uploadForeground(context: Context) =
+        foregroundInfo(
+            context,
+            ID_UPLOAD,
+            R.string.notification_uploading,
+            android.R.drawable.stat_sys_upload,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+        )
 
-    private fun foregroundInfo(context: Context, id: Int, text: Int, icon: Int, type: Int): ForegroundInfo {
-        val notification = NotificationCompat.Builder(context, CHANNEL_TRANSFER)
-            .setSmallIcon(icon)
-            .setContentTitle(context.getString(text))
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOngoing(true)
-            .setSilent(true)
-            .build()
+    private fun foregroundInfo(
+        context: Context,
+        id: Int,
+        text: Int,
+        icon: Int,
+        type: Int,
+    ): ForegroundInfo {
+        val notification =
+            NotificationCompat
+                .Builder(context, CHANNEL_TRANSFER)
+                .setSmallIcon(icon)
+                .setContentTitle(context.getString(text))
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .setSilent(true)
+                .build()
         return ForegroundInfo(id, notification, type)
     }
 

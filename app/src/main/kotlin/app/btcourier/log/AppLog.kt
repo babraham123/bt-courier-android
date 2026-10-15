@@ -28,9 +28,15 @@ class AppLog(
     private var linesInFile = 0
     private var loaded = false
 
-    fun info(tag: String, message: String) = add("I", tag, message)
+    fun info(
+        tag: String,
+        message: String,
+    ) = add("I", tag, message)
 
-    fun warn(tag: String, message: String) = add("W", tag, message)
+    fun warn(
+        tag: String,
+        message: String,
+    ) = add("W", tag, message)
 
     /** The retained entries, oldest first. */
     @Synchronized
@@ -43,7 +49,11 @@ class AppLog(
     fun export(): String = lines().joinToString(separator = "\n", postfix = "\n")
 
     @Synchronized
-    private fun add(level: String, tag: String, message: String) {
+    private fun add(
+        level: String,
+        tag: String,
+        message: String,
+    ) {
         load()
         // One entry per line, so a multi-line exception message can't forge further entries.
         val text = redact(message).replace(Regex("\\s*[\\r\\n]+\\s*"), " ").take(MAX_MESSAGE_CHARS)
@@ -99,9 +109,10 @@ class AppLog(
         // Authorization header values; the length floor spares prose such as "Basic auth".
         private val AUTH_SCHEME = Regex("""(?i)\b(Basic|Bearer)\s+[A-Za-z0-9._~+/=-]{8,}""")
 
-        private val SECRET_PARAM = Regex(
-            """(?i)\b(password|passwd|pwd|pass|token|access_token|refresh_token|secret|api_?key)=[^&\s]+""",
-        )
+        private val SECRET_PARAM =
+            Regex(
+                """(?i)\b(password|passwd|pwd|pass|token|access_token|refresh_token|secret|api_?key)=[^&\s]+""",
+            )
 
         /** Strips credentials from [message]: URL user info, auth header values, secret query params. */
         fun redact(message: String): String =

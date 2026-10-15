@@ -24,18 +24,23 @@ import kotlin.time.Duration
  * @throws IOException on timeout or when the link drops before the answer is whole.
  */
 @OptIn(FlowPreview::class)
-suspend fun <T : Any> GattLink.colmiRequest(packet: ByteArray, timeout: Duration, assembler: ColmiAssembler<T>): T {
+suspend fun <T : Any> GattLink.colmiRequest(
+    packet: ByteArray,
+    timeout: Duration,
+    assembler: ColmiAssembler<T>,
+): T {
     val command = packet[0]
     write(packet, false)
-    val result = try {
-        notifications
-            .timeout(timeout)
-            .transform { pdu -> ColmiPacketCodec.packets(pdu).forEach { emit(it) } }
-            .filter { ColmiPacketCodec.isValid(it) && it[0] == command }
-            .mapNotNull { assembler.feed(it) }
-            .firstOrNull()
-    } catch (e: TimeoutCancellationException) {
-        throw IOException("no complete answer to command 0x%02x within %s".format(command, timeout), e)
-    }
+    val result =
+        try {
+            notifications
+                .timeout(timeout)
+                .transform { pdu -> ColmiPacketCodec.packets(pdu).forEach { emit(it) } }
+                .filter { ColmiPacketCodec.isValid(it) && it[0] == command }
+                .mapNotNull { assembler.feed(it) }
+                .firstOrNull()
+        } catch (e: TimeoutCancellationException) {
+            throw IOException("no complete answer to command 0x%02x within %s".format(command, timeout), e)
+        }
     return result ?: throw IOException("link dropped during command 0x%02x".format(command))
 }

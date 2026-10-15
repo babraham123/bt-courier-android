@@ -23,19 +23,27 @@ data class ExportPage(
 }
 
 /** A [StoredLine.Marker] (`{"_file":"dl_<epoch>.jsonl"}`) at [index] of [ExportPage.lines]. */
-data class FileMarker(val index: Int, val name: String)
+data class FileMarker(
+    val index: Int,
+    val name: String,
+)
 
 /** Why an export response was rejected; the caller retries from the same cursor. */
-sealed class ExportPageException(message: String) : Exception(message) {
+sealed class ExportPageException(
+    message: String,
+) : Exception(message) {
     /**
      * The response does not end with `{"_cursor":..,"more":..}`: the transfer was cut short, so
      * the rows cannot be trusted to be complete and there is no cursor to advance to.
      */
-    class Truncated(lastLine: String?) :
-        ExportPageException("export page has no trailing cursor line (last line: ${lastLine?.take(80)})")
+    class Truncated(
+        lastLine: String?,
+    ) : ExportPageException("export page has no trailing cursor line (last line: ${lastLine?.take(80)})")
 
     /** A meta line appeared before the end: two responses were spliced or the stream is corrupt. */
-    class MisplacedMeta(index: Int) : ExportPageException("export cursor line at $index is not the last line")
+    class MisplacedMeta(
+        index: Int,
+    ) : ExportPageException("export cursor line at $index is not the last line")
 }
 
 object ExportPageParser {
@@ -54,10 +62,11 @@ object ExportPageParser {
         val last = lines.lastOrNull()
         val meta = last?.let(::metaOrNull) ?: throw ExportPageException.Truncated(last)
         val body = lines.dropLast(1)
-        val files = body.mapIndexedNotNull { index, line ->
-            if (metaOrNull(line) != null) throw ExportPageException.MisplacedMeta(index)
-            StoredLine.markerFile(line)?.let { FileMarker(index, it) }
-        }
+        val files =
+            body.mapIndexedNotNull { index, line ->
+                if (metaOrNull(line) != null) throw ExportPageException.MisplacedMeta(index)
+                StoredLine.markerFile(line)?.let { FileMarker(index, it) }
+            }
         return ExportPage(lines = body, files = files, cursor = meta.first, more = meta.second)
     }
 

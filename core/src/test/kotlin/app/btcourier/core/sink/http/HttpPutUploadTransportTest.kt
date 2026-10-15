@@ -29,8 +29,11 @@ class HttpPutUploadTransportTest : MockServerTest() {
 
     private val now = Instant.parse("2026-10-14T12:00:00Z").toEpochMilli()
 
-    private fun transport(auth: Auth = Auth.None, compress: Boolean = true, client: OkHttpClient = this.client) =
-        HttpPutUploadTransport(baseUrl("/ingest/"), client, auth, compress)
+    private fun transport(
+        auth: Auth = Auth.None,
+        compress: Boolean = true,
+        client: OkHttpClient = this.client,
+    ) = HttpPutUploadTransport(baseUrl("/ingest/"), client, auth, compress)
 
     private fun retry(result: UploadResult) = assertInstanceOf(UploadResult.Retry::class.java, result)
 
@@ -38,65 +41,72 @@ class HttpPutUploadTransportTest : MockServerTest() {
         DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.ofEpochMilli(epochMs).atOffset(ZoneOffset.UTC))
 
     @Test
-    fun `PUTs the stored gzip bytes under the batch name with basic auth`() = runTest {
-        respond(201)
-        val result = transport(Auth.Basic("courier", "pässwörd")).upload(batch)
+    fun `PUTs the stored gzip bytes under the batch name with basic auth`() =
+        runTest {
+            respond(201)
+            val result = transport(Auth.Basic("courier", "pässwörd")).upload(batch)
 
-        val req = takeRequest()
-        assertEquals(UploadResult.Acked, result)
-        assertEquals("PUT", req.method)
-        assertEquals("/ingest/${batch.name}", req.target)
-        assertEquals("application/gzip", req.headers["Content-Type"])
-        assertNull(req.headers["Content-Encoding"], "receivers go by the .gz name")
-        assertEquals(basicHeader("courier", "pässwörd"), req.headers["Authorization"])
-        assertArrayEquals(batch.bytes, req.body?.toByteArray())
-    }
-
-    @Test
-    fun `bearer auth is sent as a bearer token`() = runTest {
-        respond(204)
-        transport(Auth.Bearer("upload-token")).upload(batch)
-        assertEquals("Bearer upload-token", takeRequest().headers["Authorization"])
-    }
+            val req = takeRequest()
+            assertEquals(UploadResult.Acked, result)
+            assertEquals("PUT", req.method)
+            assertEquals("/ingest/${batch.name}", req.target)
+            assertEquals("application/gzip", req.headers["Content-Type"])
+            assertNull(req.headers["Content-Encoding"], "receivers go by the .gz name")
+            assertEquals(basicHeader("courier", "pässwörd"), req.headers["Authorization"])
+            assertArrayEquals(batch.bytes, req.body?.toByteArray())
+        }
 
     @Test
-    fun `without compression the decompressed content goes under the name without gz`() = runTest {
-        respond(200)
-        assertEquals(UploadResult.Acked, transport(compress = false).upload(batch))
-
-        val req = takeRequest()
-        assertEquals("/ingest/wican-1700000000_0-0123456789abcdef.jsonl", req.target)
-        assertEquals("application/x-ndjson", req.headers["Content-Type"])
-        assertArrayEquals(content, req.body?.toByteArray())
-    }
+    fun `bearer auth is sent as a bearer token`() =
+        runTest {
+            respond(204)
+            transport(Auth.Bearer("upload-token")).upload(batch)
+            assertEquals("Bearer upload-token", takeRequest().headers["Authorization"])
+        }
 
     @Test
-    fun `without compression a corrupt stored batch fails instead of retrying forever`() = runTest {
-        val result = transport(compress = false).upload(batch.copy(bytes = byteArrayOf(1, 2, 3)))
-        assertInstanceOf(UploadResult.Failed::class.java, result)
-        assertEquals(0, server.requestCount)
-    }
+    fun `without compression the decompressed content goes under the name without gz`() =
+        runTest {
+            respond(200)
+            assertEquals(UploadResult.Acked, transport(compress = false).upload(batch))
+
+            val req = takeRequest()
+            assertEquals("/ingest/wican-1700000000_0-0123456789abcdef.jsonl", req.target)
+            assertEquals("application/x-ndjson", req.headers["Content-Type"])
+            assertArrayEquals(content, req.body?.toByteArray())
+        }
+
+    @Test
+    fun `without compression a corrupt stored batch fails instead of retrying forever`() =
+        runTest {
+            val result = transport(compress = false).upload(batch.copy(bytes = byteArrayOf(1, 2, 3)))
+            assertInstanceOf(UploadResult.Failed::class.java, result)
+            assertEquals(0, server.requestCount)
+        }
 
     @ParameterizedTest
     @ValueSource(ints = [200, 201, 204])
-    fun `2xx is acked`(code: Int) = runTest {
-        respond(code)
-        assertEquals(UploadResult.Acked, transport().upload(batch))
-    }
+    fun `2xx is acked`(code: Int) =
+        runTest {
+            respond(code)
+            assertEquals(UploadResult.Acked, transport().upload(batch))
+        }
 
     @ParameterizedTest
     @ValueSource(ints = [408, 429, 500, 502, 503, 504])
-    fun `timeouts, throttling and server errors are retried`(code: Int) = runTest {
-        respond(code)
-        retry(transport().upload(batch))
-    }
+    fun `timeouts, throttling and server errors are retried`(code: Int) =
+        runTest {
+            respond(code)
+            retry(transport().upload(batch))
+        }
 
     @ParameterizedTest
     @ValueSource(ints = [400, 401, 403, 404, 405, 413])
-    fun `other client errors fail permanently`(code: Int) = runTest {
-        respond(code)
-        assertInstanceOf(UploadResult.Failed::class.java, transport().upload(batch))
-    }
+    fun `other client errors fail permanently`(code: Int) =
+        runTest {
+            respond(code)
+            assertInstanceOf(UploadResult.Failed::class.java, transport().upload(batch))
+        }
 
     // An auth proxy (e.g. Authelia forward-auth) redirects to a login page that answers 200.
     private fun redirectToLogin(code: Int) {
@@ -106,136 +116,165 @@ class HttpPutUploadTransportTest : MockServerTest() {
 
     @ParameterizedTest
     @ValueSource(ints = [301, 302, 303, 307, 308])
-    fun `a redirect followed by the client fails instead of acking the login page`(code: Int) = runTest {
-        redirectToLogin(code)
+    fun `a redirect followed by the client fails instead of acking the login page`(code: Int) =
+        runTest {
+            redirectToLogin(code)
 
-        val result = transport().upload(batch)
+            val result = transport().upload(batch)
 
-        assertInstanceOf(UploadResult.Failed::class.java, result)
-        assertEquals("PUT", takeRequest().method)
-        assertEquals("/login", takeRequest().target, "the default client followed the redirect")
-    }
-
-    @Test
-    fun `a redirect is a permanent failure when the client does not follow it`() = runTest {
-        redirectToLogin(302)
-        val noRedirects = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
-
-        assertInstanceOf(UploadResult.Failed::class.java, transport(client = noRedirects).upload(batch))
-        assertEquals(1, server.requestCount)
-    }
+            assertInstanceOf(UploadResult.Failed::class.java, result)
+            assertEquals("PUT", takeRequest().method)
+            assertEquals("/login", takeRequest().target, "the default client followed the redirect")
+        }
 
     @Test
-    fun `a conflict whose HEAD is redirected is not acked`() = runTest {
-        respond(409)
-        respond(302, "", "Location" to "/login")
-        respond(200, "", "Content-Length" to batch.bytes.size.toString())
+    fun `a redirect is a permanent failure when the client does not follow it`() =
+        runTest {
+            redirectToLogin(302)
+            val noRedirects =
+                client
+                    .newBuilder()
+                    .followRedirects(false)
+                    .followSslRedirects(false)
+                    .build()
 
-        val result = transport().upload(batch)
-
-        assertFalse(result == UploadResult.Acked, result.toString())
-        assertEquals(3, server.requestCount)
-    }
-
-    @Test
-    fun `a connection failure is retried, not thrown`() = runTest {
-        val t = transport()
-        server.close()
-        retry(t.upload(batch))
-    }
+            assertInstanceOf(UploadResult.Failed::class.java, transport(client = noRedirects).upload(batch))
+            assertEquals(1, server.requestCount)
+        }
 
     @Test
-    fun `a timeout after the body was sent is retried, because the object may exist`() = runTest {
-        server.enqueue(MockResponse.Builder().code(201).headersDelay(5, TimeUnit.SECONDS).build())
-        val impatient = client.newBuilder().readTimeout(300, TimeUnit.MILLISECONDS).build()
+    fun `a conflict whose HEAD is redirected is not acked`() =
+        runTest {
+            respond(409)
+            respond(302, "", "Location" to "/login")
+            respond(200, "", "Content-Length" to batch.bytes.size.toString())
 
-        val result = transport(client = impatient).upload(batch)
+            val result = transport().upload(batch)
 
-        retry(result)
-        assertArrayEquals(batch.bytes, takeRequest().body?.toByteArray(), "server received the whole body")
-    }
-
-    @Test
-    fun `retry-after in seconds is passed on as the server's hint`() = runTest {
-        respond(429, "", "Retry-After" to "120")
-        respond(503, "", "Retry-After" to "${7 * 24 * 3600}")
-        val t = transport()
-        assertEquals(120_000L, retry(t.upload(batch)).retryAfterMs)
-        assertEquals(7 * 24 * 3600_000L, retry(t.upload(batch)).retryAfterMs, "bounding a hint is retry policy, not the transport's")
-    }
+            assertFalse(result == UploadResult.Acked, result.toString())
+            assertEquals(3, server.requestCount)
+        }
 
     @Test
-    fun `retry-after as an HTTP date is measured against the response's Date, a past one meaning now`() = runTest {
-        respond(503, "", "Date" to httpDate(now), "Retry-After" to httpDate(now + 90_000))
-        respond(503, "", "Date" to httpDate(now), "Retry-After" to httpDate(now - 60_000))
-        val t = transport()
-        assertEquals(90_000L, retry(t.upload(batch)).retryAfterMs)
-        assertEquals(0L, retry(t.upload(batch)).retryAfterMs)
-    }
+    fun `a connection failure is retried, not thrown`() =
+        runTest {
+            val t = transport()
+            server.close()
+            retry(t.upload(batch))
+        }
 
     @Test
-    fun `retry-after as an HTTP date without a Date header is measured against arrival`() = runTest {
-        val at = System.currentTimeMillis() + 3_600_000
-        respond(503, "", "Retry-After" to httpDate(at))
-        val hint = checkNotNull(retry(transport().upload(batch)).retryAfterMs)
-        // HTTP dates have whole seconds and the response arrives a moment after `at` was taken.
-        assertTrue(hint in 3_598_000..3_600_000, "$hint")
-    }
+    fun `a timeout after the body was sent is retried, because the object may exist`() =
+        runTest {
+            server.enqueue(
+                MockResponse
+                    .Builder()
+                    .code(201)
+                    .headersDelay(5, TimeUnit.SECONDS)
+                    .build(),
+            )
+            val impatient = client.newBuilder().readTimeout(300, TimeUnit.MILLISECONDS).build()
+
+            val result = transport(client = impatient).upload(batch)
+
+            retry(result)
+            assertArrayEquals(batch.bytes, takeRequest().body?.toByteArray(), "server received the whole body")
+        }
 
     @Test
-    fun `a missing or unparseable retry-after gives no hint`() = runTest {
-        respond(503)
-        respond(503, "", "Retry-After" to "soon")
-        val t = transport()
-        assertNull(retry(t.upload(batch)).retryAfterMs)
-        assertNull(retry(t.upload(batch)).retryAfterMs)
-    }
+    fun `retry-after in seconds is passed on as the server's hint`() =
+        runTest {
+            respond(429, "", "Retry-After" to "120")
+            respond(503, "", "Retry-After" to "${7 * 24 * 3600}")
+            val t = transport()
+            assertEquals(120_000L, retry(t.upload(batch)).retryAfterMs)
+            assertEquals(
+                7 * 24 * 3600_000L,
+                retry(t.upload(batch)).retryAfterMs,
+                "bounding a hint is retry policy, not the transport's",
+            )
+        }
+
+    @Test
+    fun `retry-after as an HTTP date is measured against the response's Date, a past one meaning now`() =
+        runTest {
+            respond(503, "", "Date" to httpDate(now), "Retry-After" to httpDate(now + 90_000))
+            respond(503, "", "Date" to httpDate(now), "Retry-After" to httpDate(now - 60_000))
+            val t = transport()
+            assertEquals(90_000L, retry(t.upload(batch)).retryAfterMs)
+            assertEquals(0L, retry(t.upload(batch)).retryAfterMs)
+        }
+
+    @Test
+    fun `retry-after as an HTTP date without a Date header is measured against arrival`() =
+        runTest {
+            val at = System.currentTimeMillis() + 3_600_000
+            respond(503, "", "Retry-After" to httpDate(at))
+            val hint = checkNotNull(retry(transport().upload(batch)).retryAfterMs)
+            // HTTP dates have whole seconds and the response arrives a moment after `at` was taken.
+            assertTrue(hint in 3_598_000..3_600_000, "$hint")
+        }
+
+    @Test
+    fun `a missing or unparseable retry-after gives no hint`() =
+        runTest {
+            respond(503)
+            respond(503, "", "Retry-After" to "soon")
+            val t = transport()
+            assertNull(retry(t.upload(batch)).retryAfterMs)
+            assertNull(retry(t.upload(batch)).retryAfterMs)
+        }
 
     @ParameterizedTest
     @ValueSource(ints = [409, 412])
-    fun `a conflict on an existing object of the same length is acked`(code: Int) = runTest {
-        respond(code)
-        respond(200, "", "Content-Length" to batch.bytes.size.toString())
+    fun `a conflict on an existing object of the same length is acked`(code: Int) =
+        runTest {
+            respond(code)
+            respond(200, "", "Content-Length" to batch.bytes.size.toString())
 
-        assertEquals(UploadResult.Acked, transport(Auth.Bearer("upload-token")).upload(batch))
+            assertEquals(UploadResult.Acked, transport(Auth.Bearer("upload-token")).upload(batch))
 
-        takeRequest()
-        val head = takeRequest()
-        assertEquals("HEAD", head.method)
-        assertEquals("/ingest/${batch.name}", head.target)
-        assertEquals("Bearer upload-token", head.headers["Authorization"])
-    }
-
-    @Test
-    fun `a conflict on an existing object of a different length is retried`() = runTest {
-        respond(409)
-        respond(200, "", "Content-Length" to (batch.bytes.size + 1).toString())
-        retry(transport().upload(batch))
-    }
-
-    @Test
-    fun `a conflict whose object cannot be found fails, since the target itself is wrong`() = runTest {
-        respond(412)
-        respond(404)
-        assertInstanceOf(UploadResult.Failed::class.java, transport().upload(batch))
-    }
-
-    @Test
-    fun `a conflict whose HEAD fails is retried`() = runTest {
-        respond(409)
-        server.enqueue(MockResponse.Builder().onRequestStart(SocketEffect.ShutdownConnection).build())
-        retry(transport(client = client.newBuilder().retryOnConnectionFailure(false).build()).upload(batch))
-    }
-
-    @Test
-    fun `credentials never appear in toString or results`() = runTest {
-        respond(403)
-        val t = transport(Auth.Basic("courier", "s3cret-password"))
-        val result = t.upload(batch)
-        for (s in listOf(t.toString(), result.toString())) {
-            assertFalse("s3cret" in s, s)
+            takeRequest()
+            val head = takeRequest()
+            assertEquals("HEAD", head.method)
+            assertEquals("/ingest/${batch.name}", head.target)
+            assertEquals("Bearer upload-token", head.headers["Authorization"])
         }
-        val bearer = HttpPutUploadTransport("https://upload.example.invalid/ingest/", client, Auth.Bearer("s3cret"))
-        assertFalse("s3cret" in bearer.toString())
-    }
+
+    @Test
+    fun `a conflict on an existing object of a different length is retried`() =
+        runTest {
+            respond(409)
+            respond(200, "", "Content-Length" to (batch.bytes.size + 1).toString())
+            retry(transport().upload(batch))
+        }
+
+    @Test
+    fun `a conflict whose object cannot be found fails, since the target itself is wrong`() =
+        runTest {
+            respond(412)
+            respond(404)
+            assertInstanceOf(UploadResult.Failed::class.java, transport().upload(batch))
+        }
+
+    @Test
+    fun `a conflict whose HEAD fails is retried`() =
+        runTest {
+            respond(409)
+            server.enqueue(MockResponse.Builder().onRequestStart(SocketEffect.ShutdownConnection).build())
+            retry(transport(client = client.newBuilder().retryOnConnectionFailure(false).build()).upload(batch))
+        }
+
+    @Test
+    fun `credentials never appear in toString or results`() =
+        runTest {
+            respond(403)
+            val t = transport(Auth.Basic("courier", "s3cret-password"))
+            val result = t.upload(batch)
+            for (s in listOf(t.toString(), result.toString())) {
+                assertFalse("s3cret" in s, s)
+            }
+            val bearer = HttpPutUploadTransport("https://upload.example.invalid/ingest/", client, Auth.Bearer("s3cret"))
+            assertFalse("s3cret" in bearer.toString())
+        }
 }

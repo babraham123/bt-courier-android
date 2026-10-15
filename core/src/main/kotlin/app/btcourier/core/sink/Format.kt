@@ -12,7 +12,10 @@ interface Format {
      *   leave the batch name behind (a metrics store, a merged table) tag each row with it, since
      *   two devices of one kind write identical `_file` markers and timestamps.
      */
-    fun encode(lines: List<String>, sourceId: String): ByteArray
+    fun encode(
+        lines: List<String>,
+        sourceId: String,
+    ): ByteArray
 }
 
 /**
@@ -28,7 +31,10 @@ interface Format {
 object Jsonl : Format {
     override val extension = "jsonl"
 
-    override fun encode(lines: List<String>, sourceId: String): ByteArray {
+    override fun encode(
+        lines: List<String>,
+        sourceId: String,
+    ): ByteArray {
         val sb = StringBuilder(lines.sumOf { it.length + 1 })
         for (line in lines) sb.append(line).append('\n')
         return sb.toString().encodeToByteArray()

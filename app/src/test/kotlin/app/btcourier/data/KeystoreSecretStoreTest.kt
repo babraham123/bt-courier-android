@@ -23,39 +23,45 @@ class KeystoreSecretStoreTest {
     private fun store(k: javax.crypto.SecretKey = key) = KeystoreSecretStore(dir, { k })
 
     @Test
-    fun `a stored secret reads back, survives reopening and is not stored in clear`() = runTest {
-        store().put("upload", "pässwörd")
+    fun `a stored secret reads back, survives reopening and is not stored in clear`() =
+        runTest {
+            store().put("upload", "pässwörd")
 
-        assertEquals("pässwörd", store().get("upload"))
-        assertFalse(File(dir, "upload.bin").readBytes().decodeToString(throwOnInvalidSequence = false).contains("pässwörd"))
-    }
-
-    @Test
-    fun `overwriting replaces and null deletes`() = runTest {
-        val s = store()
-        s.put("upload", "one")
-        s.put("upload", "two")
-        assertEquals("two", s.get("upload"))
-
-        s.put("upload", null)
-
-        assertNull(s.get("upload"))
-        assertFalse(File(dir, "upload.bin").exists())
-    }
+            assertEquals("pässwörd", store().get("upload"))
+            assertFalse(
+                File(dir, "upload.bin").readBytes().decodeToString(throwOnInvalidSequence = false).contains("pässwörd"),
+            )
+        }
 
     @Test
-    fun `a secret that no longer decrypts reads as absent`() = runTest {
-        store().put("upload", "token")
-        val otherKey = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+    fun `overwriting replaces and null deletes`() =
+        runTest {
+            val s = store()
+            s.put("upload", "one")
+            s.put("upload", "two")
+            assertEquals("two", s.get("upload"))
 
-        assertNull(store(otherKey).get("upload"), "key lost, e.g. after a lock-screen reset")
+            s.put("upload", null)
 
-        File(dir, "upload.bin").writeBytes(byteArrayOf(1, 12, 0))
-        assertNull(store().get("upload"), "truncated file")
-    }
+            assertNull(s.get("upload"))
+            assertFalse(File(dir, "upload.bin").exists())
+        }
 
     @Test
-    fun `names that could escape the directory are rejected`() = runTest {
-        assertThrows<IllegalArgumentException> { store().put("../x", "v") }
-    }
+    fun `a secret that no longer decrypts reads as absent`() =
+        runTest {
+            store().put("upload", "token")
+            val otherKey = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+
+            assertNull(store(otherKey).get("upload"), "key lost, e.g. after a lock-screen reset")
+
+            File(dir, "upload.bin").writeBytes(byteArrayOf(1, 12, 0))
+            assertNull(store().get("upload"), "truncated file")
+        }
+
+    @Test
+    fun `names that could escape the directory are rejected`() =
+        runTest {
+            assertThrows<IllegalArgumentException> { store().put("../x", "v") }
+        }
 }

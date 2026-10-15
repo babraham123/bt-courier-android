@@ -49,16 +49,23 @@ internal object ProviderNeutralEcdsa {
         }
 
         override fun initSign(privateKey: PrivateKey) {
-            signer = try {
-                java.security.Signature.getInstance(JCA_ALGORITHM).apply { initSign(privateKey) }
-            } catch (e: GeneralSecurityException) {
-                throw SSHRuntimeException(e)
-            }
+            signer =
+                try {
+                    java.security.Signature
+                        .getInstance(JCA_ALGORITHM)
+                        .apply { initSign(privateKey) }
+                } catch (e: GeneralSecurityException) {
+                    throw SSHRuntimeException(e)
+                }
         }
 
         override fun update(data: ByteArray) = update(data, 0, data.size)
 
-        override fun update(data: ByteArray, off: Int, len: Int) {
+        override fun update(
+            data: ByteArray,
+            off: Int,
+            len: Int,
+        ) {
             val s = signer ?: return sshj.update(data, off, len)
             try {
                 s.update(data, off, len)

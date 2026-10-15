@@ -8,7 +8,11 @@ import java.io.IOException
  * @property id opaque to callers; only the tree that issued it can resolve it.
  * @property size in bytes, or null when the provider does not report one.
  */
-data class DocumentHandle(val id: String, val name: String, val size: Long?)
+data class DocumentHandle(
+    val id: String,
+    val name: String,
+    val size: Long?,
+)
 
 /**
  * The flat, user-picked folder a [SafUploadTransport] writes into. Methods block; every failure is
@@ -24,21 +28,39 @@ interface DocumentTree {
     fun list(): List<DocumentHandle>
 
     /** Creates an empty document; fails if [name] is taken rather than picking another name. */
-    fun create(name: String, mimeType: String): DocumentHandle
+    fun create(
+        name: String,
+        mimeType: String,
+    ): DocumentHandle
 
     /** Replaces the document's content with [bytes]. */
-    fun write(handle: DocumentHandle, bytes: ByteArray)
+    fun write(
+        handle: DocumentHandle,
+        bytes: ByteArray,
+    )
 
     /** Fails if [newName] is taken rather than picking another name. */
-    fun rename(handle: DocumentHandle, newName: String): DocumentHandle
+    fun rename(
+        handle: DocumentHandle,
+        newName: String,
+    ): DocumentHandle
 
     fun delete(handle: DocumentHandle)
 }
 
-sealed class DocumentTreeException(message: String, cause: Throwable? = null) : IOException(message, cause) {
+sealed class DocumentTreeException(
+    message: String,
+    cause: Throwable? = null,
+) : IOException(message, cause) {
     /** The grant was revoked or the folder is gone; only picking the folder again helps. */
-    class AccessLost(message: String, cause: Throwable? = null) : DocumentTreeException(message, cause)
+    class AccessLost(
+        message: String,
+        cause: Throwable? = null,
+    ) : DocumentTreeException(message, cause)
 
     /** Anything else; may clear up on its own (provider busy, storage full, ...). */
-    class Io(message: String, cause: Throwable? = null) : DocumentTreeException(message, cause)
+    class Io(
+        message: String,
+        cause: Throwable? = null,
+    ) : DocumentTreeException(message, cause)
 }

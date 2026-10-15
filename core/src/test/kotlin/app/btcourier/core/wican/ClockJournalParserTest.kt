@@ -7,12 +7,13 @@ import org.junit.jupiter.api.Test
 class ClockJournalParserTest {
     @Test
     fun `each journal event kind maps to its model with every field`() {
-        val text = """
+        val text =
+            """
             {"ev":"boot","boot":7,"ts":20000,"up_ms":20000,"valid":false,"source":"none"}
             {"ev":"valid","boot":7,"ts_before":60000,"ts_after":1784000060000,"delta_ms":1783999999999,"source":"sntp","files":["dl_0000000001.jsonl","can_0000000001.mf4"]}
             {"ev":"rotate","boot":7,"ts":1784000060000,"stream":"params","from":"dl_0000000001.jsonl","to":"dl_1784000060.jsonl","why":"clock"}
             {"ev":"step","boot":7,"ts_before":1784000120000,"ts_after":1784000117500,"delta_ms":-2500,"source":"manual","files":["dl_1784000060.jsonl"]}
-        """.trimIndent()
+            """.trimIndent()
 
         assertEquals(
             listOf(
@@ -49,24 +50,27 @@ class ClockJournalParserTest {
 
     @Test
     fun `the boot origin is the clock at the boot line minus uptime`() {
-        val boot = ClockJournalParser.parse(
-            """{"ev":"boot","boot":1,"ts":1784000009000,"up_ms":9000,"valid":true,"source":"rtc"}""",
-        ).single() as ClockEvent.Boot
+        val boot =
+            ClockJournalParser
+                .parse(
+                    """{"ev":"boot","boot":1,"ts":1784000009000,"up_ms":9000,"valid":true,"source":"rtc"}""",
+                ).single() as ClockEvent.Boot
 
         assertEquals(1_784_000_000_000, boot.originMs)
     }
 
     @Test
     fun `garbage, cut-off, unknown and unplaceable lines are skipped and extra keys ignored`() {
-        val text = listOf(
-            "not json",
-            """{"ev":"boot","boot":1,"ts":5000,"up_ms":5000,"valid":false,"source":"none","fw":"x"}""",
-            """{"ev":"future_kind","boot":1}""",
-            """{"ev":"step","boot":1,"ts_after":9000,"delta_ms":1000,"files":["a"]}""",
-            "",
-            """{"ev":"step","boot":1,"ts_before":8000,"ts_after":9000,"delta_ms":1000,"files":["a"]}""",
-            """{"ev":"step","boot":1,"ts_before":9000,"ts_""",
-        ).joinToString("\n")
+        val text =
+            listOf(
+                "not json",
+                """{"ev":"boot","boot":1,"ts":5000,"up_ms":5000,"valid":false,"source":"none","fw":"x"}""",
+                """{"ev":"future_kind","boot":1}""",
+                """{"ev":"step","boot":1,"ts_after":9000,"delta_ms":1000,"files":["a"]}""",
+                "",
+                """{"ev":"step","boot":1,"ts_before":8000,"ts_after":9000,"delta_ms":1000,"files":["a"]}""",
+                """{"ev":"step","boot":1,"ts_before":9000,"ts_""",
+            ).joinToString("\n")
 
         assertEquals(
             listOf(

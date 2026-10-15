@@ -42,22 +42,24 @@ class WicanLoggerSource(
 
     override suspend fun pull(cursor: String?): Page {
         require(cursor == null || parseCursor(cursor) != null) { "not a WiCAN export cursor: $cursor" }
-        val path = buildString {
-            append("/api/logger/export?format=jsonl&stream=params")
-            if (cursor != null) append("&since=").append(cursor)
-            append("&limit=").append(limit)
-        }
+        val path =
+            buildString {
+                append("/api/logger/export?format=jsonl&stream=params")
+                if (cursor != null) append("&since=").append(cursor)
+                append("&limit=").append(limit)
+            }
         val response = get(path)
         // The handler serves whatever engine the logger writes; a CSV engine answers text/plain
         // rows that would flow through as unparseable lines.
         if (response.headers["content-type"]?.startsWith("text/plain") == true) {
             throw SourceException.Unsupported("the logger writes CSV; set data_logger format to jsonl")
         }
-        val page = try {
-            ExportPageParser.parse(response.body.decodeToString())
-        } catch (e: ExportPageException) {
-            throw SourceException.Truncated(path, e)
-        }
+        val page =
+            try {
+                ExportPageParser.parse(response.body.decodeToString())
+            } catch (e: ExportPageException) {
+                throw SourceException.Truncated(path, e)
+            }
         return fixFinishedFileCursor(page).toPage()
     }
 
@@ -72,14 +74,16 @@ class WicanLoggerSource(
         val sent = phoneClock()
         val response = get(RTC_PATH)
         val received = phoneClock()
-        val o = parseObjectOrNull(response.body.decodeToString())
-            ?: throw SourceException.Unsupported("$RTC_PATH did not answer a JSON object")
+        val o =
+            parseObjectOrNull(response.body.decodeToString())
+                ?: throw SourceException.Unsupported("$RTC_PATH did not answer a JSON object")
         val time = o.string("time") ?: throw SourceException.Unsupported("$RTC_PATH has no \"time\"")
-        val seconds = try {
-            Instant.parse(time).toEpochMilli()
-        } catch (e: DateTimeParseException) {
-            throw SourceException.Unsupported("$RTC_PATH time is not ISO-8601: $time")
-        }
+        val seconds =
+            try {
+                Instant.parse(time).toEpochMilli()
+            } catch (e: DateTimeParseException) {
+                throw SourceException.Unsupported("$RTC_PATH time is not ISO-8601: $time")
+            }
         return DeviceStatus(
             // The device truncates to whole seconds; half a second is the expected lost fraction,
             // and the round trip's midpoint is the best guess for when it read its clock.
@@ -102,7 +106,10 @@ class WicanLoggerSource(
             throw SourceException.Truncated(path, e)
         }
 
-    private fun checkStatus(path: String, response: Response) {
+    private fun checkStatus(
+        path: String,
+        response: Response,
+    ) {
         when (response.status) {
             in 200..299 -> Unit
             429 -> throw SourceException.Busy(path)
@@ -144,6 +151,11 @@ class WicanLoggerSource(
                 e.toLongOrNull()?.let { epoch -> o.toLongOrNull()?.let { epoch to it } }
             }
 
-        private fun epochOf(fileName: String): Long? = fileEpoch.find(fileName)?.groupValues?.get(1)?.toLongOrNull()
+        private fun epochOf(fileName: String): Long? =
+            fileEpoch
+                .find(fileName)
+                ?.groupValues
+                ?.get(1)
+                ?.toLongOrNull()
     }
 }

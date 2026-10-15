@@ -23,25 +23,33 @@ object MqttKind : SinkTransportKind {
     override val kind = TransportKind.MQTT
     override val label = R.string.transport_mqtt
     override val allowedAuth = listOf(AuthKind.NONE, AuthKind.BASIC)
-    override val fields = listOf(
-        TransportField.Text(HOST, R.string.sink_host, keyboard = FieldKeyboard.URI),
-        TransportField.Toggle(TLS, R.string.sink_tls, R.string.sink_tls_help),
-        TransportField.Text(PORT, R.string.sink_port, keyboard = FieldKeyboard.NUMBER),
-        TransportField.Text(CLIENT_ID, R.string.sink_client_id, R.string.sink_client_id_help),
-        TransportField.Text(BASE_TOPIC, R.string.sink_base_topic, R.string.sink_base_topic_help),
-    )
+    override val fields =
+        listOf(
+            TransportField.Text(HOST, R.string.sink_host, keyboard = FieldKeyboard.URI),
+            TransportField.Toggle(TLS, R.string.sink_tls, R.string.sink_tls_help),
+            TransportField.Text(PORT, R.string.sink_port, keyboard = FieldKeyboard.NUMBER),
+            TransportField.Text(CLIENT_ID, R.string.sink_client_id, R.string.sink_client_id_help),
+            TransportField.Text(BASE_TOPIC, R.string.sink_base_topic, R.string.sink_base_topic_help),
+        )
 
     /** A random client id, so two phones never kick each other off a broker. */
-    override fun defaults() = FieldValues(
-        TLS to "true",
-        PORT to defaultMqttPort(true).toString(),
-        CLIENT_ID to newMqttClientId(),
-        BASE_TOPIC to "btcourier",
-    )
+    override fun defaults() =
+        FieldValues(
+            TLS to "true",
+            PORT to defaultMqttPort(true).toString(),
+            CLIENT_ID to newMqttClientId(),
+            BASE_TOPIC to "btcourier",
+        )
 
     override fun toValues(config: TransportConfig): FieldValues {
         val t = config as TransportConfig.Mqtt
-        return FieldValues(HOST to t.host, TLS to t.tls.toString(), PORT to t.port.toString(), CLIENT_ID to t.clientId, BASE_TOPIC to t.baseTopic)
+        return FieldValues(
+            HOST to t.host,
+            TLS to t.tls.toString(),
+            PORT to t.port.toString(),
+            CLIENT_ID to t.clientId,
+            BASE_TOPIC to t.baseTopic,
+        )
     }
 
     /**
@@ -53,7 +61,14 @@ object MqttKind : SinkTransportKind {
         val port = values[PORT].trim().toIntOrNull()
         return problemsOf(
             HOST to invalidUnless { MqttConfig(values[HOST].trim(), PROBE_CLIENT_ID, "") },
-            PORT to if (port == null) FieldProblem.Invalid else invalidUnless { MqttConfig(PROBE_HOST, PROBE_CLIENT_ID, "", port = port) },
+            PORT to
+                if (port ==
+                    null
+                ) {
+                    FieldProblem.Invalid
+                } else {
+                    invalidUnless { MqttConfig(PROBE_HOST, PROBE_CLIENT_ID, "", port = port) }
+                },
             // Stricter than MqttConfig, which lets the broker assign an id: the form prefills a
             // unique one, so a blank is a slip, and a broker-assigned id changes every connection.
             CLIENT_ID to values.blankProblem(CLIENT_ID),
@@ -61,33 +76,51 @@ object MqttKind : SinkTransportKind {
         )
     }
 
-    override fun toConfig(values: FieldValues) = TransportConfig.Mqtt(
-        host = values[HOST].trim(),
-        port = values[PORT].trim().toInt(),
-        tls = values.flag(TLS),
-        clientId = values[CLIENT_ID].trim(),
-        baseTopic = values[BASE_TOPIC].trim(),
-    )
+    override fun toConfig(values: FieldValues) =
+        TransportConfig.Mqtt(
+            host = values[HOST].trim(),
+            port = values[PORT].trim().toInt(),
+            tls = values.flag(TLS),
+            clientId = values[CLIENT_ID].trim(),
+            baseTopic = values[BASE_TOPIC].trim(),
+        )
 
     /** Keeps the port on the protocol default when TLS flips while it was on the other one. */
-    override fun adjust(before: FieldValues, after: FieldValues): FieldValues {
+    override fun adjust(
+        before: FieldValues,
+        after: FieldValues,
+    ): FieldValues {
         val tls = after.flag(TLS)
         if (tls == before.flag(TLS) || after[PORT] != defaultMqttPort(!tls).toString()) return after
         return after.with(PORT, defaultMqttPort(tls).toString())
     }
 
-    override suspend fun build(config: SinkConfig, credentials: SinkCredentials, env: SinkEnvironment): MqttUploadTransport {
+    override suspend fun build(
+        config: SinkConfig,
+        credentials: SinkCredentials,
+        env: SinkEnvironment,
+    ): MqttUploadTransport {
         val t = config.transport as TransportConfig.Mqtt
-        return MqttUploadTransport(MqttConfig(t.host.trim(), t.clientId, t.baseTopic.trim(), t.tls, t.port, credentials.mqttCredentials(config)))
+        return MqttUploadTransport(
+            MqttConfig(
+                t.host.trim(),
+                t.clientId,
+                t.baseTopic.trim(),
+                t.tls,
+                t.port,
+                credentials.mqttCredentials(config),
+            ),
+        )
     }
 
     private const val PROBE_HOST = "broker.invalid"
     private const val PROBE_CLIENT_ID = "probe"
 
-    private inline fun invalidUnless(build: () -> MqttConfig): FieldProblem? = try {
-        build()
-        null
-    } catch (_: IllegalArgumentException) {
-        FieldProblem.Invalid
-    }
+    private inline fun invalidUnless(build: () -> MqttConfig): FieldProblem? =
+        try {
+            build()
+            null
+        } catch (_: IllegalArgumentException) {
+            FieldProblem.Invalid
+        }
 }

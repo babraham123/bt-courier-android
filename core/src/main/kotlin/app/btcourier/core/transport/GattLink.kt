@@ -22,7 +22,10 @@ interface GattLink {
      * Writes one PDU of at most `mtu - 3` bytes. Suspends until the stack accepts it (and, with
      * [withResponse], until the peer acknowledges it). Throws [java.io.IOException] on link loss.
      */
-    suspend fun write(bytes: ByteArray, withResponse: Boolean)
+    suspend fun write(
+        bytes: ByteArray,
+        withResponse: Boolean,
+    )
 
     /** Disconnects. Idempotent. */
     fun close()

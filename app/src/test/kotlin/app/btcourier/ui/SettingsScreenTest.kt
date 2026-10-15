@@ -42,9 +42,10 @@ class SettingsScreenTest : ScreenTest() {
     /** Bonds `(name, address)` pairs to the phone, as the car picker lists them. */
     private fun bond(vararg devices: Pair<String, String>) {
         val adapter = app.getSystemService(BluetoothManager::class.java).adapter
-        val bonded = devices.map { (name, address) ->
-            adapter.getRemoteDevice(address).also { shadowOf(it).setName(name) }
-        }
+        val bonded =
+            devices.map { (name, address) ->
+                adapter.getRemoteDevice(address).also { shadowOf(it).setName(name) }
+            }
         shadowOf(adapter).setBondedDevices(bonded.toSet())
     }
 
@@ -76,7 +77,11 @@ class SettingsScreenTest : ScreenTest() {
     fun `a sink's switch disables it at once and replaces the upload`() {
         show()
 
-        compose.onNode(isToggleable() and hasAnyAncestor(hasText(sink.name))).assertIsOn().tap().assertIsOff()
+        compose
+            .onNode(isToggleable() and hasAnyAncestor(hasText(sink.name)))
+            .assertIsOn()
+            .tap()
+            .assertIsOff()
 
         assertFalse(stored().sinks.single().enabled)
         assertEquals(listOf(false to true), work.uploads)

@@ -24,94 +24,114 @@ class SettingsViewModelTest {
     private fun vm() = SettingsViewModel(settings, work)
 
     @Test
-    fun `the form starts from the stored settings and lists the sinks`() = runTest {
-        settings.update { it.copy(carDeviceAddress = CAR) }
+    fun `the form starts from the stored settings and lists the sinks`() =
+        runTest {
+            settings.update { it.copy(carDeviceAddress = CAR) }
 
-        val state = vm().state.value
+            val state = vm().state.value
 
-        assertTrue(state.loaded)
-        assertEquals(CAR, state.form.carDeviceAddress)
-        assertEquals("200", state.form.cacheCapMb)
-        assertEquals(listOf(sink), state.sinks)
-    }
-
-    @Test
-    fun `saving persists every general field, leaves the sinks alone and re-enqueues the upload`() = runTest {
-        val vm = vm()
-        vm.edit { it.copy(uploadOverCellular = true, cacheCapMb = " 50 ", periodicSync = false, carDeviceAddress = CAR) }
-
-        vm.save()
-
-        assertEquals(
-            AppSettings(sinks = listOf(sink), uploadOverCellular = true, cacheCapBytes = 50_000_000, periodicSync = false, carDeviceAddress = CAR),
-            settings.current(),
-        )
-        assertEquals(listOf(true to true), work.uploads)
-        assertEquals(listOf(false), work.periodic)
-        assertTrue(vm.state.value.saved)
-    }
+            assertTrue(state.loaded)
+            assertEquals(CAR, state.form.carDeviceAddress)
+            assertEquals("200", state.form.cacheCapMb)
+            assertEquals(listOf(sink), state.sinks)
+        }
 
     @Test
-    fun `disabling a sink is saved at once and replaces the queued upload`() = runTest {
-        val vm = vm()
+    fun `saving persists every general field, leaves the sinks alone and re-enqueues the upload`() =
+        runTest {
+            val vm = vm()
+            vm.edit {
+                it.copy(
+                    uploadOverCellular = true,
+                    cacheCapMb = " 50 ",
+                    periodicSync = false,
+                    carDeviceAddress = CAR,
+                )
+            }
 
-        vm.setSinkEnabled("a1", false)
+            vm.save()
 
-        assertEquals(listOf(sink.copy(enabled = false)), settings.current().sinks)
-        assertEquals(listOf(sink.copy(enabled = false)), vm.state.value.sinks)
-        assertEquals(listOf(false to true), work.uploads)
-    }
-
-    @Test
-    fun `choosing a car is saved without rescheduling work, and None clears it`() = runTest {
-        val vm = vm()
-        vm.edit { it.copy(carDeviceAddress = CAR) }
-        vm.save()
-
-        assertEquals(CAR, settings.current().carDeviceAddress)
-
-        vm.edit { it.copy(carDeviceAddress = null) }
-        vm.save()
-
-        assertEquals(null, settings.current().carDeviceAddress)
-        assertTrue(work.uploads.isEmpty())
-        assertTrue(work.periodic.isEmpty())
-    }
-
-    @Test
-    fun `reloading discards unsaved edits`() = runTest {
-        settings.update { it.copy(carDeviceAddress = CAR) }
-        val vm = vm()
-        vm.edit { it.copy(carDeviceAddress = null) }
-
-        vm.reload()
-
-        assertEquals(CAR, vm.state.value.form.carDeviceAddress)
-    }
+            assertEquals(
+                AppSettings(
+                    sinks = listOf(sink),
+                    uploadOverCellular = true,
+                    cacheCapBytes = 50_000_000,
+                    periodicSync = false,
+                    carDeviceAddress = CAR,
+                ),
+                settings.current(),
+            )
+            assertEquals(listOf(true to true), work.uploads)
+            assertEquals(listOf(false), work.periodic)
+            assertTrue(vm.state.value.saved)
+        }
 
     @Test
-    fun `saving unchanged settings schedules nothing`() = runTest {
-        vm().save()
+    fun `disabling a sink is saved at once and replaces the queued upload`() =
+        runTest {
+            val vm = vm()
 
-        assertEquals(emptyList<Pair<Boolean, Boolean>>(), work.uploads)
-        assertEquals(emptyList<Boolean>(), work.periodic)
-    }
+            vm.setSinkEnabled("a1", false)
+
+            assertEquals(listOf(sink.copy(enabled = false)), settings.current().sinks)
+            assertEquals(listOf(sink.copy(enabled = false)), vm.state.value.sinks)
+            assertEquals(listOf(false to true), work.uploads)
+        }
 
     @Test
-    fun `an invalid cache cap is reported and nothing is saved`() = runTest {
-        val vm = vm()
-        vm.edit { it.copy(cacheCapMb = "lots", uploadOverCellular = true) }
+    fun `choosing a car is saved without rescheduling work, and None clears it`() =
+        runTest {
+            val vm = vm()
+            vm.edit { it.copy(carDeviceAddress = CAR) }
+            vm.save()
 
-        vm.save()
+            assertEquals(CAR, settings.current().carDeviceAddress)
 
-        assertEquals(CacheCapProblem.NOT_A_NUMBER, vm.state.value.capProblem)
-        assertFalse(vm.state.value.saved)
-        assertFalse(settings.current().uploadOverCellular)
+            vm.edit { it.copy(carDeviceAddress = null) }
+            vm.save()
 
-        vm.edit { it.copy(cacheCapMb = "5") }
-        vm.save()
-        assertEquals(CacheCapProblem.OUT_OF_RANGE, vm.state.value.capProblem)
-    }
+            assertEquals(null, settings.current().carDeviceAddress)
+            assertTrue(work.uploads.isEmpty())
+            assertTrue(work.periodic.isEmpty())
+        }
+
+    @Test
+    fun `reloading discards unsaved edits`() =
+        runTest {
+            settings.update { it.copy(carDeviceAddress = CAR) }
+            val vm = vm()
+            vm.edit { it.copy(carDeviceAddress = null) }
+
+            vm.reload()
+
+            assertEquals(CAR, vm.state.value.form.carDeviceAddress)
+        }
+
+    @Test
+    fun `saving unchanged settings schedules nothing`() =
+        runTest {
+            vm().save()
+
+            assertEquals(emptyList<Pair<Boolean, Boolean>>(), work.uploads)
+            assertEquals(emptyList<Boolean>(), work.periodic)
+        }
+
+    @Test
+    fun `an invalid cache cap is reported and nothing is saved`() =
+        runTest {
+            val vm = vm()
+            vm.edit { it.copy(cacheCapMb = "lots", uploadOverCellular = true) }
+
+            vm.save()
+
+            assertEquals(CacheCapProblem.NOT_A_NUMBER, vm.state.value.capProblem)
+            assertFalse(vm.state.value.saved)
+            assertFalse(settings.current().uploadOverCellular)
+
+            vm.edit { it.copy(cacheCapMb = "5") }
+            vm.save()
+            assertEquals(CacheCapProblem.OUT_OF_RANGE, vm.state.value.capProblem)
+        }
 
     @Test
     fun `the cache cap accepts 10 to 2000 MB inclusive`() {

@@ -12,13 +12,13 @@ import app.btcourier.data.sinkkind.HttpPutKind
 import app.btcourier.data.sinkkind.SinkUrlProblem
 import app.btcourier.data.testCredentials
 import app.btcourier.ui.settings.SignInState
-import app.btcourier.ui.settings.SinkForm
 import app.btcourier.ui.settings.SinkEditorViewModel
+import app.btcourier.ui.settings.SinkForm
 import app.btcourier.work.MapSecretStore
 import app.btcourier.work.RecordingWorkControl
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.Channel
@@ -59,7 +59,13 @@ class OidcSignInTest {
     private lateinit var client: OkHttpClient
     private lateinit var main: ExecutorCoroutineDispatcher
 
-    private val sink = SinkConfig("o1", "Oidc", transport = TransportConfig.HttpPut("https://sink.invalid/"), auth = AuthConfig.Oidc("", ""))
+    private val sink =
+        SinkConfig(
+            "o1",
+            "Oidc",
+            transport = TransportConfig.HttpPut("https://sink.invalid/"),
+            auth = AuthConfig.Oidc("", ""),
+        )
     private val settings = FakeSettings(AppSettings(sinks = listOf(sink)))
     private val secrets = MapSecretStore()
     private val work = RecordingWorkControl()
@@ -73,19 +79,30 @@ class OidcSignInTest {
     fun setUp() {
         main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         Dispatchers.setMain(main)
-        val localhost = HeldCertificate.Builder()
-            .addSubjectAlternativeName("localhost")
-            .addSubjectAlternativeName(InetAddress.getByName("localhost").canonicalHostName)
-            .build()
-        server = MockWebServer().apply {
-            useHttps(HandshakeCertificates.Builder().heldCertificate(localhost).build().sslSocketFactory())
-            start()
-        }
+        val localhost =
+            HeldCertificate
+                .Builder()
+                .addSubjectAlternativeName("localhost")
+                .addSubjectAlternativeName(InetAddress.getByName("localhost").canonicalHostName)
+                .build()
+        server =
+            MockWebServer().apply {
+                useHttps(
+                    HandshakeCertificates
+                        .Builder()
+                        .heldCertificate(localhost)
+                        .build()
+                        .sslSocketFactory(),
+                )
+                start()
+            }
         val trust = HandshakeCertificates.Builder().addTrustedCertificate(localhost.certificate).build()
-        client = OkHttpClient.Builder()
-            .sslSocketFactory(trust.sslSocketFactory(), trust.trustManager)
-            .callTimeout(10, TimeUnit.SECONDS)
-            .build()
+        client =
+            OkHttpClient
+                .Builder()
+                .sslSocketFactory(trust.sslSocketFactory(), trust.trustManager)
+                .callTimeout(10, TimeUnit.SECONDS)
+                .build()
     }
 
     @AfterEach
@@ -95,46 +112,65 @@ class OidcSignInTest {
         main.close()
     }
 
-    private fun vm() = SinkEditorViewModel(
-        sinkId = "o1",
-        settings = settings,
-        credentials = testCredentials(secrets),
-        work = work,
-        http = client,
-        appScope = CoroutineScope(main),
-        oidcSleep = { polls.receive() },
+    private fun vm() =
+        SinkEditorViewModel(
+            sinkId = "o1",
+            settings = settings,
+            credentials = testCredentials(secrets),
+            work = work,
+            http = client,
+            appScope = CoroutineScope(main),
+            oidcSleep = { polls.receive() },
+        )
+
+    private fun respondJson(
+        code: Int,
+        json: String,
+    ) = server.enqueue(
+        MockResponse
+            .Builder()
+            .code(code)
+            .setHeader("Content-Type", "application/json")
+            .body(json)
+            .build(),
     )
 
-    private fun respondJson(code: Int, json: String) =
-        server.enqueue(MockResponse.Builder().code(code).setHeader("Content-Type", "application/json").body(json).build())
-
-    private fun respondDiscovery() = respondJson(
-        200,
-        """{"issuer":"$issuer","token_endpoint":"$issuer/api/oidc/token",
+    private fun respondDiscovery() =
+        respondJson(
+            200,
+            """{"issuer":"$issuer","token_endpoint":"$issuer/api/oidc/token",
             "device_authorization_endpoint":"$issuer/api/oidc/device-authorization"}""",
-    )
+        )
 
-    private fun respondDeviceCode() = respondJson(
-        200,
-        """{"device_code":"dc-123","user_code":"WDJB-MJHT","verification_uri":"https://auth.invalid/device",
+    private fun respondDeviceCode() =
+        respondJson(
+            200,
+            """{"device_code":"dc-123","user_code":"WDJB-MJHT","verification_uri":"https://auth.invalid/device",
             "verification_uri_complete":"https://auth.invalid/device?user_code=WDJB-MJHT","expires_in":600,"interval":5}""",
-    )
+        )
 
     private fun takeRequest(): RecordedRequest = checkNotNull(server.takeRequest(5, TimeUnit.SECONDS)) { "no request" }
 
-    private fun RecordedRequest.form(): Map<String, String> = body!!.utf8().split('&').associate {
-        val (k, v) = it.split('=', limit = 2)
-        URLDecoder.decode(k, Charsets.UTF_8) to URLDecoder.decode(v, Charsets.UTF_8)
-    }
+    private fun RecordedRequest.form(): Map<String, String> =
+        body!!.utf8().split('&').associate {
+            val (k, v) = it.split('=', limit = 2)
+            URLDecoder.decode(k, Charsets.UTF_8) to URLDecoder.decode(v, Charsets.UTF_8)
+        }
 
-    private fun <T> await(vm: SinkEditorViewModel, what: String, pick: (SignInState) -> T?): T = runBlocking {
-        withTimeout(10_000) { vm.state.first { pick(it.signIn) != null } }.signIn.let(pick) ?: error(what)
-    }
+    private fun <T> await(
+        vm: SinkEditorViewModel,
+        what: String,
+        pick: (SignInState) -> T?,
+    ): T =
+        runBlocking {
+            withTimeout(10_000) { vm.state.first { pick(it.signIn) != null } }.signIn.let(pick) ?: error(what)
+        }
 
-    private fun SinkEditorViewModel.startSignIn(extra: (SinkForm) -> SinkForm = { it }) = runBlocking(main) {
-        edit { extra(it.copy(authKind = AuthKind.OIDC, oidcIssuer = issuer, oidcClientId = "bt-courier")) }
-        signIn()
-    }
+    private fun SinkEditorViewModel.startSignIn(extra: (SinkForm) -> SinkForm = { it }) =
+        runBlocking(main) {
+            edit { extra(it.copy(authKind = AuthKind.OIDC, oidcIssuer = issuer, oidcClientId = "bt-courier")) }
+            signIn()
+        }
 
     /** Runs the whole device flow up to signed in, the user approving at the first poll. */
     private fun signedIn(extra: (SinkForm) -> SinkForm = { it }): SinkEditorViewModel {
@@ -168,7 +204,14 @@ class OidcSignInTest {
         vm.startSignIn { it.copy(oidcClientAuth = OidcClientAuth.SECRET_POST, oidcClientSecretInput = "cs-1") }
 
         val awaiting = await(vm, "awaiting user") { it as? SignInState.AwaitingUser }
-        assertEquals(SignInState.AwaitingUser("WDJB-MJHT", "https://auth.invalid/device", "https://auth.invalid/device?user_code=WDJB-MJHT"), awaiting)
+        assertEquals(
+            SignInState.AwaitingUser(
+                "WDJB-MJHT",
+                "https://auth.invalid/device",
+                "https://auth.invalid/device?user_code=WDJB-MJHT",
+            ),
+            awaiting,
+        )
         assertNull(runBlocking { secrets.get(StoredNames.tokens("o1")) })
 
         runBlocking {
@@ -190,7 +233,11 @@ class OidcSignInTest {
             assertEquals("cs-1", poll.form()["client_secret"])
         }
         assertNothingStored()
-        assertFalse(vm.state.value.toString().contains("at-1"))
+        assertFalse(
+            vm.state.value
+                .toString()
+                .contains("at-1"),
+        )
 
         runBlocking(main) { vm.save() }
         runBlocking { withTimeout(10_000) { vm.state.first { it.saved } } }
@@ -199,8 +246,21 @@ class OidcSignInTest {
         assertEquals("at-1", tokens.accessToken)
         assertEquals("rt-1", tokens.refreshToken)
         assertEquals("cs-1", runBlocking { secrets.get(StoredNames.clientSecret("o1")) })
-        val expected = AuthConfig.Oidc(issuer, "bt-courier", OidcClientAuth.SECRET_POST, "$issuer/api/oidc/token", "$issuer/api/oidc/device-authorization")
-        assertEquals(expected, runBlocking { settings.current() }.sinks.single().auth, "the sink keeps the endpoints its tokens belong to")
+        val expected =
+            AuthConfig.Oidc(
+                issuer,
+                "bt-courier",
+                OidcClientAuth.SECRET_POST,
+                "$issuer/api/oidc/token",
+                "$issuer/api/oidc/device-authorization",
+            )
+        assertEquals(
+            expected,
+            runBlocking {
+                settings.current()
+            }.sinks.single().auth,
+            "the sink keeps the endpoints its tokens belong to",
+        )
         assertEquals(listOf(false to true), work.uploads)
         assertEquals(SignInState.SignedIn, vm.state.value.signIn)
     }
@@ -225,7 +285,12 @@ class OidcSignInTest {
         runBlocking { withTimeout(10_000) { vm.state.first { it.saved } } }
 
         assertEquals(emptySet<String>(), secrets.names)
-        assertEquals(AuthConfig.Oidc("https://other-auth.invalid", "bt-courier"), runBlocking { settings.current() }.sinks.single().auth)
+        assertEquals(
+            AuthConfig.Oidc("https://other-auth.invalid", "bt-courier"),
+            runBlocking {
+                settings.current()
+            }.sinks.single().auth,
+        )
         assertEquals(SignInState.SignedOut, vm.state.value.signIn)
     }
 

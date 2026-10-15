@@ -41,12 +41,25 @@ internal suspend fun OkHttpClient.sendUpload(
         call.await().use { rsp ->
             val code = rsp.code
             when {
-                code in 300..399 || rsp.redirected || rsp.request.method != method ->
+                code in 300..399 || rsp.redirected || rsp.request.method != method -> {
                     UploadResult.Failed("HTTP $code for $name: redirects are not followed")
-                code in 200..299 -> UploadResult.Acked
-                code == 408 || code == 429 || code in 500..599 -> UploadResult.Retry("HTTP $code for $name", rsp.retryAfterMs())
-                (code == 409 || code == 412) && onConflict != null -> onConflict(code)
-                else -> UploadResult.Failed("HTTP $code for $name")
+                }
+
+                code in 200..299 -> {
+                    UploadResult.Acked
+                }
+
+                code == 408 || code == 429 || code in 500..599 -> {
+                    UploadResult.Retry("HTTP $code for $name", rsp.retryAfterMs())
+                }
+
+                (code == 409 || code == 412) && onConflict != null -> {
+                    onConflict(code)
+                }
+
+                else -> {
+                    UploadResult.Failed("HTTP $code for $name")
+                }
             }
         }
     } catch (e: IOException) {

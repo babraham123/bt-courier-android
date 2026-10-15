@@ -15,42 +15,59 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 object ClockJournalParser {
     fun parse(text: String): List<ClockEvent> =
-        text.lineSequence().mapNotNull { line ->
-            line.trim().takeIf { it.isNotEmpty() }?.let(::parseObjectOrNull)?.let(::eventOrNull)
-        }.toList()
+        text
+            .lineSequence()
+            .mapNotNull { line ->
+                line
+                    .trim()
+                    .takeIf { it.isNotEmpty() }
+                    ?.let(::parseObjectOrNull)
+                    ?.let(::eventOrNull)
+            }.toList()
 
     private fun eventOrNull(o: JsonObject): ClockEvent? {
         val boot = o.long("boot")
         return when (o.string("ev")) {
-            "boot" -> ClockEvent.Boot(
-                boot = boot,
-                ts = o.long("ts"),
-                upMs = o.long("up_ms"),
-                valid = o.boolean("valid") ?: false,
-                source = o.string("source").orEmpty(),
-            )
+            "boot" -> {
+                ClockEvent.Boot(
+                    boot = boot,
+                    ts = o.long("ts"),
+                    upMs = o.long("up_ms"),
+                    valid = o.boolean("valid") ?: false,
+                    source = o.string("source").orEmpty(),
+                )
+            }
+
             "valid", "step" -> {
                 val tsBefore = o.long("ts_before") ?: return null
                 val tsAfter = o.long("ts_after")
                 val deltaMs = o.long("delta_ms") ?: 0
                 val source = o.string("source").orEmpty()
-                val files = (o["files"] as? JsonArray).orEmpty()
-                    .mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+                val files =
+                    (o["files"] as? JsonArray)
+                        .orEmpty()
+                        .mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
                 if (o.string("ev") == "valid") {
                     ClockEvent.Valid(boot, tsBefore, tsAfter, deltaMs, source, files)
                 } else {
                     ClockEvent.Step(boot, tsBefore, tsAfter, deltaMs, source, files)
                 }
             }
-            "rotate" -> ClockEvent.Rotate(
-                boot = boot,
-                ts = o.long("ts"),
-                stream = o.string("stream").orEmpty(),
-                from = o.string("from").orEmpty(),
-                to = o.string("to").orEmpty(),
-                why = o.string("why").orEmpty(),
-            )
-            else -> null
+
+            "rotate" -> {
+                ClockEvent.Rotate(
+                    boot = boot,
+                    ts = o.long("ts"),
+                    stream = o.string("stream").orEmpty(),
+                    from = o.string("from").orEmpty(),
+                    to = o.string("to").orEmpty(),
+                    why = o.string("why").orEmpty(),
+                )
+            }
+
+            else -> {
+                null
+            }
         }
     }
 }

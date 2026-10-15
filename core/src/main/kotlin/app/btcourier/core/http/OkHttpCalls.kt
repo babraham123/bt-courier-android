@@ -47,24 +47,41 @@ internal fun Headers.toLowerCaseMap(): Map<String, String> =
  * Builds a call carrying [auth]. Building runs on [Dispatchers.IO] because a refreshing token
  * source may block.
  */
-internal suspend fun OkHttpClient.newCall(auth: Auth, build: Request.Builder.() -> Unit): Call {
-    val request = withContext(Dispatchers.IO) {
-        Request.Builder().apply(build).also(auth::applyTo).build()
-    }
+internal suspend fun OkHttpClient.newCall(
+    auth: Auth,
+    build: Request.Builder.() -> Unit,
+): Call {
+    val request =
+        withContext(Dispatchers.IO) {
+            Request
+                .Builder()
+                .apply(build)
+                .also(auth::applyTo)
+                .build()
+        }
     return newCall(request)
 }
 
 /** Executes the call; cancelling the coroutine cancels it. */
-internal suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
-    cont.invokeOnCancellation { cancel() }
-    enqueue(object : Callback {
-        override fun onResponse(call: Call, response: Response) {
-            // A response that lands after cancellation would otherwise leak its connection.
-            cont.resume(response) { _, value, _ -> value.close() }
-        }
+internal suspend fun Call.await(): Response =
+    suspendCancellableCoroutine { cont ->
+        cont.invokeOnCancellation { cancel() }
+        enqueue(
+            object : Callback {
+                override fun onResponse(
+                    call: Call,
+                    response: Response,
+                ) {
+                    // A response that lands after cancellation would otherwise leak its connection.
+                    cont.resume(response) { _, value, _ -> value.close() }
+                }
 
-        override fun onFailure(call: Call, e: IOException) {
-            cont.resumeWithException(e)
-        }
-    })
-}
+                override fun onFailure(
+                    call: Call,
+                    e: IOException,
+                ) {
+                    cont.resumeWithException(e)
+                }
+            },
+        )
+    }

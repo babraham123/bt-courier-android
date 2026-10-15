@@ -12,7 +12,10 @@ import kotlinx.serialization.json.JsonPrimitive
  * the file every later line is attributed to (null before the first marker); every other line is
  * passed on with its parsed object, or null when it is not a JSON object.
  */
-internal inline fun forEachRow(lines: List<String>, onRow: (file: String?, row: JsonObject?, line: String) -> Unit) {
+internal inline fun forEachRow(
+    lines: List<String>,
+    onRow: (file: String?, row: JsonObject?, line: String) -> Unit,
+) {
     walkFiles(lines) { line, kind, file ->
         when (kind) {
             is StoredLine.Marker -> Unit
@@ -27,8 +30,9 @@ internal inline fun forEachRow(lines: List<String>, onRow: (file: String?, row: 
  * and the encoding never depends on float formatting), "" for absent or JSON null, and compact
  * JSON for an object or array.
  */
-internal fun JsonObject.text(key: String): String = when (val v: JsonElement? = get(key)) {
-    null, JsonNull -> ""
-    is JsonPrimitive -> v.content
-    else -> v.toString()
-}
+internal fun JsonObject.text(key: String): String =
+    when (val v: JsonElement? = get(key)) {
+        null, JsonNull -> ""
+        is JsonPrimitive -> v.content
+        else -> v.toString()
+    }

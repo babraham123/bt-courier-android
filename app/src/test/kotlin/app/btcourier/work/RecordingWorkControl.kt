@@ -20,12 +20,18 @@ class RecordingWorkControl : WorkControl {
         syncs += address
     }
 
-    override fun uploadNow(allowCellular: Boolean, replace: Boolean) {
+    override fun uploadNow(
+        allowCellular: Boolean,
+        replace: Boolean,
+    ) {
         uploads += allowCellular to replace
         calls += "upload"
     }
 
-    override fun uploadAt(delayMs: Long, allowCellular: Boolean) {
+    override fun uploadAt(
+        delayMs: Long,
+        allowCellular: Boolean,
+    ) {
         deferredUploads += delayMs to allowCellular
         calls += "upload-at"
     }

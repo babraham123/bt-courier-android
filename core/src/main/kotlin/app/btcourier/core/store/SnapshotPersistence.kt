@@ -17,7 +17,11 @@ internal interface SnapshotPersistence {
      * Durably replaces the committed state with [next], storing [added] page lines and dropping
      * [removed] ones. Must be all-or-nothing: a crash midway leaves the previous state.
      */
-    suspend fun commit(next: StoreSnapshot, added: Map<Long, List<String>>, removed: Collection<Long>)
+    suspend fun commit(
+        next: StoreSnapshot,
+        added: Map<Long, List<String>>,
+        removed: Collection<Long>,
+    )
 
     /** Lines of the committed page [seq]. */
     suspend fun lines(seq: Long): List<String>
@@ -30,7 +34,11 @@ internal class MemoryPersistence : SnapshotPersistence {
 
     override fun load(): StoreSnapshot = committed
 
-    override suspend fun commit(next: StoreSnapshot, added: Map<Long, List<String>>, removed: Collection<Long>) {
+    override suspend fun commit(
+        next: StoreSnapshot,
+        added: Map<Long, List<String>>,
+        removed: Collection<Long>,
+    ) {
         lines.putAll(added)
         removed.forEach(lines::remove)
         committed = next

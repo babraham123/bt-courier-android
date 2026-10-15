@@ -36,7 +36,10 @@ object PrometheusText : Format {
 
     private val invalidNameChar = Regex("[^a-zA-Z0-9_:]")
 
-    override fun encode(lines: List<String>, sourceId: String): ByteArray {
+    override fun encode(
+        lines: List<String>,
+        sourceId: String,
+    ): ByteArray {
         val source = label(sourceId)
         val sb = StringBuilder(lines.sumOf { it.length + source.length + 26 })
         forEachRow(lines) { file, row, line ->
@@ -48,12 +51,18 @@ object PrometheusText : Format {
     }
 
     /** [source] arrives already escaped; it is the same for every row. */
-    private fun sample(row: JsonObject, source: String, file: String): String? {
+    private fun sample(
+        row: JsonObject,
+        source: String,
+        file: String,
+    ): String? {
         val ts = (row["ts"] as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull ?: return null
         val value = (row["value"] as? JsonPrimitive)?.takeIf { !it.isString && it.doubleOrNull != null } ?: return null
         val param = row.text("param").takeIf { it.isNotEmpty() } ?: return null
         val name = invalidNameChar.replace(param, "_").let { if (it[0].isDigit()) "_$it" else it }
-        return "$name{source=\"$source\",file=\"${label(file)}\",ts_quality=\"${label(row.text("ts_quality"))}\"} ${value.content} $ts"
+        return "$name{source=\"$source\",file=\"${label(
+            file,
+        )}\",ts_quality=\"${label(row.text("ts_quality"))}\"} ${value.content} $ts"
     }
 
     private fun label(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")

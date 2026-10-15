@@ -22,8 +22,13 @@ sealed interface UploadResult {
      * @property retryAfterMs how long the backend asked us to wait (HTTP `Retry-After`), or null
      *   when it gave no hint and the caller's back-off applies.
      */
-    data class Retry(val reason: String, val retryAfterMs: Long? = null) : UploadResult
+    data class Retry(
+        val reason: String,
+        val retryAfterMs: Long? = null,
+    ) : UploadResult
 
     /** Permanent failure (e.g. 403); retrying without a config change will not help. */
-    data class Failed(val reason: String) : UploadResult
+    data class Failed(
+        val reason: String,
+    ) : UploadResult
 }

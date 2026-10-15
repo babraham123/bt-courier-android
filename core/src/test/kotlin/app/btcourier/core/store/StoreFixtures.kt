@@ -31,10 +31,11 @@ class StoreHarness(
     fun reopen(beforeCommit: () -> Unit = {}): DefaultStore = open(beforeCommit).also { store = it }
 
     private fun open(beforeCommit: () -> Unit = {}): DefaultStore {
-        val persistence = when (kind) {
-            DbKind.FILE -> FilePersistence(dir, beforeCommit)
-            DbKind.MEMORY -> memory
-        }
+        val persistence =
+            when (kind) {
+                DbKind.FILE -> FilePersistence(dir, beforeCommit)
+                DbKind.MEMORY -> memory
+            }
         return DefaultStore(persistence, clock = { now }, sinkIds = { sinks })
     }
 }

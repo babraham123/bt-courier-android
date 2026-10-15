@@ -14,7 +14,11 @@ interface Store {
      *
      * @return false if a page with this cursor was already stored (nothing changes).
      */
-    suspend fun appendPage(sourceId: String, cursor: String, lines: List<String>): Boolean
+    suspend fun appendPage(
+        sourceId: String,
+        cursor: String,
+        lines: List<String>,
+    ): Boolean
 
     /** Last persisted cursor for [sourceId], or null if nothing was pulled yet. */
     suspend fun cursor(sourceId: String): String?
@@ -33,16 +37,25 @@ interface Store {
      * @param nowMs wall-clock time, injected so the age rule is testable.
      * @return ids of the newly sealed batches.
      */
-    suspend fun seal(policy: SealPolicy, nowMs: Long): List<String>
+    suspend fun seal(
+        policy: SealPolicy,
+        nowMs: Long,
+    ): List<String>
 
     /**
      * Sealed batches that [sinkId] has not acknowledged yet, oldest first, at most [limit] of
      * them. The limit exists because each batch carries its lines in memory.
      */
-    suspend fun pending(sinkId: String, limit: Int = Int.MAX_VALUE): List<SealedBatch>
+    suspend fun pending(
+        sinkId: String,
+        limit: Int = Int.MAX_VALUE,
+    ): List<SealedBatch>
 
     /** Records that [sinkId] durably received [batchId]; acked by every sink, it may be deleted. */
-    suspend fun ack(batchId: String, sinkId: String)
+    suspend fun ack(
+        batchId: String,
+        sinkId: String,
+    )
 
     /** Size and eviction counters for the status screen. */
     suspend fun counters(): StoreCounters

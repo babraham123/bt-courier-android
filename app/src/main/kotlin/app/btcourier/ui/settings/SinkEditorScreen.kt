@@ -68,7 +68,10 @@ import app.btcourier.ui.BackButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SinkEditorScreen(viewModel: SinkEditorViewModel, onDone: () -> Unit) {
+fun SinkEditorScreen(
+    viewModel: SinkEditorViewModel,
+    onDone: () -> Unit,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val form = state.form
     val leave = {
@@ -84,7 +87,11 @@ fun SinkEditorScreen(viewModel: SinkEditorViewModel, onDone: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(if (state.isNew) R.string.sink_add_title else R.string.sink_edit_title)) },
+                title = {
+                    Text(
+                        stringResource(if (state.isNew) R.string.sink_add_title else R.string.sink_edit_title),
+                    )
+                },
                 navigationIcon = { BackButton(leave) },
             )
         },
@@ -97,13 +104,31 @@ fun SinkEditorScreen(viewModel: SinkEditorViewModel, onDone: () -> Unit) {
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Field(R.string.sink_name, form.name, SinkField.NAME in state.invalid) { v -> viewModel.edit { it.copy(name = v) } }
-            Toggle(R.string.sink_enabled, R.string.sink_enabled_help, form.enabled) { v -> viewModel.edit { it.copy(enabled = v) } }
-            Picker(R.string.sink_transport, TransportKind.entries, form.kind, { it.module.label }, viewModel::setTransport)
+            Field(
+                R.string.sink_name,
+                form.name,
+                SinkField.NAME in state.invalid,
+            ) { v -> viewModel.edit { it.copy(name = v) } }
+            Toggle(
+                R.string.sink_enabled,
+                R.string.sink_enabled_help,
+                form.enabled,
+            ) { v -> viewModel.edit { it.copy(enabled = v) } }
+            Picker(
+                R.string.sink_transport,
+                TransportKind.entries,
+                form.kind,
+                { it.module.label },
+                viewModel::setTransport,
+            )
 
             TransportFields(state, viewModel)
 
-            Picker(R.string.sink_format, FormatKind.entries, form.format, ::formatLabel) { v -> viewModel.edit { it.copy(format = v) } }
+            Picker(R.string.sink_format, FormatKind.entries, form.format, ::formatLabel) { v ->
+                viewModel.edit {
+                    it.copy(format = v)
+                }
+            }
 
             if (form.allowedAuth.size > 1) {
                 HorizontalDivider()
@@ -114,7 +139,10 @@ fun SinkEditorScreen(viewModel: SinkEditorViewModel, onDone: () -> Unit) {
 
             HorizontalDivider()
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = viewModel::save, enabled = state.loaded) { Text(stringResource(R.string.settings_save)) }
+                Button(
+                    onClick = viewModel::save,
+                    enabled = state.loaded,
+                ) { Text(stringResource(R.string.settings_save)) }
                 if (!state.isNew) {
                     OutlinedButton(onClick = { confirmDelete = true }) { Text(stringResource(R.string.sink_delete)) }
                 }
@@ -132,21 +160,38 @@ fun SinkEditorScreen(viewModel: SinkEditorViewModel, onDone: () -> Unit) {
                     viewModel.delete()
                 }) { Text(stringResource(R.string.sink_delete)) }
             },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.sink_cancel)) } },
+            dismissButton = {
+                TextButton(
+                    onClick = { confirmDelete = false },
+                ) { Text(stringResource(R.string.sink_cancel)) }
+            },
         )
     }
 }
 
 /** The current kind's fields, then its capabilities, as its [SinkTransportKind] lists them. */
 @Composable
-private fun TransportFields(state: SinkEditorState, viewModel: SinkEditorViewModel) {
+private fun TransportFields(
+    state: SinkEditorState,
+    viewModel: SinkEditorViewModel,
+) {
     val transport = state.form.transport
     val values = state.form.values
     for (field in transport.fields) {
         if (!field.visibleWhen(values)) continue
         when (field) {
-            is TransportField.Text -> TextField(field, values[field.key], state.transportProblems[field.key]) { viewModel.setField(field.key, it) }
-            is TransportField.Toggle -> Toggle(field.label, field.help, values.flag(field.key)) { viewModel.setField(field.key, it.toString()) }
+            is TransportField.Text -> {
+                TextField(
+                    field,
+                    values[field.key],
+                    state.transportProblems[field.key],
+                ) { viewModel.setField(field.key, it) }
+            }
+
+            is TransportField.Toggle -> {
+                Toggle(field.label, field.help, values.flag(field.key)) { viewModel.setField(field.key, it.toString()) }
+            }
+
             is TransportField.Choice -> {
                 val selected = field.options.firstOrNull { it.value == values[field.key] } ?: field.options.first()
                 Picker(field.label, field.options, selected, { it.label }) { viewModel.setField(field.key, it.value) }
@@ -155,24 +200,39 @@ private fun TransportFields(state: SinkEditorState, viewModel: SinkEditorViewMod
     }
     for (capability in transport.capabilities) {
         when (capability) {
-            TransportCapability.ClientKey -> ClientKeySection(state)
-            is TransportCapability.HostKeyPin -> HostKeySection(state, values.orNull(capability.fingerprintKey), viewModel)
-            is TransportCapability.FolderPick ->
+            TransportCapability.ClientKey -> {
+                ClientKeySection(state)
+            }
+
+            is TransportCapability.HostKeyPin -> {
+                HostKeySection(state, values.orNull(capability.fingerprintKey), viewModel)
+            }
+
+            is TransportCapability.FolderPick -> {
                 FolderSection(values.orNull(capability.treeUriKey), capability.treeUriKey in state.transportProblems) {
                     viewModel.setField(capability.treeUriKey, it)
                 }
+            }
         }
     }
 }
 
 @Composable
-private fun TextField(field: TransportField.Text, value: String, problem: FieldProblem?, onChange: (String) -> Unit) {
+private fun TextField(
+    field: TransportField.Text,
+    value: String,
+    problem: FieldProblem?,
+    onChange: (String) -> Unit,
+) {
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
         label = { Text(stringResource(field.label)) },
         placeholder = field.placeholder?.let { { Text(stringResource(it)) } },
-        supportingText = ((problem as? FieldProblem.Url)?.problem?.let(::urlProblemText) ?: field.help)?.let { { Text(stringResource(it)) } },
+        supportingText =
+            ((problem as? FieldProblem.Url)?.problem?.let(::urlProblemText) ?: field.help)?.let {
+                { Text(stringResource(it)) }
+            },
         isError = problem != null,
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = field.keyboard.type),
@@ -187,20 +247,42 @@ private fun ClientKeySection(state: SinkEditorState) {
     val publicKey = state.publicKey
     when {
         publicKey != null -> {
-            SelectionContainer { Text(publicKey, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
+            SelectionContainer {
+                Text(
+                    publicKey,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             Text(stringResource(R.string.sink_public_key_help), style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = { copy(context, publicKey) }) { Text(stringResource(R.string.sink_copy)) }
         }
-        state.keyError != null -> ErrorText(stringResource(R.string.sink_key_error, state.keyError))
-        else -> Text(stringResource(R.string.pairing_working))
+
+        state.keyError != null -> {
+            ErrorText(stringResource(R.string.sink_key_error, state.keyError))
+        }
+
+        else -> {
+            Text(stringResource(R.string.pairing_working))
+        }
     }
 }
 
 @Composable
-private fun HostKeySection(state: SinkEditorState, pinned: String?, viewModel: SinkEditorViewModel) {
+private fun HostKeySection(
+    state: SinkEditorState,
+    pinned: String?,
+    viewModel: SinkEditorViewModel,
+) {
     Text(stringResource(R.string.sink_host_key), style = MaterialTheme.typography.labelLarge)
     if (pinned != null) {
-        SelectionContainer { Text(pinned, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
+        SelectionContainer {
+            Text(
+                pinned,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         OutlinedButton(onClick = viewModel::forgetHostKey) { Text(stringResource(R.string.sink_host_key_forget)) }
         return
     }
@@ -210,9 +292,15 @@ private fun HostKeySection(state: SinkEditorState, pinned: String?, viewModel: S
             if (hostKey is HostKeyState.Failed) ErrorText(hostKey.message)
             OutlinedButton(onClick = viewModel::fetchHostKey) { Text(stringResource(R.string.sink_host_key_fetch)) }
         }
-        HostKeyState.Fetching -> Text(stringResource(R.string.pairing_working))
+
+        HostKeyState.Fetching -> {
+            Text(stringResource(R.string.pairing_working))
+        }
+
         is HostKeyState.Presented -> {
-            SelectionContainer { Text(hostKey.fingerprint, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
+            SelectionContainer {
+                Text(hostKey.fingerprint, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+            }
             Text(stringResource(R.string.sink_host_key_confirm), style = MaterialTheme.typography.bodySmall)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = viewModel::trustHostKey) { Text(stringResource(R.string.sink_host_key_trust)) }
@@ -223,46 +311,83 @@ private fun HostKeySection(state: SinkEditorState, pinned: String?, viewModel: S
 }
 
 @Composable
-private fun FolderSection(treeUri: String?, isError: Boolean, onPicked: (String?) -> Unit) {
+private fun FolderSection(
+    treeUri: String?,
+    isError: Boolean,
+    onPicked: (String?) -> Unit,
+) {
     val context = LocalContext.current
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) {
-            try {
-                persistGrant(context, uri)
-                onPicked(uri.toString())
-            } catch (_: SecurityException) {
-                // The provider offers no persistable grant; the folder would be lost on reboot.
-                onPicked(null)
+    val pick =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri != null) {
+                try {
+                    persistGrant(context, uri)
+                    onPicked(uri.toString())
+                } catch (_: SecurityException) {
+                    // The provider offers no persistable grant; the folder would be lost on reboot.
+                    onPicked(null)
+                }
             }
         }
-    }
-    val folderName = remember(treeUri) {
-        treeUri?.let { runCatching { DocumentFile.fromTreeUri(context, it.toUri())?.name }.getOrNull() ?: it }
-    }
-    Text(folderName ?: stringResource(R.string.sink_folder_none), color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+    val folderName =
+        remember(treeUri) {
+            treeUri?.let { runCatching { DocumentFile.fromTreeUri(context, it.toUri())?.name }.getOrNull() ?: it }
+        }
+    Text(
+        folderName ?: stringResource(R.string.sink_folder_none),
+        color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+    )
     OutlinedButton(onClick = { pick.launch(treeUri?.toUri()) }) { Text(stringResource(R.string.sink_folder_pick)) }
 }
 
 @Composable
-private fun AuthFields(state: SinkEditorState, viewModel: SinkEditorViewModel) {
+private fun AuthFields(
+    state: SinkEditorState,
+    viewModel: SinkEditorViewModel,
+) {
     val form = state.form
     when (form.authKind) {
-        AuthKind.NONE -> Unit
+        AuthKind.NONE -> {
+            Unit
+        }
+
         AuthKind.BASIC -> {
-            Field(R.string.settings_username, form.basicUser, SinkField.BASIC_USER in state.invalid) { v -> viewModel.edit { it.copy(basicUser = v) } }
-            SecretField(R.string.settings_password, form.secretInput, state.hasStoredSecret, viewModel::clearSecret) { v ->
+            Field(
+                R.string.settings_username,
+                form.basicUser,
+                SinkField.BASIC_USER in state.invalid,
+            ) { v ->
+                viewModel.edit {
+                    it.copy(basicUser = v)
+                }
+            }
+            SecretField(
+                R.string.settings_password,
+                form.secretInput,
+                state.hasStoredSecret,
+                viewModel::clearSecret,
+            ) { v ->
                 viewModel.edit { it.copy(secretInput = v) }
             }
         }
-        AuthKind.BEARER -> SecretField(R.string.settings_token, form.secretInput, state.hasStoredSecret, viewModel::clearSecret) { v ->
-            viewModel.edit { it.copy(secretInput = v) }
+
+        AuthKind.BEARER -> {
+            SecretField(R.string.settings_token, form.secretInput, state.hasStoredSecret, viewModel::clearSecret) { v ->
+                viewModel.edit { it.copy(secretInput = v) }
+            }
         }
-        AuthKind.OIDC -> OidcFields(state, viewModel)
+
+        AuthKind.OIDC -> {
+            OidcFields(state, viewModel)
+        }
     }
 }
 
 @Composable
-private fun OidcFields(state: SinkEditorState, viewModel: SinkEditorViewModel) {
+private fun OidcFields(
+    state: SinkEditorState,
+    viewModel: SinkEditorViewModel,
+) {
     val form = state.form
     val context = LocalContext.current
     OutlinedTextField(
@@ -276,12 +401,25 @@ private fun OidcFields(state: SinkEditorState, viewModel: SinkEditorViewModel) {
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         modifier = Modifier.fillMaxWidth(),
     )
-    Field(R.string.sink_oidc_client_id, form.oidcClientId, SinkField.OIDC_CLIENT_ID in state.invalid) { v -> viewModel.edit { it.copy(oidcClientId = v) } }
+    Field(
+        R.string.sink_oidc_client_id,
+        form.oidcClientId,
+        SinkField.OIDC_CLIENT_ID in state.invalid,
+    ) { v ->
+        viewModel.edit {
+            it.copy(oidcClientId = v)
+        }
+    }
     Picker(R.string.sink_oidc_client_auth, OidcClientAuth.entries, form.oidcClientAuth, ::clientAuthLabel) { v ->
         viewModel.edit { it.copy(oidcClientAuth = v) }
     }
     if (form.oidcClientAuth != OidcClientAuth.NONE) {
-        SecretField(R.string.sink_oidc_client_secret, form.oidcClientSecretInput, state.hasStoredClientSecret, onClear = null) { v ->
+        SecretField(
+            R.string.sink_oidc_client_secret,
+            form.oidcClientSecretInput,
+            state.hasStoredClientSecret,
+            onClear = null,
+        ) { v ->
             viewModel.edit { it.copy(oidcClientSecretInput = v) }
         }
     }
@@ -290,16 +428,25 @@ private fun OidcFields(state: SinkEditorState, viewModel: SinkEditorViewModel) {
             if (signIn is SignInState.Failed) ErrorText(signIn.message)
             Button(onClick = viewModel::signIn) { Text(stringResource(R.string.sink_oidc_sign_in)) }
         }
-        SignInState.Starting -> Text(stringResource(R.string.pairing_working))
+
+        SignInState.Starting -> {
+            Text(stringResource(R.string.pairing_working))
+        }
+
         is SignInState.AwaitingUser -> {
             Text(stringResource(R.string.sink_oidc_instructions, signIn.verificationUri))
-            SelectionContainer { Text(signIn.userCode, style = MaterialTheme.typography.headlineSmall, fontFamily = FontFamily.Monospace) }
+            SelectionContainer {
+                Text(signIn.userCode, style = MaterialTheme.typography.headlineSmall, fontFamily = FontFamily.Monospace)
+            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { open(context, signIn.openUri) }) { Text(stringResource(R.string.sink_oidc_open)) }
-                OutlinedButton(onClick = { copy(context, signIn.userCode) }) { Text(stringResource(R.string.sink_oidc_copy_code)) }
+                OutlinedButton(
+                    onClick = { copy(context, signIn.userCode) },
+                ) { Text(stringResource(R.string.sink_oidc_copy_code)) }
                 TextButton(onClick = viewModel::cancelSignIn) { Text(stringResource(R.string.sink_cancel)) }
             }
         }
+
         SignInState.SignedIn -> {
             Text(stringResource(R.string.sink_oidc_signed_in))
             OutlinedButton(onClick = viewModel::signOut) { Text(stringResource(R.string.sink_oidc_sign_out)) }
@@ -330,7 +477,13 @@ private fun Field(
 
 /** Never shows the stored value; a placeholder says one exists and empty input keeps it. */
 @Composable
-private fun SecretField(@StringRes label: Int, value: String, stored: Boolean, onClear: (() -> Unit)?, onChange: (String) -> Unit) {
+private fun SecretField(
+    @StringRes label: Int,
+    value: String,
+    stored: Boolean,
+    onClear: (() -> Unit)?,
+    onChange: (String) -> Unit,
+) {
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
@@ -342,12 +495,22 @@ private fun SecretField(@StringRes label: Int, value: String, stored: Boolean, o
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         modifier = Modifier.fillMaxWidth(),
     )
-    if (stored && onClear != null) TextButton(onClick = onClear) { Text(stringResource(R.string.settings_secret_clear)) }
+    if (stored &&
+        onClear != null
+    ) {
+        TextButton(onClick = onClear) { Text(stringResource(R.string.settings_secret_clear)) }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun <T> Picker(@StringRes label: Int, options: List<T>, selected: T, labelOf: (T) -> Int, onSelect: (T) -> Unit) {
+private fun <T> Picker(
+    @StringRes label: Int,
+    options: List<T>,
+    selected: T,
+    labelOf: (T) -> Int,
+    onSelect: (T) -> Unit,
+) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         OutlinedTextField(
@@ -357,9 +520,10 @@ private fun <T> Picker(@StringRes label: Int, options: List<T>, selected: T, lab
             label = { Text(stringResource(label)) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             singleLine = true,
-            modifier = Modifier
-                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                .fillMaxWidth(),
+            modifier =
+                Modifier
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                    .fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { option ->
@@ -380,12 +544,18 @@ private fun ErrorText(text: String) {
     Text(text, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
 }
 
-private fun copy(context: Context, text: String) {
+private fun copy(
+    context: Context,
+    text: String,
+) {
     val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
     clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.app_name), text))
 }
 
-private fun open(context: Context, uri: String) {
+private fun open(
+    context: Context,
+    uri: String,
+) {
     try {
         context.startActivity(Intent(Intent.ACTION_VIEW, uri.toUri()))
     } catch (_: ActivityNotFoundException) {
@@ -394,38 +564,43 @@ private fun open(context: Context, uri: String) {
 }
 
 @StringRes
-internal fun formatLabel(kind: FormatKind): Int = when (kind) {
-    FormatKind.JSONL -> R.string.format_jsonl
-    FormatKind.CSV -> R.string.format_csv
-    FormatKind.PROMETHEUS -> R.string.format_prometheus
-}
+internal fun formatLabel(kind: FormatKind): Int =
+    when (kind) {
+        FormatKind.JSONL -> R.string.format_jsonl
+        FormatKind.CSV -> R.string.format_csv
+        FormatKind.PROMETHEUS -> R.string.format_prometheus
+    }
 
 @StringRes
-private fun authLabel(kind: AuthKind): Int = when (kind) {
-    AuthKind.NONE -> R.string.settings_auth_none
-    AuthKind.BASIC -> R.string.settings_auth_basic
-    AuthKind.BEARER -> R.string.settings_auth_bearer
-    AuthKind.OIDC -> R.string.settings_auth_oidc
-}
+private fun authLabel(kind: AuthKind): Int =
+    when (kind) {
+        AuthKind.NONE -> R.string.settings_auth_none
+        AuthKind.BASIC -> R.string.settings_auth_basic
+        AuthKind.BEARER -> R.string.settings_auth_bearer
+        AuthKind.OIDC -> R.string.settings_auth_oidc
+    }
 
 @StringRes
-private fun clientAuthLabel(method: OidcClientAuth): Int = when (method) {
-    OidcClientAuth.NONE -> R.string.oidc_client_public
-    OidcClientAuth.SECRET_BASIC -> R.string.oidc_client_secret_basic
-    OidcClientAuth.SECRET_POST -> R.string.oidc_client_secret_post
-}
+private fun clientAuthLabel(method: OidcClientAuth): Int =
+    when (method) {
+        OidcClientAuth.NONE -> R.string.oidc_client_public
+        OidcClientAuth.SECRET_BASIC -> R.string.oidc_client_secret_basic
+        OidcClientAuth.SECRET_POST -> R.string.oidc_client_secret_post
+    }
 
 @StringRes
-private fun urlProblemText(problem: SinkUrlProblem): Int = when (problem) {
-    SinkUrlProblem.INVALID -> R.string.settings_url_invalid
-    SinkUrlProblem.CREDENTIALS_IN_URL -> R.string.settings_url_credentials
-    SinkUrlProblem.QUERY_OR_FRAGMENT -> R.string.settings_url_query
-    SinkUrlProblem.CLEARTEXT -> R.string.settings_url_cleartext
-}
+private fun urlProblemText(problem: SinkUrlProblem): Int =
+    when (problem) {
+        SinkUrlProblem.INVALID -> R.string.settings_url_invalid
+        SinkUrlProblem.CREDENTIALS_IN_URL -> R.string.settings_url_credentials
+        SinkUrlProblem.QUERY_OR_FRAGMENT -> R.string.settings_url_query
+        SinkUrlProblem.CLEARTEXT -> R.string.settings_url_cleartext
+    }
 
 private val FieldKeyboard.type: KeyboardType
-    get() = when (this) {
-        FieldKeyboard.TEXT -> KeyboardType.Text
-        FieldKeyboard.URI -> KeyboardType.Uri
-        FieldKeyboard.NUMBER -> KeyboardType.Number
-    }
+    get() =
+        when (this) {
+            FieldKeyboard.TEXT -> KeyboardType.Text
+            FieldKeyboard.URI -> KeyboardType.Uri
+            FieldKeyboard.NUMBER -> KeyboardType.Number
+        }

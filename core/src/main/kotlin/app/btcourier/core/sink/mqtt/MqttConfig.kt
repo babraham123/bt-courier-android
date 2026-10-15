@@ -9,7 +9,10 @@ enum class MqttVersion { V5, V3_1_1 }
  * Broker username and optional password. Never revealed by `toString()`, so an [MqttConfig] can
  * sit in logs or crash reports.
  */
-class MqttCredentials(val username: String, val password: String? = null) {
+class MqttCredentials(
+    val username: String,
+    val password: String? = null,
+) {
     override fun toString() = "MqttCredentials(***)"
 }
 

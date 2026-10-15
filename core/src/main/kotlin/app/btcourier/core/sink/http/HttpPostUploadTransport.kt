@@ -53,11 +53,12 @@ class HttpPostUploadTransport(
 
     override suspend fun upload(batch: Batch): UploadResult {
         val name = if (encoding == BodyEncoding.GzipFile) batch.name else batch.name.removeSuffix(".gz")
-        val bytes = if (encoding == BodyEncoding.Identity) {
-            gunzipOrNull(batch.bytes) ?: return UploadResult.Failed("$name: stored batch is not valid gzip")
-        } else {
-            batch.bytes
-        }
+        val bytes =
+            if (encoding == BodyEncoding.Identity) {
+                gunzipOrNull(batch.bytes) ?: return UploadResult.Failed("$name: stored batch is not valid gzip")
+            } else {
+                batch.bytes
+            }
         val target = if (nameQuery) endpoint.newBuilder().addQueryParameter("name", name).build() else endpoint
         return client.sendUpload(auth, name) {
             url(target)

@@ -44,10 +44,11 @@ class WifiHttpTransport(
         path: String,
         body: ByteArray?,
         headers: Map<String, String>,
-    ): Response = call(method, path, body, headers).await().use { rsp ->
-        val bytes = withContext(Dispatchers.IO) { rsp.body.bytes() }
-        Response(rsp.code, rsp.headers.toLowerCaseMap(), bytes)
-    }
+    ): Response =
+        call(method, path, body, headers).await().use { rsp ->
+            val bytes = withContext(Dispatchers.IO) { rsp.body.bytes() }
+            Response(rsp.code, rsp.headers.toLowerCaseMap(), bytes)
+        }
 
     /**
      * The body flow must be collected or cancelled, as with the BLE transport: until then the
@@ -62,28 +63,30 @@ class WifiHttpTransport(
         val call = call(method, path, body, headers)
         val rsp = call.await()
         val collected = AtomicBoolean(false)
-        val bodyFlow = flow {
-            check(collected.compareAndSet(false, true)) { "a streamed body can be collected once" }
-            rsp.use {
-                coroutineScope {
-                    // A blocking socket read ignores coroutine cancellation; cancelling the call
-                    // closes the socket, which is what makes cancelling collection abort it.
-                    val canceller = launch {
-                        try {
-                            awaitCancellation()
-                        } finally {
-                            call.cancel()
+        val bodyFlow =
+            flow {
+                check(collected.compareAndSet(false, true)) { "a streamed body can be collected once" }
+                rsp.use {
+                    coroutineScope {
+                        // A blocking socket read ignores coroutine cancellation; cancelling the call
+                        // closes the socket, which is what makes cancelling collection abort it.
+                        val canceller =
+                            launch {
+                                try {
+                                    awaitCancellation()
+                                } finally {
+                                    call.cancel()
+                                }
+                            }
+                        val source = rsp.body.source()
+                        val chunk = Buffer()
+                        while (withContext(Dispatchers.IO) { source.read(chunk, CHUNK_BYTES) } != -1L) {
+                            emit(chunk.readByteArray())
                         }
+                        canceller.cancel()
                     }
-                    val source = rsp.body.source()
-                    val chunk = Buffer()
-                    while (withContext(Dispatchers.IO) { source.read(chunk, CHUNK_BYTES) } != -1L) {
-                        emit(chunk.readByteArray())
-                    }
-                    canceller.cancel()
                 }
             }
-        }
         return StreamingResponse(rsp.code, rsp.headers.toLowerCaseMap(), bodyFlow)
     }
 
@@ -94,12 +97,15 @@ class WifiHttpTransport(
         headers: Map<String, String>,
     ): Call {
         val contentType = headers.entries.firstOrNull { it.key.equals("content-type", ignoreCase = true) }?.value
-        val requestBody = when {
-            body != null -> body.toRequestBody(contentType?.toMediaTypeOrNull())
-            // OkHttp rejects a body-less POST/PUT; the device treats an empty body the same.
-            method.uppercase() in BODY_REQUIRED -> ByteArray(0).toRequestBody(contentType?.toMediaTypeOrNull())
-            else -> null
-        }
+        val requestBody =
+            when {
+                body != null -> body.toRequestBody(contentType?.toMediaTypeOrNull())
+
+                // OkHttp rejects a body-less POST/PUT; the device treats an empty body the same.
+                method.uppercase() in BODY_REQUIRED -> ByteArray(0).toRequestBody(contentType?.toMediaTypeOrNull())
+
+                else -> null
+            }
         return client.newCall(auth) {
             url(base.append(path))
             headers.forEach { (name, value) -> header(name, value) }

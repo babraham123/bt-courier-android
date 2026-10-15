@@ -29,18 +29,22 @@ import app.btcourier.work.BondedDevices
 /** Picks the car head unit for `CarTrigger` from the phone's bonded devices; null is "None". */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CarPicker(selected: String?, onSelect: (String?) -> Unit) {
+fun CarPicker(
+    selected: String?,
+    onSelect: (String?) -> Unit,
+) {
     val context = LocalContext.current
     var permitted by remember { mutableStateOf(hasBluetoothConnectPermission(context)) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permitted = it }
     val bonded = remember(permitted) { if (permitted) BondedDevices.list(context) else emptyList() }
     // A car unpaired since it was chosen, or not listable without the permission, stays selectable
     // so the stored choice is shown rather than silently replaced.
-    val devices = if (selected == null || bonded.any { it.second.equals(selected, ignoreCase = true) }) {
-        bonded
-    } else {
-        bonded + (selected to selected)
-    }
+    val devices =
+        if (selected == null || bonded.any { it.second.equals(selected, ignoreCase = true) }) {
+            bonded
+        } else {
+            bonded + (selected to selected)
+        }
     val noneLabel = stringResource(R.string.settings_car_none)
     val selectedLabel = devices.firstOrNull { it.second.equals(selected, ignoreCase = true) }?.first ?: noneLabel
     var expanded by remember { mutableStateOf(false) }
@@ -54,9 +58,10 @@ fun CarPicker(selected: String?, onSelect: (String?) -> Unit) {
             supportingText = { Text(stringResource(R.string.settings_car_help)) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             singleLine = true,
-            modifier = Modifier
-                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                .fillMaxWidth(),
+            modifier =
+                Modifier
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                    .fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(

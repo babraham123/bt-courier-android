@@ -46,22 +46,35 @@ class HttpPutUploadTransport(
 
     override suspend fun upload(batch: Batch): UploadResult {
         val name = if (compress) batch.name else batch.name.removeSuffix(".gz")
-        val bytes = if (compress) {
-            batch.bytes
-        } else {
-            gunzipOrNull(batch.bytes) ?: return UploadResult.Failed("$name: stored batch is not valid gzip")
-        }
+        val bytes =
+            if (compress) {
+                batch.bytes
+            } else {
+                gunzipOrNull(batch.bytes) ?: return UploadResult.Failed("$name: stored batch is not valid gzip")
+            }
         val url = base.newBuilder().addPathSegment(name).build()
-        return client.sendUpload(auth, name, onConflict = { code -> resolveConflict(code, name, url, bytes.size.toLong()) }) {
+        return client.sendUpload(auth, name, onConflict = { code ->
+            resolveConflict(code, name, url, bytes.size.toLong())
+        }) {
             url(url).put(bytes.toRequestBody(contentTypeOf(name)))
         }
     }
 
-    private suspend fun resolveConflict(code: Int, name: String, url: HttpUrl, length: Long): UploadResult =
+    private suspend fun resolveConflict(
+        code: Int,
+        name: String,
+        url: HttpUrl,
+        length: Long,
+    ): UploadResult =
         client.newCall(auth) { url(url).head() }.await().use { rsp ->
             when {
-                rsp.isSuccessful && !rsp.redirected && rsp.header("Content-Length")?.toLongOrNull() == length -> UploadResult.Acked
+                rsp.isSuccessful && !rsp.redirected && rsp
+                    .header(
+                        "Content-Length",
+                    )?.toLongOrNull() == length -> UploadResult.Acked
+
                 rsp.code == 404 -> UploadResult.Failed("HTTP $code for $name and no object exists there")
+
                 else -> UploadResult.Retry("HTTP $code for $name and the existing object is not verifiably identical")
             }
         }
