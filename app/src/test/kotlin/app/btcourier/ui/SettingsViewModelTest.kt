@@ -6,6 +6,7 @@ import app.btcourier.data.TransportConfig
 import app.btcourier.ui.settings.CacheCapProblem
 import app.btcourier.ui.settings.SettingsViewModel
 import app.btcourier.ui.settings.validateCacheCap
+import app.btcourier.work.RecordingWorkControl
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse

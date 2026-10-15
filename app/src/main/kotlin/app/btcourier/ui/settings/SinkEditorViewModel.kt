@@ -27,7 +27,7 @@ import app.btcourier.data.sinkkind.TransportField
 import app.btcourier.data.sinkkind.capability
 import app.btcourier.data.sinkkind.module
 import app.btcourier.data.sinkkind.validateSinkUrl
-import app.btcourier.ui.WorkControl
+import app.btcourier.work.WorkControl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

@@ -27,6 +27,7 @@ import app.btcourier.ui.settings.SinkEditorViewModel
 import app.btcourier.ui.settings.SinkField
 import app.btcourier.work.InMemorySshKeys
 import app.btcourier.work.MapSecretStore
+import app.btcourier.work.RecordingWorkControl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest

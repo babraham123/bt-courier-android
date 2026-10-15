@@ -87,7 +87,7 @@ object Scheduler {
             .build()
 }
 
-/** Re-registers the periodic sync and presence observation after a reboot. */
+/** Re-registers the periodic sync and presence observation after a reboot ([restoreSchedules]). */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
@@ -95,8 +95,7 @@ class BootReceiver : BroadcastReceiver() {
         val pending = goAsync()
         AppGraph.scope.launch {
             try {
-                Scheduler.setPeriodicSync(app, AppGraph.settings.current().periodicSync)
-                AppGraph.pairedDevices.all().forEach { DevicePresence.startObserving(app, it.address) }
+                restoreSchedules(AppGraph.settings, AppGraph.pairedDevices, AppGraph.work) { DevicePresence.startObserving(app, it) }
             } finally {
                 pending.finish()
             }

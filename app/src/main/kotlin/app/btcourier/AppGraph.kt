@@ -30,10 +30,12 @@ import app.btcourier.data.saf.releaseGrant
 import app.btcourier.data.settingsDataStore
 import app.btcourier.log.AppLog
 import app.btcourier.work.LinkFactory
-import app.btcourier.work.Scheduler
+import app.btcourier.work.SchedulerWorkControl
 import app.btcourier.work.SyncFanOut
 import app.btcourier.work.SyncJob
+import app.btcourier.work.SyncWork
 import app.btcourier.work.UploadJob
+import app.btcourier.work.WorkControl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -78,7 +80,9 @@ object AppGraph {
         DataStoreSyncStatus(statusDataStore(app) { newestAssociation(associations.list())?.address })
     }
     val pairedDevices: PairedDeviceRepository by lazy { CompanionPairedDeviceRepository(associations, settings) }
-    val syncFanOut: SyncFanOut by lazy { SyncFanOut(pairedDevices) { Scheduler.syncNow(app, it) } }
+    /** Every scheduling request goes through it: screens, triggers and workers. */
+    val work: WorkControl by lazy { SchedulerWorkControl(app) }
+    val syncFanOut: SyncFanOut by lazy { SyncFanOut(pairedDevices, work::syncNow) }
     val secrets: SecretStore by lazy { KeystoreSecretStore(File(app.noBackupFilesDir, "secrets")) }
     val sshKeys: SshKeys by lazy { AndroidKeystoreSshKeys() }
     val sinkCredentials: SinkCredentials by lazy {
@@ -124,6 +128,8 @@ object AppGraph {
             log = log,
         )
     }
+
+    val syncWork: SyncWork by lazy { SyncWork(syncJob, syncFanOut, work) }
 
     // One instance for the process: it keeps each sink's retry schedule across rounds, while the
     // sinks themselves are rebuilt every round from the current settings.

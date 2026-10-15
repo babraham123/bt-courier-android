@@ -1,0 +1,59 @@
+package app.btcourier.work
+
+import app.btcourier.ble.PairedDevices
+import app.btcourier.core.store.SealPolicy
+import app.btcourier.data.SettingsRepository
+
+/** What a worker asks WorkManager for once its run ends. */
+enum class WorkVerdict { SUCCESS, RETRY }
+
+/**
+ * The rules of one [SyncWorker] run, kept out of the worker so they run on the JVM; the worker is
+ * a thin adapter that reads its inputs and maps the [WorkVerdict] to a WorkManager result.
+ *
+ * - Without an address (the periodic work, or a one-time sync queued before syncs were per
+ *   device) the run fans out: one sync per paired device ([SyncTrigger.Periodic]). With none
+ *   paired it runs [SyncJob] without a device, which only seals.
+ * - Whenever the run sealed new batches, an upload is enqueued, KEEP so an upload already waiting
+ *   delivers them: also after an interrupted sync and after one that found no device, since
+ *   sealing happens anyway.
+ * - Whether to run again is the outcome's [SyncOutcome.retryWorthwhile] ([SyncRetryPolicy] says
+ *   when), which the worker turns into WorkManager's back-off.
+ */
+class SyncWork(private val job: SyncJob, private val fanOut: SyncFanOut, private val work: WorkControl) {
+    /**
+     * @param address the device to sync; null fans out.
+     * @param attempt WorkManager's `runAttemptCount`, see [SyncJob.run].
+     * @param uploadOverCellular whether the upload this run may enqueue may use a metered network.
+     * @param onConnected see [SyncJob.run].
+     */
+    suspend fun run(
+        address: String?,
+        attempt: Int,
+        sealPolicy: SealPolicy,
+        uploadOverCellular: Boolean,
+        onConnected: suspend () -> Unit = {},
+    ): WorkVerdict {
+        if (address == null && fanOut.fire(SyncTrigger.Periodic).isNotEmpty()) return WorkVerdict.SUCCESS
+        val outcome = job.run(address, sealPolicy, attempt, onConnected)
+        if (outcome.newBatches) work.uploadNow(uploadOverCellular, replace = false)
+        return if (outcome.retryWorthwhile) WorkVerdict.RETRY else WorkVerdict.SUCCESS
+    }
+}
+
+/**
+ * Re-registers what the system may have dropped, at app start and after a reboot: the periodic
+ * sync per the settings toggle, and presence observation of every paired device. Safe to repeat:
+ * the periodic sync is registered KEEP, and observing a device already observed keeps observing it.
+ *
+ * @param observePresence `DevicePresence.startObserving` in the app.
+ */
+suspend fun restoreSchedules(
+    settings: SettingsRepository,
+    devices: PairedDevices,
+    work: WorkControl,
+    observePresence: (address: String) -> Unit,
+) {
+    work.setPeriodicSync(settings.current().periodicSync)
+    devices.all().forEach { observePresence(it.address) }
+}
