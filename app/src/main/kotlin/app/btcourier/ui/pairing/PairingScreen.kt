@@ -196,6 +196,8 @@ fun PairingScreen(
 
                     is ProbeResult.Ring -> {
                         Text(stringResource(R.string.pairing_test_ok_ring, probe.battery.level))
+                        probe.firmware?.let { Text(stringResource(R.string.pairing_test_firmware_ring, it)) }
+                        probe.hardware?.let { Text(stringResource(R.string.pairing_test_hardware_ring, it)) }
                         Text(autoHeartRateText(probe))
                     }
 

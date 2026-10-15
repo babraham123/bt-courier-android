@@ -10,6 +10,7 @@ import app.btcourier.core.source.colmi.colmiRequest
 import app.btcourier.core.source.colmi.readColmiAutoHeartRate
 import app.btcourier.core.source.colmi.writeColmiAutoHeartRate
 import app.btcourier.core.transport.GattLink
+import app.btcourier.core.transport.readDeviceRevisions
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -17,8 +18,9 @@ import kotlin.time.Duration.Companion.seconds
  * [ColmiRingSource]. The probe asks for the battery (`0x03`) and leaves the ring's clock alone:
  * setting it is the sync's job. It then applies [PairingChoices.autoHeartRate] and reads the
  * logging setting back (`0x16`): the ring records a heart-rate log only with it on, and the vendor
- * app owns it, so the wizard asks once instead of writing it on every sync. Protocol assumptions
- * are unverified on hardware; see [ColmiRingSource].
+ * app owns it, so the wizard asks once instead of writing it on every sync. Last it reads the
+ * firmware and hardware revisions from the Device Information Service, either of which may be
+ * missing. Protocol assumptions are unverified on hardware; see [ColmiRingSource].
  */
 object ColmiRingSupport : DeviceSupport {
     private val REQUEST_TIMEOUT = 5.seconds
@@ -69,7 +71,8 @@ object ColmiRingSupport : DeviceSupport {
             } catch (e: ColmiTimeoutException) {
                 null
             }
-        return ProbeResult.Ring(battery, autoHeartRate)
+        val revisions = link.readDeviceRevisions()
+        return ProbeResult.Ring(battery, autoHeartRate, revisions.firmware, revisions.hardware)
     }
 
     /**

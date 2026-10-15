@@ -113,10 +113,16 @@ sealed interface ProbeResult {
         val mtu: Int,
     ) : ProbeResult
 
-    /** @property autoHeartRate the logging setting read back, or null when the ring did not answer in time. */
+    /**
+     * @property autoHeartRate the logging setting read back, or null when the ring did not answer in time.
+     * @property firmware the Device Information Service's firmware revision, null when not exposed.
+     * @property hardware its hardware revision, null when not exposed.
+     */
     data class Ring(
         val battery: Battery,
         val autoHeartRate: AutoHeartRate?,
+        val firmware: String?,
+        val hardware: String?,
     ) : ProbeResult
 
     /** A sync (or another probe) holds the device's link; nothing was opened. */

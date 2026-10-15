@@ -3,6 +3,7 @@ package app.btcourier.core.transport
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import java.io.IOException
+import java.util.UUID
 
 /**
  * A connected BLE link to a device's notify and write characteristics.
@@ -16,6 +17,9 @@ import java.io.IOException
  * big-data service), addressed by the overloads taking a [GattChannel]. Both share the link's
  * [mtu]. The overloads default to "primary only", so a link without a second channel need not
  * implement them.
+ *
+ * Apart from the channels, [read] fetches a readable characteristic once by its UUIDs (the Device
+ * Information Service's strings); it defaults to "reads nothing".
  */
 interface GattLink {
     /** Negotiated ATT MTU; usable payload per write/notification is `mtu - 3`. */
@@ -57,6 +61,17 @@ interface GattLink {
         if (channel == GattChannel.PRIMARY) write(bytes, withResponse) else throw ChannelUnavailableException(channel)
     }
 
+    /**
+     * Reads [characteristic] of [service] once (an ATT read, not a notification).
+     *
+     * @throws CharacteristicUnavailableException when the device does not expose it, or not readably.
+     * @throws IOException on link loss.
+     */
+    suspend fun read(
+        service: UUID,
+        characteristic: UUID,
+    ): ByteArray = throw CharacteristicUnavailableException(service, characteristic)
+
     /** Disconnects. Idempotent. */
     fun close()
 }
@@ -73,3 +88,13 @@ class ChannelUnavailableException(
     val channel: GattChannel,
     cause: Throwable? = null,
 ) : IOException("the link has no $channel channel", cause)
+
+/**
+ * The device does not expose [characteristic] in [service], or not readably to this link. Like
+ * [ChannelUnavailableException] it says nothing about the link itself, which stays usable.
+ */
+class CharacteristicUnavailableException(
+    val service: UUID,
+    val characteristic: UUID,
+    cause: Throwable? = null,
+) : IOException("the device has no characteristic $characteristic in service $service", cause)

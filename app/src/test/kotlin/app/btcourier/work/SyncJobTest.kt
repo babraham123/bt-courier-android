@@ -490,7 +490,7 @@ class SyncJobTest {
             )
             val rows = batches.flatMap { it.lines }.filterNot(::isMarker)
             assertEquals(
-                listOf("colmi.battery", "colmi.hr", "colmi.hr", "colmi.hr_logging", "colmi.steps"),
+                listOf("colmi.battery", "colmi.device", "colmi.hr", "colmi.hr", "colmi.hr_logging", "colmi.steps"),
                 rows.mapNotNull(::param).sorted(),
             )
             assertTrue(
@@ -510,7 +510,7 @@ class SyncJobTest {
             assertTrue(ring.link.closed)
             assertEquals(1, ring.clockSets.size, "the ring's clock is set once per sync")
             assertEquals(
-                DeviceSync(NOW, SyncResultKind.CAUGHT_UP, 5, days.size, SyncStopKind.CAUGHT_UP, yesterday.toString()),
+                DeviceSync(NOW, SyncResultKind.CAUGHT_UP, 6, days.size, SyncStopKind.CAUGHT_UP, yesterday.toString()),
                 status.status.value.syncOf(ringAddress),
             )
             assertNull(status.status.value.syncOf(address))

@@ -5,6 +5,7 @@ import app.btcourier.core.source.ClockEvent
 import app.btcourier.core.source.Page
 import app.btcourier.core.source.Source
 import app.btcourier.core.transport.GattLink
+import app.btcourier.core.transport.readDeviceRevisions
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -60,10 +61,12 @@ import kotlin.time.Duration.Companion.seconds
  * ring's own stamps, which the normaliser rates `device`. A ring whose clock was lost (flat
  * battery) before this sync logged under a wrong clock that cannot be repaired afterwards.
  *
- * The first page of an instance also carries one `colmi.battery` row (percent) and one
+ * The first page of an instance also carries one `colmi.battery` row (percent), one
  * `colmi.hr_logging` row (the ring's own heart-rate logging setting, `0x16`, as
- * `{"enabled":<bool>,"interval_min":<minutes>}`), both stamped with the phone clock; a sync that
- * is already caught up stores no page and so neither reading. The setting is reported rather than
+ * `{"enabled":<bool>,"interval_min":<minutes>}`) and one `colmi.device` row (the Device
+ * Information Service's revision strings, as `{"firmware":<string|null>,"hardware":<string|null>}`,
+ * null for one the ring does not expose), all stamped with the phone clock; a sync that is already
+ * caught up stores no page and so none of these readings. The setting is reported rather than
  * used: each heart-rate log's header carries the interval it was recorded at, which places its
  * readings even when the setting changed since (there is no logger in core to flag a mismatch).
  *
@@ -97,6 +100,8 @@ import kotlin.time.Duration.Companion.seconds
  *   [HrvLogAssembler]); HRV rows are placed from the requested day's start.
  * - The `0x16` read answer says on with byte 2 = 1 (Gadgetbridge); what an off ring sends there
  *   is unknown, so anything else reads as off.
+ * - Whether the ring has the Device Information Service and lets an unbonded link read its
+ *   revision strings; without them the `colmi.device` values are null.
  * - Writes go with response when RX declares it, else without, as PulseLoopiOS picks
  *   (`colmi_r02_client` always writes without).
  * - Answers are not acknowledged, and the ring may send packets of other commands at any time;
@@ -131,7 +136,7 @@ class ColmiRingSource(
 
     private var settled = false
     private var clockSet = false
-    private var batteryReported = false
+    private var deviceRowsReported = false
     private val bigData = ColmiBigDataLogs(link, responseTimeout)
 
     // Unknown until the first 0x39 request of this instance.
@@ -156,14 +161,15 @@ class ColmiRingSource(
             buildList {
                 add(StoredLine.marker("$FILE_PREFIX$day"))
                 rows.forEach { add(it.json()) }
-                if (!batteryReported) {
+                if (!deviceRowsReported) {
                     val battery =
                         link.colmiRequest(ColmiPacketCodec.batteryRequest(), responseTimeout) {
                             ColmiPacketCodec.parseBattery(it)
                         }
                     add(Row(phoneClock(), PARAM_BATTERY, battery.level).json())
                     add(hrLoggingRow().json())
-                    batteryReported = true
+                    add(deviceRow().json())
+                    deviceRowsReported = true
                 }
             }
         return Page(lines, day.toString(), more = day.plusDays(1).isBefore(today))
@@ -175,6 +181,16 @@ class ColmiRingSource(
         val setting = link.readColmiAutoHeartRate(responseTimeout)
         val value = """{"enabled":${setting.enabled},"interval_min":${setting.intervalMinutes}}"""
         return Row(phoneClock(), PARAM_HR_LOGGING, value)
+    }
+
+    private suspend fun deviceRow(): Row {
+        val revisions = link.readDeviceRevisions()
+        val value =
+            buildJsonObject {
+                put("firmware", revisions.firmware)
+                put("hardware", revisions.hardware)
+            }
+        return Row(phoneClock(), PARAM_DEVICE, value.toString())
     }
 
     private suspend fun setClockOnce() {
@@ -327,6 +343,7 @@ class ColmiRingSource(
         const val PARAM_HRV: String = "colmi.hrv"
         const val PARAM_BATTERY: String = "colmi.battery"
         const val PARAM_HR_LOGGING: String = "colmi.hr_logging"
+        const val PARAM_DEVICE: String = "colmi.device"
         const val PARAM_SPO2: String = "colmi.spo2"
         const val PARAM_SLEEP: String = "colmi.sleep"
         const val PARAM_TEMP: String = "colmi.temp"

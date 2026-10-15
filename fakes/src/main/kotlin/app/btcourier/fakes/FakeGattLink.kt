@@ -1,6 +1,7 @@
 package app.btcourier.fakes
 
 import app.btcourier.core.transport.ChannelUnavailableException
+import app.btcourier.core.transport.CharacteristicUnavailableException
 import app.btcourier.core.transport.GattChannel
 import app.btcourier.core.transport.GattLink
 import kotlinx.coroutines.channels.Channel
@@ -8,6 +9,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.yield
 import java.io.IOException
+import java.util.UUID
 
 /**
  * In-memory [GattLink] for JVM tests: records every write and lets the test push notifications.
@@ -15,9 +17,12 @@ import java.io.IOException
  * Scripted peripherals (frame replay, link loss, 429) build on this by reacting in [onWrite].
  * A link built with [onSecondaryWrite] also has the secondary channel, with its own writes and
  * notifications; without it, the secondary channel is unavailable, as on a device lacking it.
+ * [read] answers from [characteristics].
  */
 class FakeGattLink(
     override val mtu: Int = 517,
+    /** Readable values by `(service, characteristic)`; any other read is unavailable. */
+    private val characteristics: Map<Pair<UUID, UUID>, ByteArray> = emptyMap(),
     /** Called after each accepted secondary-channel write; null means the link has no secondary channel. */
     private val onSecondaryWrite: (suspend FakeGattLink.(bytes: ByteArray, withResponse: Boolean) -> Unit)? = null,
     /** Called after each accepted write; lets a peripheral script respond via [notify]. */
@@ -83,6 +88,17 @@ class FakeGattLink(
         // A real stack suspends on every write; without this a writer loop would never let the
         // notification collector run, hiding interleavings the transport must handle.
         yield()
+    }
+
+    override suspend fun read(
+        service: UUID,
+        characteristic: UUID,
+    ): ByteArray {
+        if (closed) throw IOException("link closed")
+        val value =
+            characteristics[service to characteristic]
+                ?: throw CharacteristicUnavailableException(service, characteristic)
+        return value.copyOf()
     }
 
     /** Delivers one notification PDU on [channel] to its collector. */

@@ -46,6 +46,10 @@ class PairingViewModelTest {
             autoHeartRateIntervalMinutes = 30,
         )
     private val battery = Battery(42, charging = false)
+
+    private fun ringResult(autoHeartRate: AutoHeartRate?) =
+        ProbeResult.Ring(battery, autoHeartRate, FakeColmiRing.FIRMWARE, FakeColmiRing.HARDWARE)
+
     private val locks = DeviceLocks()
 
     private inner class RecordingPlatform : PairingPlatform {
@@ -130,7 +134,7 @@ class PairingViewModelTest {
             testScheduler.advanceUntilIdle()
 
             assertEquals(
-                ProbeResult.Ring(battery, AutoHeartRate(enabled = true, intervalMinutes = 5)),
+                ringResult(AutoHeartRate(enabled = true, intervalMinutes = 5)),
                 vm.state.value.probe,
             )
             assertEquals(true to 5, ring.autoHeartRateEnabled to ring.autoHeartRateIntervalMinutes)
@@ -151,7 +155,7 @@ class PairingViewModelTest {
             testScheduler.advanceUntilIdle()
 
             assertEquals(
-                ProbeResult.Ring(battery, AutoHeartRate(enabled = false, intervalMinutes = 30)),
+                ringResult(AutoHeartRate(enabled = false, intervalMinutes = 30)),
                 vm.state.value.probe,
             )
             assertEquals(false to 30, ring.autoHeartRateEnabled to ring.autoHeartRateIntervalMinutes)
@@ -167,7 +171,7 @@ class PairingViewModelTest {
             vm.test()
             testScheduler.advanceUntilIdle()
 
-            assertEquals(ProbeResult.Ring(battery, autoHeartRate = null), vm.state.value.probe)
+            assertEquals(ringResult(autoHeartRate = null), vm.state.value.probe)
             assertNull(vm.state.value.error)
             assertFalse(vm.state.value.busy)
         }
@@ -194,7 +198,7 @@ class PairingViewModelTest {
             testScheduler.advanceUntilIdle()
 
             assertEquals(
-                ProbeResult.Ring(battery, AutoHeartRate(enabled = true, intervalMinutes = 5)),
+                ringResult(AutoHeartRate(enabled = true, intervalMinutes = 5)),
                 vm.state.value.probe,
             )
         }

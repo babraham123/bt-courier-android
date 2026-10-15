@@ -38,6 +38,12 @@ class PairingScreenTest : ScreenTest() {
 
     private fun show() = setScreen { PairingScreen(vm, onDone = { done++ }) }
 
+    private fun ringResult(
+        autoHeartRate: AutoHeartRate? = AutoHeartRate(enabled = true, intervalMinutes = 5),
+        firmware: String? = "3.00.10",
+        hardware: String? = "V1.0",
+    ) = ProbeResult.Ring(Battery(42, charging = false), autoHeartRate, firmware, hardware)
+
     /**
      * Walks the view model to the test step the way the screen's activity callbacks do. Bonding needs
      * the system dialog, so it is reported done before the screen is shown.
@@ -121,15 +127,16 @@ class PairingScreenTest : ScreenTest() {
     }
 
     @Test
-    fun `a paired ring is stored, its test shows the battery, and done closes the wizard`() {
-        probeResult =
-            ProbeResult.Ring(Battery(42, charging = false), AutoHeartRate(enabled = true, intervalMinutes = 5))
+    fun `a paired ring is stored, its test shows battery, revisions and heart rate, and done closes the wizard`() {
+        probeResult = ringResult()
         pairedUpToTest(DeviceKind.COLMI_RING)
         show()
 
         onText(R.string.pairing_test_body_ring).assertIsDisplayed()
         onText(R.string.pairing_test).tap()
         onText(R.string.pairing_test_ok_ring, 42).assertIsDisplayed()
+        onText(R.string.pairing_test_firmware_ring, "3.00.10").assertIsDisplayed()
+        onText(R.string.pairing_test_hardware_ring, "V1.0").assertIsDisplayed()
         onText(R.string.pairing_test_auto_hr_on, 5).assertIsDisplayed()
         onText(R.string.pairing_done).tap()
 
@@ -139,18 +146,29 @@ class PairingScreenTest : ScreenTest() {
 
     @Test
     fun `a ring test says when background heart rate is off or could not be confirmed`() {
-        probeResult =
-            ProbeResult.Ring(Battery(42, charging = false), AutoHeartRate(enabled = false, intervalMinutes = 30))
+        probeResult = ringResult(AutoHeartRate(enabled = false, intervalMinutes = 30))
         pairedUpToTest(DeviceKind.COLMI_RING)
         show()
 
         onText(R.string.pairing_test).tap()
         onText(R.string.pairing_test_auto_hr_off).assertIsDisplayed()
 
-        probeResult = ProbeResult.Ring(Battery(42, charging = false), autoHeartRate = null)
+        probeResult = ringResult(autoHeartRate = null)
         onText(R.string.pairing_test).tap()
         onText(R.string.pairing_test_auto_hr_unknown).assertIsDisplayed()
         assertNoText(R.string.pairing_test_auto_hr_off)
+    }
+
+    @Test
+    fun `a ring test leaves out a revision the ring does not expose`() {
+        probeResult = ringResult(hardware = null)
+        pairedUpToTest(DeviceKind.COLMI_RING)
+        show()
+
+        onText(R.string.pairing_test).tap()
+
+        onText(R.string.pairing_test_firmware_ring, "3.00.10").assertIsDisplayed()
+        assertNoText(string(R.string.pairing_test_hardware_ring, ""), substring = true)
     }
 
     @Test
