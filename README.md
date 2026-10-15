@@ -1,31 +1,32 @@
 # BT Courier
 
-BT Courier is an Android app that pulls logged data from Bluetooth LE devices, caches it on the
-phone, and uploads it in batches to self-hosted backends. The first supported device is the
-WiCAN Pro OBD-II dongle, whose HTTP API it speaks over BLE; it catches up from a cursor after a
-disconnect, repairs timestamps logged before the device clock was valid, and treats transports,
-sources, sinks and formats as plugins. It uses only FOSS dependencies and no Google Play Services.
+BT Courier is a FOSS Android app that extracts logged BLE device data, caches it locally, and batch-uploads to self-hosted backends without Google Play Services. It initially supports the WiCAN Pro OBD-II dongle via HTTP-over-BLE, featuring cursor-based disconnect recovery, early-timestamp repair, and a plugin architecture for transports, sources, sinks, and formats.
 
 ## Status
 
-Pre-alpha. The core library and the Android app are implemented and unit-tested, and CI runs the
-checks on every push, but nothing has been verified on real hardware yet. To try it you need:
+Pre-alpha. The core library and app are implemented, unit-tested, and CI-checked on every push, but unverified on hardware. To try it, you need:
 
-- a WiCAN Pro on the `dev-v6` firmware with BLE enabled;
-- an Android 12+ phone.
+- a WiCAN Pro on `dev-v6` firmware with BLE enabled
+- an Android 12+ phone
 
-Distribution is planned through GitHub Releases installable with Obtainium, then F-Droid. Changes
-are listed in `CHANGELOG.md`; design notes and the task list live in `planning/`.
+Planned distribution is via GitHub Releases (for Obtainium), then F-Droid. See `CHANGELOG.md` for updates and `planning/` for design notes and tasks.
 
 ## Build
 
-Build with JDK 21 and the Android SDK (platform 36), pointing `sdk.dir` in `local.properties` or
-`ANDROID_HOME` at the SDK, then run the full check:
+Requires JDK 21 and the Android SDK (platform 36) configured via `sdk.dir` in `local.properties` or `ANDROID_HOME`. Run full checks:
 
 ```
 ./gradlew :core:test :fakes:test :app:testDebugUnitTest ktlintCheck :app:lintDebug :app:lintRelease :app:assembleDebug :app:assembleRelease
 ```
 
-The debug APK lands in `app/build/outputs/apk/debug/`. See `CONTRIBUTING.md` for code style,
-tests and the no-personal-data rule, and `SECURITY.md` to report a vulnerability. Licensed under
+The debug APK outputs to `app/build/outputs/apk/debug/`. See `CONTRIBUTING.md` for code style, tests, and the no-personal-data rule, and `SECURITY.md` to report vulnerabilities.
+
+## Attribution
+
+- The WiCAN Pro protocol follows MeatPi's [wican-fw](https://github.com/meatpiHQ/wican-fw) firmware and its HTTP-over-BLE specification.
+- The Colmi smart ring protocol follows tahnok's [colmi_r02_client](https://github.com/tahnok/colmi_r02_client) and Gadgetbridge's Colmi R0x support.
+- BLE access uses [Kable](https://github.com/JuulLabs/kable); SFTP and MQTT sinks use [sshj](https://github.com/hierynomus/sshj) and the [HiveMQ MQTT client](https://github.com/hivemq/hivemq-mqtt-client).
+
+## License
+
 GPL-3.0; see `LICENSE`.
