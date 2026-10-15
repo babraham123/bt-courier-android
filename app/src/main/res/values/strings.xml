@@ -110,7 +110,6 @@
     <string name="settings_username">Username</string>
     <string name="settings_password">Password</string>
     <string name="settings_token">Bearer token</string>
-    <string name="settings_secret_stored">Saved (unchanged)</string>
     <string name="settings_secret_help">Stored encrypted on this phone. Leave empty to keep the saved one.</string>
     <string name="settings_secret_clear">Remove saved secret</string>
     <string name="settings_compress">Upload gzip-compressed</string>
