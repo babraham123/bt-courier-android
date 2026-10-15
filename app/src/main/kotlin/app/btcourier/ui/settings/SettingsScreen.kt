@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.btcourier.R
 import app.btcourier.data.SinkConfig
+import app.btcourier.data.sinkkind.module
 import app.btcourier.ui.BackButton
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -116,7 +117,7 @@ private fun SinkRow(sink: SinkConfig, onClick: () -> Unit, onEnabled: (Boolean) 
         Column(Modifier.weight(1f)) {
             Text(sink.name, style = MaterialTheme.typography.bodyLarge)
             Text(
-                stringResource(R.string.status_two_values, stringResource(transportLabel(sink.transport.kind)), stringResource(formatLabel(sink.format))),
+                stringResource(R.string.status_two_values, stringResource(sink.transport.kind.module.label), stringResource(formatLabel(sink.format))),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -130,11 +131,11 @@ internal fun Heading(@StringRes text: Int) {
 }
 
 @Composable
-internal fun Toggle(@StringRes title: Int, @StringRes help: Int, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun Toggle(@StringRes title: Int, @StringRes help: Int?, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(stringResource(title), style = MaterialTheme.typography.bodyLarge)
-            Text(stringResource(help), style = MaterialTheme.typography.bodySmall)
+            if (help != null) Text(stringResource(help), style = MaterialTheme.typography.bodySmall)
         }
         Switch(checked = checked, onCheckedChange = onChange)
     }

@@ -8,11 +8,12 @@ import app.btcourier.data.OidcClientAuth
 import app.btcourier.data.SinkConfig
 import app.btcourier.data.StoredNames
 import app.btcourier.data.TransportConfig
+import app.btcourier.data.sinkkind.HttpPutKind
+import app.btcourier.data.sinkkind.SinkUrlProblem
 import app.btcourier.data.testCredentials
 import app.btcourier.ui.settings.SignInState
 import app.btcourier.ui.settings.SinkForm
 import app.btcourier.ui.settings.SinkEditorViewModel
-import app.btcourier.ui.settings.SinkUrlProblem
 import app.btcourier.work.MapSecretStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
@@ -205,7 +206,7 @@ class OidcSignInTest {
 
     @Test
     fun `signing in for another server and leaving without saving stores nothing`() {
-        val vm = signedIn { it.copy(url = "https://other-sink.invalid/") }
+        val vm = signedIn { it.withValues(it.values.with(HttpPutKind.URL_KEY, "https://other-sink.invalid/")) }
 
         runBlocking(main) { vm.discard() }
 

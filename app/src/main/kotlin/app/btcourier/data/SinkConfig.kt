@@ -31,6 +31,11 @@ data class SinkConfig(
     val auth: AuthConfig = AuthConfig.None,
 )
 
+/**
+ * Where a sink sends batches; one variant per [TransportKind]. Persisted, so field and type names
+ * are on-device data. What each variant may be paired with, how the editor shows it and how it
+ * becomes a transport is its [app.btcourier.data.sinkkind.SinkTransportKind]'s business.
+ */
 @Serializable
 sealed interface TransportConfig {
     val kind: TransportKind
@@ -93,24 +98,13 @@ sealed interface TransportConfig {
     }
 }
 
+/** One per [TransportConfig] variant; its behaviour lives in [app.btcourier.data.sinkkind.module]. */
 enum class TransportKind {
     HTTP_PUT,
     HTTP_POST,
     SFTP,
     MQTT,
     LOCAL_FOLDER,
-    ;
-
-    /**
-     * The auth kinds this transport can use: MQTT only knows username/password, SFTP
-     * authenticates with its Keystore key and a local folder needs nothing.
-     */
-    val allowedAuth: List<AuthKind>
-        get() = when (this) {
-            HTTP_PUT, HTTP_POST -> AuthKind.entries
-            MQTT -> listOf(AuthKind.NONE, AuthKind.BASIC)
-            SFTP, LOCAL_FOLDER -> listOf(AuthKind.NONE)
-        }
 }
 
 fun defaultMqttPort(tls: Boolean) = if (tls) 8883 else 1883

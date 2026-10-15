@@ -18,8 +18,12 @@ import kotlin.coroutines.resumeWithException
 /**
  * Parses a transport base URL. Credentials in the URL are rejected so they can only come through
  * [Auth], which keeps them out of `toString()` and error messages that quote the URL.
+ *
+ * Public so an app can check a URL with the same rules before saving it.
+ *
+ * @throws IllegalArgumentException for a URL that is not http(s) or carries credentials.
  */
-internal fun parseBaseUrl(baseUrl: String): HttpUrl {
+fun parseBaseUrl(baseUrl: String): HttpUrl {
     val url = baseUrl.toHttpUrl()
     require(url.username.isEmpty() && url.password.isEmpty()) { "put credentials in Auth, not the base URL" }
     return url
