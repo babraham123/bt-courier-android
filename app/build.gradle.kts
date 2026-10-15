@@ -46,6 +46,11 @@ android {
         includeInBundle = false
     }
 
+    testOptions {
+        // Robolectric screen tests resolve strings, plurals and themes from the merged resources.
+        unitTests.isIncludeAndroidResources = true
+    }
+
     packaging {
         resources {
             // Library build metadata: unused at runtime and a source of non-reproducible bytes.
@@ -85,6 +90,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kable.core)
@@ -98,9 +104,15 @@ dependencies {
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
+    testRuntimeOnly(libs.junit.vintage.engine)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    // Robolectric's SDK 36 sandbox sets file descriptors through this JDK-internal API.
+    jvmArgs("--add-opens=java.base/jdk.internal.access=ALL-UNNAMED")
 }

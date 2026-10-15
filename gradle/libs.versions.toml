@@ -14,6 +14,8 @@ core-ktx = "1.17.0"
 work = "2.11.0"
 datastore = "1.1.7"
 junit = "5.14.4"
+# 4.17 runs SDK 36 (compileSdk); JVM screen tests only.
+robolectric = "4.17"
 sshj = "0.41.2"
 sshd = "2.15.0"
 hivemq-mqtt = "1.4.1"
@@ -44,6 +46,9 @@ androidx-compose-ui = { module = "androidx.compose.ui:ui" }
 androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
 androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 androidx-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+# Declares the empty activity createComposeRule launches.
+androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
@@ -55,6 +60,9 @@ androidx-documentfile = { module = "androidx.documentfile:documentfile", version
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+# Runs the JUnit 4 Robolectric screen tests on the JUnit Platform beside Jupiter.
+junit-vintage-engine = { module = "org.junit.vintage:junit-vintage-engine" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

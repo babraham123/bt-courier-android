@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -215,7 +216,13 @@ private fun InfoRow(@StringRes label: Int, value: String, highlight: Boolean = f
 
 @Composable
 private fun InfoRow(label: String, value: String, highlight: Boolean = false) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    // One node, so a screen reader reads the label with its value rather than as two stray texts.
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {},
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
         Text(
             value,

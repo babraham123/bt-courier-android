@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -27,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -132,12 +134,18 @@ internal fun Heading(@StringRes text: Int) {
 
 @Composable
 internal fun Toggle(@StringRes title: Int, @StringRes help: Int?, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    // The whole row is the switch, so its title labels it for screen readers and the touch target.
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Column(Modifier.weight(1f)) {
             Text(stringResource(title), style = MaterialTheme.typography.bodyLarge)
             if (help != null) Text(stringResource(help), style = MaterialTheme.typography.bodySmall)
         }
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 
