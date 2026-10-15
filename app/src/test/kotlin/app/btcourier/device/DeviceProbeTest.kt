@@ -4,6 +4,8 @@ import app.btcourier.core.source.colmi.AutoHeartRate
 import app.btcourier.core.source.colmi.Battery
 import app.btcourier.data.DeviceKind
 import app.btcourier.fakes.FakeColmiRing
+import app.btcourier.fakes.FakeColmiRing.Companion.FIRMWARE
+import app.btcourier.fakes.FakeColmiRing.Companion.HARDWARE
 import app.btcourier.fakes.FakeGattLink
 import app.btcourier.fakes.ScriptedPeripheral
 import app.btcourier.fakes.ScriptedPeripheral.Reply
@@ -19,6 +21,7 @@ import java.time.LocalDate
  * Each kind's "test connection" probe over the scripted `ble_http` peripheral and the fake ring.
  * The ring's probe applies the wizard's background heart-rate choice: checked turns logging on
  * every 5 minutes, unchecked leaves the setting as it was; either way it reads the setting back.
+ * It also reads the firmware and hardware revisions from the Device Information Service.
  */
 class DeviceProbeTest {
     // Shape from dev_status_manager HTTP_API.md `GET /api/status`, padded past one notify frame.
@@ -37,14 +40,20 @@ class DeviceProbeTest {
             )
         }
 
-    private fun ringWithLoggingOff() =
-        FakeColmiRing(
-            today = LocalDate.of(2026, 10, 15),
-            batteryLevel = 64,
-            charging = true,
-            autoHeartRateEnabled = false,
-            autoHeartRateIntervalMinutes = 30,
-        )
+    private fun ringWithLoggingOff(
+        firmware: String? = FIRMWARE,
+        hardware: String? = HARDWARE,
+    ) = FakeColmiRing(
+        today = LocalDate.of(2026, 10, 15),
+        batteryLevel = 64,
+        charging = true,
+        autoHeartRateEnabled = false,
+        autoHeartRateIntervalMinutes = 30,
+        firmware = firmware,
+        hardware = hardware,
+    )
+
+    private val battery = Battery(level = 64, charging = true)
 
     /** Command byte and, for `0x16`, its read/write byte, of each command the ring received. */
     private fun FakeColmiRing.commandHeads() =
@@ -56,10 +65,7 @@ class DeviceProbeTest {
             val ring = ringWithLoggingOff()
 
             assertEquals(
-                ProbeResult.Ring(
-                    Battery(level = 64, charging = true),
-                    AutoHeartRate(enabled = true, intervalMinutes = 5),
-                ),
+                ProbeResult.Ring(battery, AutoHeartRate(enabled = true, intervalMinutes = 5), FIRMWARE, HARDWARE),
                 DeviceKind.COLMI_RING.support.probe(ring.link, PairingChoices(autoHeartRate = true)),
             )
 
@@ -75,10 +81,7 @@ class DeviceProbeTest {
             val ring = ringWithLoggingOff()
 
             assertEquals(
-                ProbeResult.Ring(
-                    Battery(level = 64, charging = true),
-                    AutoHeartRate(enabled = false, intervalMinutes = 30),
-                ),
+                ProbeResult.Ring(battery, AutoHeartRate(enabled = false, intervalMinutes = 30), FIRMWARE, HARDWARE),
                 DeviceKind.COLMI_RING.support.probe(ring.link, PairingChoices(autoHeartRate = false)),
             )
 
@@ -95,10 +98,28 @@ class DeviceProbeTest {
                 ring.silentCommands += FakeColmiRing.CMD_AUTO_HEART_RATE
 
                 assertEquals(
-                    ProbeResult.Ring(Battery(level = 64, charging = true), autoHeartRate = null),
+                    ProbeResult.Ring(battery, autoHeartRate = null, FIRMWARE, HARDWARE),
                     DeviceKind.COLMI_RING.support.probe(ring.link, PairingChoices(autoHeartRate = checked)),
                 )
             }
+        }
+
+    @Test
+    fun `a revision the ring does not expose is null in the ring probe's result`() =
+        runTest {
+            val noHardware =
+                DeviceKind.COLMI_RING.support.probe(
+                    ringWithLoggingOff(hardware = null).link,
+                    PairingChoices(),
+                )
+            assertEquals(FIRMWARE to null, (noHardware as ProbeResult.Ring).firmware to noHardware.hardware)
+
+            val noDis =
+                DeviceKind.COLMI_RING.support.probe(
+                    ringWithLoggingOff(firmware = null, hardware = null).link,
+                    PairingChoices(),
+                )
+            assertEquals(null to null, (noDis as ProbeResult.Ring).firmware to noDis.hardware)
         }
 
     @Test

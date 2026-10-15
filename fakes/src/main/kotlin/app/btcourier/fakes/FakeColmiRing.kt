@@ -4,6 +4,7 @@ import app.btcourier.core.transport.GattChannel
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneOffset
+import java.util.UUID
 
 /**
  * A Colmi R02-family ring on a [FakeGattLink], answering from tables. Packets are built here byte
@@ -34,6 +35,9 @@ import java.time.ZoneOffset
  * @param temperature per day, tenths of a degree Celsius by half hour (0..47); 20.1..45.5 °C.
  * @param bigDataChannel whether the ring has the big-data service at all.
  * @param silentBigDataTypes big-data types the ring never answers, as a model without them.
+ * @param firmware the Device Information Service's Firmware Revision string; null when the ring
+ *   does not expose it.
+ * @param hardware its Hardware Revision string; null when not exposed.
  */
 class FakeColmiRing(
     private var today: LocalDate,
@@ -49,10 +53,17 @@ class FakeColmiRing(
     private val temperature: Map<LocalDate, Map<Int, Int>> = emptyMap(),
     bigDataChannel: Boolean = true,
     private val silentBigDataTypes: Set<Int> = emptySet(),
+    firmware: String? = FIRMWARE,
+    hardware: String? = HARDWARE,
 ) {
     val link: FakeGattLink =
         FakeGattLink(
             mtu = 23,
+            characteristics =
+                buildMap {
+                    firmware?.let { put(DIS_SERVICE to DIS_FIRMWARE_REVISION, it.encodeToByteArray()) }
+                    hardware?.let { put(DIS_SERVICE to DIS_HARDWARE_REVISION, it.encodeToByteArray()) }
+                },
             onSecondaryWrite = if (bigDataChannel) { bytes, _ -> receiveBigData(bytes) } else null,
         ) { bytes, _ -> receive(bytes) }
 
@@ -362,5 +373,14 @@ class FakeColmiRing(
         const val BIG_DATA_SLEEP: Int = 0x27
         const val BIG_DATA_SPO2: Int = 0x2A
         const val BIG_DATA_HISTORY_DAYS: Int = 7
+
+        // The SIG Device Information Service, written out over the Bluetooth base UUID.
+        val DIS_SERVICE: UUID = UUID.fromString("0000180a-0000-1000-8000-00805f9b34fb")
+        val DIS_FIRMWARE_REVISION: UUID = UUID.fromString("00002a26-0000-1000-8000-00805f9b34fb")
+        val DIS_HARDWARE_REVISION: UUID = UUID.fromString("00002a27-0000-1000-8000-00805f9b34fb")
+
+        /** Made-up revision strings in the shape the R02 family reports. */
+        const val FIRMWARE: String = "R02_3.00.00_000000"
+        const val HARDWARE: String = "R02_V1.0"
     }
 }

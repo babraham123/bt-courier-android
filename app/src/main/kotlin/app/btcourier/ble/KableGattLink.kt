@@ -1,13 +1,17 @@
 package app.btcourier.ble
 
 import app.btcourier.core.transport.ChannelUnavailableException
+import app.btcourier.core.transport.CharacteristicUnavailableException
 import app.btcourier.core.transport.GattChannel
 import app.btcourier.core.transport.GattLink
 import com.juul.kable.AndroidPeripheral
+import com.juul.kable.Characteristic
+import com.juul.kable.GattStatusException
 import com.juul.kable.Peripheral
 import com.juul.kable.State
 import com.juul.kable.Transport
 import com.juul.kable.characteristicOf
+import com.juul.kable.read
 import com.juul.kable.toIdentifier
 import com.juul.kable.write
 import kotlinx.coroutines.CancellationException
@@ -56,7 +60,7 @@ internal fun State.toLinkState(): LinkState =
  * [GattLink] over Kable to the characteristics of a [GattProfile]: primary notifications from
  * [GattProfile.notify], primary writes to [GattProfile.write], and, when the profile declares
  * a [secondary][GattProfile.secondary] channel, that channel's pair as well. Only a declared
- * secondary channel is subscribed to.
+ * secondary channel is subscribed to. [read] reaches any discovered characteristic by UUID.
  *
  * One instance is one connection: once the link drops or is [closed][close] it stays dead and
  * the caller connects again, which also matches how the WiCAN tunnel resets all state on
@@ -190,13 +194,18 @@ class KableGattLink private constructor(
     private fun declaresWriteWithResponse(
         service: UUID,
         write: UUID,
-    ): Boolean =
+    ): Boolean = discoveredProperties(service, write)?.write == true
+
+    /** What the discovered [characteristic] of [service] declares; null when discovery did not find it. */
+    private fun discoveredProperties(
+        service: UUID,
+        characteristic: UUID,
+    ): Characteristic.Properties? =
         peripheral.services.value
             ?.firstOrNull { it.serviceUuid == service.toKotlinUuid() }
             ?.characteristics
-            ?.firstOrNull { it.characteristicUuid == write.toKotlinUuid() }
+            ?.firstOrNull { it.characteristicUuid == characteristic.toKotlinUuid() }
             ?.properties
-            ?.write == true
 
     override fun notifications(channel: GattChannel): Flow<ByteArray> =
         when {
@@ -234,23 +243,57 @@ class KableGattLink private constructor(
         // Kable serialises GATT operations behind a FIFO mutex, so concurrent writers (request
         // body vs CREDIT) reach the air in call order, and each write suspends until the stack's
         // onCharacteristicWrite.
-        try {
+        gattOperation("write", { ChannelUnavailableException(channel, it) }) {
             peripheral.write(characteristic(target.service, target.route.characteristic), bytes, target.route.writeType)
+        }
+    }
+
+    override suspend fun read(
+        service: UUID,
+        characteristic: UUID,
+    ): ByteArray {
+        if (closed.get()) throw IOException("link closed")
+        // Android refuses to read a characteristic without the read property, which Kable would
+        // report like a busy stack; an error status (read not permitted, insufficient
+        // authentication) likewise means this link cannot have the value, not that it dropped.
+        if (discoveredProperties(service, characteristic)?.read != true) {
+            throw CharacteristicUnavailableException(service, characteristic)
+        }
+        return try {
+            gattOperation("read", { CharacteristicUnavailableException(service, characteristic, it) }) {
+                peripheral.read(characteristic(service, characteristic))
+            }
+        } catch (e: GattStatusException) {
+            throw CharacteristicUnavailableException(service, characteristic, e)
+        }
+    }
+
+    /**
+     * Runs one Kable GATT [operation] and maps its failures to the [GattLink] contract: a dropped
+     * link or a rejected request is an [IOException], a characteristic the device does not expose
+     * is [missing]'s exception.
+     */
+    private suspend inline fun <T> gattOperation(
+        what: String,
+        missing: (NoSuchElementException) -> IOException,
+        operation: () -> T,
+    ): T =
+        try {
+            operation()
         } catch (e: CancellationException) {
             // Kable reports a dropped connection as a CancellationException wrapping
             // NotConnectedException; only our caller's own cancellation should propagate as such.
-            if (currentCoroutineContext().isActive) throw IOException("link lost during write", e)
+            if (currentCoroutineContext().isActive) throw IOException("link lost during $what", e)
             throw e
         } catch (e: IOException) {
             throw e
         } catch (e: NoSuchElementException) {
             // Kable's lookup of a characteristic the device does not expose.
-            throw ChannelUnavailableException(channel, e)
+            throw missing(e)
         } catch (e: Exception) {
             // GattRequestRejectedException (an IllegalStateException): stack busy or link gone.
-            throw IOException("GATT write rejected", e)
+            throw IOException("GATT $what rejected", e)
         }
-    }
 
     /** Disconnects and releases the `BluetoothGatt`. Idempotent and non-blocking. */
     override fun close() {

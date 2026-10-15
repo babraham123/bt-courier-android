@@ -1,6 +1,7 @@
 package app.btcourier.fakes
 
 import app.btcourier.core.transport.ChannelUnavailableException
+import app.btcourier.core.transport.CharacteristicUnavailableException
 import app.btcourier.core.transport.GattChannel
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
@@ -9,8 +10,26 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.io.IOException
+import java.util.UUID
 
 class FakeGattLinkTest {
+    @Test
+    fun `reads answer from the characteristics given, any other is unavailable, and fail once dropped`() =
+        runTest {
+            val service = UUID.fromString("0000180a-0000-1000-8000-00805f9b34fb")
+            val present = UUID.fromString("00002a26-0000-1000-8000-00805f9b34fb")
+            val absent = UUID.fromString("00002a27-0000-1000-8000-00805f9b34fb")
+            val link = FakeGattLink(characteristics = mapOf((service to present) to byteArrayOf(1, 2)))
+
+            assertArrayEquals(byteArrayOf(1, 2), link.read(service, present))
+            val missing = assertThrows<CharacteristicUnavailableException> { link.read(service, absent) }
+            assertEquals(service to absent, missing.service to missing.characteristic)
+
+            link.drop()
+            val dropped = assertThrows<IOException> { link.read(service, present) }
+            assertEquals(IOException::class.java, dropped::class.java)
+        }
+
     @Test
     fun `scripted peer echoes writes until the link drops`() =
         runTest {

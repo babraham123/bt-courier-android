@@ -131,11 +131,16 @@ class ColmiRingBigDataTest {
 
     private fun source(ring: FakeColmiRing) = ColmiRingSource(ring.link, zone, phoneClock = { nowMs })
 
-    /** The battery and heart-rate logging rows every instance's first page ends with (fake defaults). */
+    /** The battery, heart-rate logging and revision rows every instance's first page ends with (fake defaults). */
     private val firstPageTail =
         listOf(
             row(nowMs, "colmi.battery", 87),
             row(nowMs, "colmi.hr_logging", """{"enabled":true,"interval_min":5}"""),
+            row(
+                nowMs,
+                "colmi.device",
+                """{"firmware":"${FakeColmiRing.FIRMWARE}","hardware":"${FakeColmiRing.HARDWARE}"}""",
+            ),
         )
 
     private val day1UartRows =

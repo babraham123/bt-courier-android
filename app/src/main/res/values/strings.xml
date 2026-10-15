@@ -15,8 +15,10 @@
     <string name="pairing_associate_body_ring">Android will scan for nearby rings and ask you to pick one.</string>
     <string name="pairing_auto_hr_choice">Turn on background heart rate (every 5 min)</string>
     <string name="pairing_auto_hr_choice_help">Uses ring battery. You can change it later in the ring\'s vendor app.</string>
-    <string name="pairing_test_body_ring">Paired. Test the connection: the app connects, asks the ring for its battery level and applies your background heart rate choice.</string>
+    <string name="pairing_test_body_ring">Paired. Test the connection: the app connects, asks the ring for its battery level and version, and applies your background heart rate choice.</string>
     <string name="pairing_test_ok_ring">Battery %1$d%%</string>
+    <string name="pairing_test_firmware_ring">Firmware %1$s</string>
+    <string name="pairing_test_hardware_ring">Hardware %1$s</string>
     <string name="pairing_test_auto_hr_on">Background heart rate: on, every %1$d min</string>
     <string name="pairing_test_auto_hr_off">Background heart rate: off</string>
     <string name="pairing_test_auto_hr_unknown">Background heart rate: could not be confirmed</string>

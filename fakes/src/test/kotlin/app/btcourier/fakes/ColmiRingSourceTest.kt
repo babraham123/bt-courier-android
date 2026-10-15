@@ -47,40 +47,47 @@ class ColmiRingSourceTest {
         value: Int,
     ) = """{"ts":$ts,"param":"$param","value":$value}"""
 
-    private fun ring() =
-        FakeColmiRing(
-            today = LocalDate.of(2026, 10, 15),
-            // day2 has no heart-rate log, so its answer is the 0xFF no-data packet.
-            heartRate =
-                mapOf(
-                    day1 to
-                        IntArray(288).apply {
-                            this[0] = 60
-                            this[8] = 61
-                            this[9] = 62
-                            this[287] = 70
-                        },
-                ),
-            steps = mapOf(day1 to mapOf(1 to 120, 95 to 30), day2 to mapOf(40 to 500)),
-            // Half-hour slots: 1 is 00:30, 47 is 23:30. day2 has none, so its answer is 0xFF.
-            hrv =
-                mapOf(
-                    day1 to
-                        IntArray(48).apply {
-                            this[1] = 35
-                            this[47] = 58
-                        },
-                ),
-            batteryLevel = 87,
-            // Unlike the 5-minute header of every heart-rate answer: the header places readings.
-            autoHeartRateIntervalMinutes = 10,
-        )
+    private fun ring(
+        firmware: String? = FakeColmiRing.FIRMWARE,
+        hardware: String? = FakeColmiRing.HARDWARE,
+    ) = FakeColmiRing(
+        today = LocalDate.of(2026, 10, 15),
+        // day2 has no heart-rate log, so its answer is the 0xFF no-data packet.
+        heartRate =
+            mapOf(
+                day1 to
+                    IntArray(288).apply {
+                        this[0] = 60
+                        this[8] = 61
+                        this[9] = 62
+                        this[287] = 70
+                    },
+            ),
+        steps = mapOf(day1 to mapOf(1 to 120, 95 to 30), day2 to mapOf(40 to 500)),
+        // Half-hour slots: 1 is 00:30, 47 is 23:30. day2 has none, so its answer is 0xFF.
+        hrv =
+            mapOf(
+                day1 to
+                    IntArray(48).apply {
+                        this[1] = 35
+                        this[47] = 58
+                    },
+            ),
+        batteryLevel = 87,
+        // Unlike the 5-minute header of every heart-rate answer: the header places readings.
+        autoHeartRateIntervalMinutes = 10,
+        firmware = firmware,
+        hardware = hardware,
+    )
 
-    // ring()'s battery and heart-rate logging setting, stamped with the phone clock on the first page.
+    private fun deviceRow(value: String) = """{"ts":$nowMs,"param":"colmi.device","value":$value}"""
+
+    // ring()'s battery, heart-rate logging setting and revisions, stamped with the phone clock on the first page.
     private val statusRows =
         listOf(
             row(nowMs, "colmi.battery", 87),
             """{"ts":$nowMs,"param":"colmi.hr_logging","value":{"enabled":true,"interval_min":10}}""",
+            deviceRow("""{"firmware":"${FakeColmiRing.FIRMWARE}","hardware":"${FakeColmiRing.HARDWARE}"}"""),
         )
 
     // ring()'s day1 as rows, in time order.
@@ -103,6 +110,19 @@ class ColmiRingSourceTest {
         ring: FakeColmiRing,
         store: Store,
     ): SyncReport = SyncRunner("colmi", source(ring), store).run().also { store.seal(SealPolicy(), nowMs) }
+
+    @Test
+    fun `a revision the ring does not expose is null in the device row`() =
+        runTest {
+            val noHardware = source(ring(hardware = null)).pull("2026-10-12")
+            assertEquals(
+                deviceRow("""{"firmware":"${FakeColmiRing.FIRMWARE}","hardware":null}"""),
+                noHardware.lines.last(),
+            )
+
+            val noDis = source(ring(firmware = null, hardware = null)).pull("2026-10-12")
+            assertEquals(deviceRow("""{"firmware":null,"hardware":null}"""), noDis.lines.last())
+        }
 
     @Test
     fun `walks two days of history from the cursor to more false`() =
@@ -253,15 +273,15 @@ class ColmiRingSourceTest {
             val report = sync(ring, store)
             assertEquals(StopReason.CaughtUp, report.stoppedBecause)
             assertEquals(2, report.pagesPulled)
-            // Day 1's 8 rows, the battery and the logging setting, then day 2's one.
-            assertEquals(11L, report.linesStored)
+            // Day 1's 8 rows, the battery, the logging setting and the revisions, then day 2's one.
+            assertEquals(12L, report.linesStored)
             assertEquals("2026-10-14", store.cursor("colmi"))
 
             // The day-1 batch is sealed by day 2's marker; every row keeps its stamp as `device`.
             val day1Batch = store.pending("sink").first()
             assertEquals("""{"_file":"colmi/2026-10-13"}""", day1Batch.lines.first())
             val rows = day1Batch.lines.drop(1)
-            assertEquals(10, rows.size)
+            assertEquals(day1Rows.size + statusRows.size, rows.size)
             assertTrue(rows.all { it.contains("\"ts_quality\":\"device\"") }, rows.joinToString("\n"))
 
             val again = sync(ring, store)
