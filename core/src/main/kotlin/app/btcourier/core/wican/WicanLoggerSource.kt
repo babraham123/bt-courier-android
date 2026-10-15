@@ -7,6 +7,7 @@ import app.btcourier.core.source.Source
 import app.btcourier.core.source.SourceException
 import app.btcourier.core.transport.Response
 import app.btcourier.core.transport.Transport
+import app.btcourier.core.transport.blehttp.BleHttpException
 import java.time.Instant
 import java.time.format.DateTimeParseException
 
@@ -21,6 +22,10 @@ import java.time.format.DateTimeParseException
  *   happened on this card) is an empty journal.
  * - [deviceStatus]: `GET /api/rtc`, the only route exposing the wall clock (`time`, whole seconds,
  *   UTC) and whether it is trusted (`valid`). `/api/status` has uptime but no wall time.
+ *
+ * A response cut short, whether the export lacks its cursor line or the `ble_http` transport saw
+ * an early end, is [SourceException.Truncated]; other link failures stay the transport's
+ * [java.io.IOException]s.
  *
  * @param limit lines per page; the device caps it at 1..2000 (and at 64 KB emitted per request),
  *   silently replacing anything else with 500.
@@ -57,7 +62,7 @@ class WicanLoggerSource(
     }
 
     override suspend fun clockJournal(): List<ClockEvent> {
-        val response = transport.request("GET", JOURNAL_PATH)
+        val response = request(JOURNAL_PATH)
         if (response.status == 404) return emptyList()
         checkStatus(JOURNAL_PATH, response)
         return ClockJournalParser.parse(response.body.decodeToString())
@@ -84,8 +89,18 @@ class WicanLoggerSource(
         )
     }
 
-    private suspend fun get(path: String): Response =
-        transport.request("GET", path).also { checkStatus(path, it) }
+    private suspend fun get(path: String): Response = request(path).also { checkStatus(path, it) }
+
+    /**
+     * A `ble_http` body cut short is the same failure as an export page without its cursor line,
+     * so callers see one [SourceException.Truncated] whatever the transport.
+     */
+    private suspend fun request(path: String): Response =
+        try {
+            transport.request("GET", path)
+        } catch (e: BleHttpException.Truncated) {
+            throw SourceException.Truncated(path, e)
+        }
 
     private fun checkStatus(path: String, response: Response) {
         when (response.status) {

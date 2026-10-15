@@ -14,7 +14,7 @@ import app.btcourier.core.testing.WicanLines.clockSet
 import app.btcourier.core.testing.WicanLines.fileMarker
 import app.btcourier.core.testing.WicanLines.journal
 import app.btcourier.core.testing.WicanLines.row
-import app.btcourier.core.transport.blehttp.BleHttpException
+import app.btcourier.core.testing.WicanLines.storedRow
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -22,6 +22,12 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.IOException
 
+/**
+ * The loop around the [app.btcourier.core.normalize.Normalizer] and the store: what is pulled,
+ * in which order, what stops a sync and what it reports. How rows are re-based is the
+ * normaliser's spec (`JournalNormalizerTest`); here the real one runs only to show the journal,
+ * the anchor and the open file reach it.
+ */
 class SyncRunnerTest {
     /** Serves [pages] by the cursor asked for and records every call in order. */
     private class ScriptedSource(
@@ -65,22 +71,19 @@ class SyncRunnerTest {
         clockSet("valid", 1, tsBefore, tsAfter, "sntp", fileA),
     )
 
+    // Each page restates the marker of the file it starts in, as the WiCAN export does.
     private val pages = mapOf(
         null to Page(listOf(fileMarker(fileA), row(30_000), row(60_000)), "1:100", more = true),
         "1:100" to Page(listOf(fileMarker(fileA), row(90_000), fileMarker(fileB), row(tsAfter + 1_000)), "1784000000:60", more = true),
         "1784000000:60" to Page(listOf(fileMarker(fileB), row(tsAfter + 2_000)), "1784000000:120", more = false),
     )
 
-    /** A row as the normaliser rewrites it: `ts` replaced, `ts_raw` and `ts_quality` appended. */
-    private fun fixed(raw: Long, ts: Long?, quality: String) =
-        """{"ts":$ts,"param":"autopid.TEST","value":1,"ts_raw":$raw,"ts_quality":"$quality"}"""
-
     private val expectedRows = listOf(
-        fixed(30_000, 30_000 + delta, "journal"),
-        fixed(60_000, 60_000 + delta, "journal"),
-        fixed(90_000, 90_000 + delta, "journal"),
-        fixed(tsAfter + 1_000, tsAfter + 1_000, "device"),
-        fixed(tsAfter + 2_000, tsAfter + 2_000, "device"),
+        storedRow(30_000, 30_000 + delta, "journal"),
+        storedRow(60_000, 60_000 + delta, "journal"),
+        storedRow(90_000, 90_000 + delta, "journal"),
+        storedRow(tsAfter + 1_000, tsAfter + 1_000, "device"),
+        storedRow(tsAfter + 2_000, tsAfter + 2_000, "device"),
     )
 
     private val store = DefaultStore(InMemoryStoreDb(), clock = { 0 }, sinkIds = { setOf("sink") })
@@ -102,14 +105,16 @@ class SyncRunnerTest {
         val batches = store.pendingRows("sink")
         assertEquals(2, batches.size, "sealed at the file boundary")
         assertEquals(expectedRows, batches.flatten())
+        assertEquals(listOf(fileMarker(fileA), fileMarker(fileB)), store.pending("sink").map { it.lines.first() })
     }
 
     @Test
-    fun `batches keep the device's file markers`() = runTest {
-        runner(ScriptedSource(pages, clockJournal)).run()
+    fun `a page that starts mid-file is normalised as the file the previous page left open`() = runTest {
+        val resumed = pages + ("1:100" to Page(listOf(row(90_000), fileMarker(fileB), row(tsAfter + 1_000)), "1784000000:60", more = true))
 
-        val batches = store.pending("sink")
-        assertEquals(listOf(fileMarker(fileA), fileMarker(fileB)), batches.map { it.lines.first() })
+        runner(ScriptedSource(resumed, clockJournal)).run()
+
+        assertEquals(expectedRows, store.pendingRows("sink").flatten())
     }
 
     @Test
@@ -121,13 +126,13 @@ class SyncRunnerTest {
         runner(ScriptedSource(unset, status = status)).run()
 
         val offset = 1_784_000_100_000 - 100_000
-        assertEquals(listOf(fixed(50_000, 50_000 + offset, "anchor")), store.pendingRows("sink").flatten())
+        assertEquals(listOf(storedRow(50_000, 50_000 + offset, "anchor")), store.pendingRows("sink").flatten())
     }
 
     @Test
     fun `link loss stops cleanly at the last persisted page and the next run resumes there`() = runTest {
         val source = ScriptedSource(pages, clockJournal)
-        source.failPull = { cursor, attempt -> if (cursor == "1:100" && attempt == 1) BleHttpException.LinkLost() else null }
+        source.failPull = { cursor, attempt -> if (cursor == "1:100" && attempt == 1) IOException("link lost") else null }
 
         val first = runner(source).run()
 
@@ -151,15 +156,13 @@ class SyncRunnerTest {
 
     @Test
     fun `a truncated page is not stored and the cursor stays`() = runTest {
-        for (failure in listOf(SourceException.Truncated("/api/logger/export"), BleHttpException.Truncated(100, 50))) {
-            val local = DefaultStore(InMemoryStoreDb(), clock = { 0 }, sinkIds = { setOf("sink") })
-            val source = ScriptedSource(pages, clockJournal).apply { failPull = { c, _ -> failure.takeIf { c == "1:100" } } }
+        val failure = SourceException.Truncated("/api/logger/export")
+        val source = ScriptedSource(pages, clockJournal).apply { failPull = { c, _ -> failure.takeIf { c == "1:100" } } }
 
-            val report = SyncRunner("wican", source, local, clock = { 0 }).run()
+        val report = runner(source).run()
 
-            assertEquals(StopReason.Truncated(failure), report.stoppedBecause)
-            assertEquals("1:100", local.cursor("wican"))
-        }
+        assertEquals(StopReason.Truncated(failure), report.stoppedBecause)
+        assertEquals("1:100", store.cursor("wican"))
     }
 
     @Test
@@ -222,7 +225,7 @@ class SyncRunnerTest {
 
         val batches = store.pending("sink")
         assertEquals(SyncReport(pagesPulled = 2, linesStored = 1, duplicates = 0, StopReason.CaughtUp, batches.map { it.id }), report)
-        assertEquals(listOf(listOf(fileMarker("dl_6.jsonl"), fixed(tsAfter, tsAfter, "device"))), batches.map { it.lines })
+        assertEquals(listOf(listOf(fileMarker("dl_6.jsonl"), storedRow(tsAfter, tsAfter, "device"))), batches.map { it.lines })
     }
 
     @Test

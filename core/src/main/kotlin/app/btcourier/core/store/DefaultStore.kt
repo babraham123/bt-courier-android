@@ -1,10 +1,8 @@
 package app.btcourier.core.store
 
+import app.btcourier.core.lines.StoredLine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * [Store] policy over any [StoreDb]: cursor dedupe, sealing, ack lifecycle and the byte cap.
@@ -52,7 +50,7 @@ class DefaultStore(
             )
         }
         // Repeated markers for the current file don't split, but the latest text is kept.
-        val lastMarker = lines.lastOrNull(::isFileMarker) ?: marker
+        val lastMarker = lines.lastOrNull(StoredLine::isMarker) ?: marker
         db.insertPages(SourceState(sourceId, cursor, lastMarker), parts)
         true
     }
@@ -84,7 +82,7 @@ class DefaultStore(
                 val first = pages.firstOrNull()
                 // A batch cut by size or age starts mid-file; restating the marker keeps every
                 // batch self-describing (plan: "each batch starts with the _file marker").
-                val prefix = first?.fileMarker?.takeIf { lines.firstOrNull()?.let(::isFileMarker) != true }
+                val prefix = first?.fileMarker?.takeIf { lines.firstOrNull()?.let(StoredLine::isMarker) != true }
                 SealedBatch(
                     id = batch.id.toString(),
                     sourceId = batch.sourceId,
@@ -175,36 +173,25 @@ class DefaultStore(
 /** Bytes a line occupies once encoded as JSONL: UTF-8 plus the newline. */
 internal fun encodedSize(line: String): Long = line.encodeToByteArray().size + 1L
 
-private val markerPrefix = Regex("""^\s*\{\s*"_file"\s*:""")
-
-internal fun isFileMarker(line: String): Boolean = markerPrefix.containsMatchIn(line)
-
-/** The `_file` value of a marker line; the rest of the line may vary between repeats. */
-private fun markerFile(line: String): String? =
-    runCatching { ((Json.parseToJsonElement(line) as JsonObject)["_file"] as? JsonPrimitive)?.content }
-        .getOrNull() ?: line.trim()
-
 private class Part(val lines: List<String>, val newMarker: String?)
 
 /**
- * Splits [lines] before each marker that names a file other than the one in effect, starting from
- * [currentMarker]. A marker repeating the current file (e.g. restated at the top of every export
- * page) does not split, so it can't shrink batches to one page each.
+ * Splits [lines] before each [StoredLine.Marker] that names a file other than the one in effect,
+ * starting from [currentMarker]. A marker repeating the current file (e.g. restated at the top of
+ * every export page) does not split, so it can't shrink batches to one page each.
  */
 private fun splitAtNewFiles(lines: List<String>, currentMarker: String?): List<Part> {
     val parts = mutableListOf<Part>()
-    var currentFile = currentMarker?.let(::markerFile)
+    var currentFile = currentMarker?.let(StoredLine::markerFile)
     var run = mutableListOf<String>()
     var runMarker: String? = null
     for (line in lines) {
-        if (isFileMarker(line)) {
-            val file = markerFile(line)
-            if (file != currentFile) {
-                if (run.isNotEmpty()) parts += Part(run, runMarker)
-                run = mutableListOf()
-                runMarker = line
-                currentFile = file
-            }
+        val file = StoredLine.markerFile(line)
+        if (file != null && file != currentFile) {
+            if (run.isNotEmpty()) parts += Part(run, runMarker)
+            run = mutableListOf()
+            runMarker = line
+            currentFile = file
         }
         run += line
     }
