@@ -4,7 +4,6 @@ import app.btcourier.core.sink.CompositeSink
 import app.btcourier.core.sink.Jsonl
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.store.SealPolicy
-import app.btcourier.core.sync.StopReason
 import app.btcourier.ble.PairedDevice
 import app.btcourier.ble.PairedDevices
 import app.btcourier.core.transport.GattLink
@@ -19,15 +18,16 @@ import app.btcourier.fakes.FakeWicanLogger
 import app.btcourier.fakes.ScriptedPeripheral
 import app.btcourier.fakes.ScriptedPeripheral.Fault
 import app.btcourier.fakes.ScriptedPeripheral.Reply
+import app.btcourier.work.SyncOutcome.Recorded
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import app.btcourier.ui.FakePairedDevices
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -43,10 +43,11 @@ import java.time.ZoneOffset
 /**
  * [SyncJob] against [FakeWicanLogger] behind [ScriptedPeripheral], over the real `ble_http`
  * transport, and against [FakeColmiRing], with the app's store. Expected values follow the job's
- * contract: rows reach the store exactly once, the link is closed whatever happens, interrupted
- * syncs ask for a retry, final ones don't, and the status records each outcome under the device's
- * address. Aged rows are sealed with or without a link, and each paired device keeps its own
- * cursor under a source id of its kind.
+ * contract: rows reach the store exactly once, the link is closed whatever happens, the outcome
+ * is what the status records under the device's address, and [SyncRetryPolicy] decides retries:
+ * busy calls are retried in the run, interrupted runs are worth another run up to its limit,
+ * final ones are not. Aged rows are sealed with or without a link, and each paired device keeps
+ * its own cursor under a source id of its kind.
  */
 class SyncJobTest {
     @TempDir
@@ -97,9 +98,12 @@ class SyncJobTest {
     private fun job(links: LinkFactory, devices: PairedDevices = paired, locks: DeviceLocks = DeviceLocks()) =
         SyncJob(devices, links, store, status, clock = { now }, locks = locks, pageLimit = 7, zone = { ZoneOffset.UTC })
 
-    private suspend fun SyncJob.run(policy: SealPolicy, onConnected: suspend () -> Unit = {}) = run(address, policy, onConnected)
+    private suspend fun SyncJob.run(policy: SealPolicy, attempt: Int = 0, onConnected: suspend () -> Unit = {}) =
+        run(address, policy, attempt, onConnected) as Recorded
 
     private val sync get() = status.status.value.syncOf(address)!!
+
+    private suspend fun sealedIds() = store.pending("sink").map { it.id }
 
     @Test
     fun `a sync stores every row once, seals it, records the outcome and closes the link`() = runTest {
@@ -108,15 +112,15 @@ class SyncJobTest {
 
         val outcome = job(links).run(sealEverything) { foreground++ }
 
-        assertInstanceOf(SyncOutcome.Done::class.java, outcome)
-        outcome as SyncOutcome.Done
-        assertEquals(StopReason.CaughtUp, outcome.report.stoppedBecause)
+        val pages = outcome.pages
+        assertEquals(Recorded(SyncResultKind.CAUGHT_UP, SyncStopKind.CAUGHT_UP, null, 20, pages, store.cursor(wicanSource), sealedIds()), outcome)
+        assertTrue(pages >= 3, "20 rows in pages of 7")
         assertTrue(outcome.newBatches)
         assertEquals((0 until 20).toList(), values(store.pendingRows("sink")))
         assertEquals(1, foreground, "foreground exactly once, after connecting")
         assertTrue(links.opened.single().link.closed)
         val s = status.status.value
-        assertEquals(DeviceSync(NOW, SyncResultKind.CAUGHT_UP, 20, outcome.report.pagesPulled, SyncStopKind.CAUGHT_UP, store.cursor(wicanSource)), sync)
+        assertEquals(DeviceSync(NOW, SyncResultKind.CAUGHT_UP, 20, pages, SyncStopKind.CAUGHT_UP, store.cursor(wicanSource)), sync)
         assertEquals(setOf(address), s.lastSyncByDevice.keys)
         assertEquals(1, s.pendingBatches)
         assertEquals(listOf(wicanSource), store.pending("sink").map { it.sourceId })
@@ -125,12 +129,13 @@ class SyncJobTest {
 
         val again = job(links).run(sealEverything)
 
-        assertEquals(false, (again as SyncOutcome.Done).newBatches, "nothing new, so no upload is needed")
-        assertEquals(0, again.report.linesStored)
+        assertEquals(false, again.newBatches, "nothing new, so no upload is needed")
+        assertEquals(0, again.linesStored)
+        assertFalse(again.retryWorthwhile)
     }
 
     @Test
-    fun `a link lost mid-transfer asks for a retry, and the retry resumes without duplicates`() = runTest {
+    fun `a link lost mid-transfer is worth another run, and that run resumes without duplicates`() = runTest {
         var exports = 0
         val links = Links(this) { p, r ->
             if (r.path.startsWith("/api/logger/export") && ++exports == 2) p.inject(Fault.LinkLossAfter(1))
@@ -139,16 +144,19 @@ class SyncJobTest {
 
         val cut = job(links).run(sealEverything)
 
-        assertInstanceOf(SyncOutcome.Interrupted::class.java, cut)
-        assertInstanceOf(StopReason.LinkLost::class.java, (cut as SyncOutcome.Interrupted).report.stoppedBecause)
-        assertTrue(cut.newBatches, "the page stored before the loss is sealed and deliverable")
+        assertEquals(SyncResultKind.INTERRUPTED to SyncStopKind.LINK_LOST, cut.result to cut.stop)
+        assertTrue(cut.retryWorthwhile)
+        assertEquals(sealedIds(), cut.sealed, "the page stored before the loss is sealed and deliverable")
+        assertTrue(cut.newBatches)
         assertTrue(links.opened.single().link.closed)
-        assertEquals(SyncResultKind.INTERRUPTED, sync.result)
-        assertTrue(status.status.value.lastError!!.startsWith("link lost"))
+        assertEquals(cut.deviceSync(NOW), sync)
+        assertTrue(cut.error!!.startsWith("link lost"))
+        assertEquals(cut.error, status.status.value.lastError)
 
-        val resumed = job(links).run(sealEverything)
+        val resumed = job(links).run(sealEverything, attempt = 1)
 
-        assertInstanceOf(SyncOutcome.Done::class.java, resumed)
+        assertEquals(SyncResultKind.CAUGHT_UP, resumed.result)
+        assertFalse(resumed.retryWorthwhile)
         assertEquals(20, store.pendingRows("sink").size, "every row exactly once")
         assertEquals(20, store.pendingRows("sink").toSet().size)
     }
@@ -173,13 +181,16 @@ class SyncJobTest {
 
         val stored = job(Links(this)).run(policy)
 
-        assertEquals(20, (stored as SyncOutcome.Done).report.linesStored)
+        assertEquals(20, stored.linesStored)
         assertFalse(stored.newBatches, "one small open file is not sealed yet")
 
         now += 29 * MINUTE
-        assertEquals(SyncOutcome.Unreachable(newBatches = false), job(unreachable).run(policy))
+        assertFalse(job(unreachable).run(policy).newBatches)
         now += 1 * MINUTE
-        assertEquals(SyncOutcome.Unreachable(newBatches = true), job(unreachable).run(policy))
+        val aged = job(unreachable).run(policy)
+        assertEquals(SyncResultKind.UNREACHABLE, aged.result)
+        assertEquals(sealedIds(), aged.sealed)
+        assertTrue(aged.newBatches)
         assertEquals(1, status.status.value.pendingBatches)
 
         val upload = ScriptedUpload(UploadResult.Acked)
@@ -196,7 +207,8 @@ class SyncJobTest {
 
         val outcome = job(noLink).run(null, SealPolicy())
 
-        assertEquals(SyncOutcome.NotPaired(newBatches = true), outcome)
+        assertEquals(Recorded(SyncResultKind.NOT_PAIRED, error = "no device paired", sealed = sealedIds()), outcome)
+        assertTrue(outcome.newBatches)
         assertEquals((0 until 20).toList(), values(store.pendingRows("sink")))
     }
 
@@ -213,9 +225,9 @@ class SyncJobTest {
         // The replacement's only file is older than anything the first device had.
         val olderEpoch = epoch - 86_400
         current = logger(olderEpoch, (0 until 5).map { row(ts = olderEpoch * 1000 + it * 1_000L, value = 100 + it) })
-        val outcome = job(links).run(replacement, sealEverything)
+        val outcome = job(links).run(replacement, sealEverything) as Recorded
 
-        assertEquals(5, (outcome as SyncOutcome.Done).report.linesStored)
+        assertEquals(5, outcome.linesStored)
         assertEquals((0 until 20).toList() + (100 until 105).toList(), values(store.pendingRows("sink")))
         val secondCursor = store.cursor(SyncJob.sourceIdFor(DeviceKind.WICAN, replacement))
         assertTrue(secondCursor!!.startsWith("$olderEpoch:"), secondCursor)
@@ -225,17 +237,35 @@ class SyncJobTest {
         assertEquals("wican:AA:BB:CC:DD:EE:03", SyncJob.sourceIdFor(DeviceKind.WICAN, replacement))
     }
 
+    /** A device that answers every export 429. */
+    private fun busyLinks(scope: TestScope) = Links(scope) { _, r ->
+        if (r.path.startsWith("/api/logger/export")) Reply(429, """{"err":"busy"}""") else device.handle(r)
+    }
+
     @Test
-    fun `a device busy on every try is an interrupted sync`() = runTest {
-        val links = Links(this) { _, r ->
-            if (r.path.startsWith("/api/logger/export")) Reply(429, """{"err":"busy"}""") else device.handle(r)
-        }
+    fun `a busy device is retried in the run after 1, 2 and 4 s, then the sync is interrupted`() = runTest {
+        val links = busyLinks(this)
+
+        val start = currentTime
 
         val outcome = job(links).run(sealEverything)
 
-        assertEquals(StopReason.Busy, (outcome as SyncOutcome.Interrupted).report.stoppedBecause)
+        val exports = links.opened.single().requests.count { it.path.startsWith("/api/logger/export") }
+        assertEquals(4, exports, "the first try and three retries, on one link")
+        assertTrue(currentTime - start >= 7_000, "waited 1 + 2 + 4 s")
+        assertEquals(Recorded(SyncResultKind.INTERRUPTED, SyncStopKind.BUSY, "device busy", retryWorthwhile = true), outcome)
         assertTrue(links.opened.single().link.closed)
         assertEquals("device busy", status.status.value.lastError)
+    }
+
+    @Test
+    fun `an interrupted sync is worth another run until five runs in a row were made`() = runTest {
+        val links = busyLinks(this)
+
+        val verdicts = (0 until 5).map { attempt -> job(links).run(sealEverything, attempt).retryWorthwhile }
+
+        assertEquals(listOf(true, true, true, true, false), verdicts)
+        assertEquals(SyncResultKind.INTERRUPTED, sync.result, "the last run is still recorded as interrupted")
     }
 
     @Test
@@ -244,8 +274,9 @@ class SyncJobTest {
 
         val outcome = job(links).run(sealEverything)
 
-        assertInstanceOf(SyncOutcome.Done::class.java, outcome)
-        assertEquals(SyncResultKind.DEVICE_ERROR, sync.result)
+        assertEquals(SyncResultKind.DEVICE_ERROR to SyncStopKind.DEVICE_ERROR, outcome.result to outcome.stop)
+        assertFalse(outcome.retryWorthwhile)
+        assertEquals(outcome.deviceSync(NOW), sync)
         assertTrue(status.status.value.lastError!!.contains("HTTP 500"))
         assertNull(store.cursor(wicanSource), "nothing pulled")
     }
@@ -258,15 +289,15 @@ class SyncJobTest {
 
         val outcome = job(unreachable).run(sealEverything) { fail("foreground without a link") }
 
-        assertEquals(SyncOutcome.Unreachable(newBatches = false), outcome)
+        assertEquals(Recorded(SyncResultKind.UNREACHABLE, error = "device unreachable: connect timed out", cursor = cursor), outcome)
         assertEquals(DeviceSync(now, SyncResultKind.UNREACHABLE, cursor = cursor), sync)
         assertNotNull(status.status.value.lastErrorAtMs)
     }
 
     @Test
     fun `without a paired device no link is opened and no device is recorded`() = runTest {
-        assertEquals(SyncOutcome.NotPaired(newBatches = false), job(noLink).run(null, sealEverything))
-        assertEquals(SyncOutcome.NotPaired(newBatches = false), job(noLink).run("AA:BB:CC:DD:EE:09", sealEverything))
+        assertEquals(Recorded(SyncResultKind.NOT_PAIRED, error = "no device paired"), job(noLink).run(null, sealEverything))
+        assertEquals(Recorded(SyncResultKind.NOT_PAIRED, error = "device not paired"), job(noLink).run("AA:BB:CC:DD:EE:09", sealEverything))
 
         assertEquals(emptyMap<String, DeviceSync>(), status.status.value.lastSyncByDevice)
         assertEquals("device not paired", status.status.value.lastError)
@@ -288,9 +319,10 @@ class SyncJobTest {
         val parallel = job(unreachable, locks = locks).run(other, sealEverything)
 
         assertEquals(SyncOutcome.AlreadyRunning, second)
-        assertEquals(SyncOutcome.Unreachable(newBatches = false), parallel)
+        assertFalse(second.retryWorthwhile || second.newBatches)
+        assertEquals(SyncResultKind.UNREACHABLE, (parallel as Recorded).result)
         release.complete(Unit)
-        assertEquals(SyncOutcome.Unreachable(newBatches = false), first.await())
+        assertEquals(SyncResultKind.UNREACHABLE, first.await().result)
         runCurrent()
         assertFalse(locks.of(address).isLocked, "the lock is released after the first sync")
     }
@@ -325,13 +357,12 @@ class SyncJobTest {
         val ring = ring()
         var foreground = 0
 
-        val outcome = job(ringLinks(ring)).run(ringAddress, sealEverything) { foreground++ }
+        val outcome = job(ringLinks(ring)).run(ringAddress, sealEverything) { foreground++ } as Recorded
 
-        outcome as SyncOutcome.Done
-        assertEquals(StopReason.CaughtUp, outcome.report.stoppedBecause)
+        assertEquals(SyncStopKind.CAUGHT_UP, outcome.stop)
         // No cursor yet: the ring's week, today - 6 up to yesterday; today is never pulled.
         val days = (6 downTo 1).map { today.minusDays(it.toLong()) }
-        assertEquals(days.size, outcome.report.pagesPulled)
+        assertEquals(days.size, outcome.pages)
         assertEquals(yesterday.toString(), store.cursor(ringSource))
         assertNull(store.cursor(wicanSource), "the dongle is untouched")
 
@@ -360,14 +391,15 @@ class SyncJobTest {
         paired.devices += PairedDevice(ringAddress, null, 2, DeviceKind.COLMI_RING)
         store.appendPage(ringSource, dayBefore.toString(), emptyList())
 
-        val cut = job(LinkFactory { _, _ -> FakeGattLink(mtu = 23) }).run(ringAddress, sealEverything)
+        val cut = job(LinkFactory { _, _ -> FakeGattLink(mtu = 23) }).run(ringAddress, sealEverything) as Recorded
 
-        assertInstanceOf(StopReason.LinkLost::class.java, (cut as SyncOutcome.Interrupted).report.stoppedBecause)
+        assertEquals(SyncStopKind.LINK_LOST, cut.stop)
+        assertTrue(cut.retryWorthwhile)
         assertEquals(dayBefore.toString(), store.cursor(ringSource))
 
-        val resumed = job(ringLinks(ring())).run(ringAddress, sealEverything)
+        val resumed = job(ringLinks(ring())).run(ringAddress, sealEverything) as Recorded
 
-        assertEquals(1, (resumed as SyncOutcome.Done).report.pagesPulled, "only yesterday is left")
+        assertEquals(1, resumed.pages, "only yesterday is left")
         assertEquals(listOf("""{"_file":"colmi/$yesterday"}"""), store.pending("sink").flatMap { it.lines }.filter(::isMarker))
     }
 }

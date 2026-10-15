@@ -73,6 +73,27 @@ class DataStoreSyncStatusTest {
     }
 
     @Test
+    fun `a device record is read back from the names earlier versions stored it under`() = runBlocking {
+        // Every result and stop a sync records, under its persisted name; renaming one loses records.
+        val results = listOf("CAUGHT_UP", "INTERRUPTED", "DEVICE_ERROR", "UNREACHABLE", "NOT_PAIRED")
+        val stops = listOf("CAUGHT_UP", "NO_PROGRESS", "LINK_LOST", "TRUNCATED", "BUSY", "DEVICE_ERROR")
+        val records = results.flatMap { r -> stops.map { s -> r to s } }.mapIndexed { i, (r, s) ->
+            "AA:BB:CC:DD:EE:%02X".format(i) to """{"atMs":$i,"result":"$r","linesStored":10,"pages":2,"stop":"$s","cursor":"1:$i"}"""
+        }
+        writeRaw(records.joinToString(",", """{"lastSyncByDevice":{""", "}}") { (a, json) -> "\"$a\":$json" })
+
+        val status = DataStoreSyncStatus(open()).status.first()
+
+        val expected = records.mapIndexed { i, (a, _) ->
+            val (r, s) = results[i / stops.size] to stops[i % stops.size]
+            a to DeviceSync(i.toLong(), SyncResultKind.valueOf(r), 10, 2, SyncStopKind.valueOf(s), "1:$i")
+        }.toMap()
+        assertEquals(expected, status.lastSyncByDevice)
+        assertEquals(results.toSet(), SyncResultKind.entries.map { it.name }.toSet(), "a new result needs a record here")
+        assertEquals(stops.toSet(), SyncStopKind.entries.map { it.name }.toSet(), "a new stop needs a record here")
+    }
+
+    @Test
     fun `the single-device record becomes the entry of the device those versions synced`() = runBlocking {
         writeRaw(legacyJson)
         val store = open(legacyDevice = dongle)
