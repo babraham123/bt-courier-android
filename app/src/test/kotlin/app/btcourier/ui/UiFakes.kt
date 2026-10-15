@@ -1,5 +1,6 @@
 package app.btcourier.ui
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
@@ -9,6 +10,7 @@ import app.btcourier.ble.PairedDeviceRepository
 import app.btcourier.data.AppSettings
 import app.btcourier.data.DeviceConfig
 import app.btcourier.data.SettingsRepository
+import app.btcourier.ui.status.DiagnosticsExport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,4 +56,11 @@ class FakePairedDevices(vararg devices: PairedDevice) : PairedDeviceRepository {
         forgotten += device
         devices = devices - device
     }
+}
+
+/** A diagnostics export with a fixed text that saves nowhere. */
+object NoDiagnostics : DiagnosticsExport {
+    override suspend fun text() = "log"
+
+    override suspend fun save(target: Uri, text: String) = Unit
 }
