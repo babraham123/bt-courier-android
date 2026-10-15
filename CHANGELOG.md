@@ -15,7 +15,9 @@ Pre-alpha. Nothing below has been verified on real hardware.
   from a persisted cursor and resumes after a disconnect.
 - Timestamp repair for rows logged before the device clock was valid, using the device's clock
   journal and a per-sync anchor; each row carries a `ts_quality`.
-- Colmi smart ring source (heart rate, steps, battery), experimental.
+- Colmi smart ring source, experimental: per-day heart rate, HRV, steps, sleep, SpO2 and
+  temperature logs, battery, firmware revision and the background heart-rate setting, which the
+  pair wizard offers to turn on.
 - Local cache with batch sealing, gzip and a byte cap with oldest-first eviction.
 - Sinks: HTTP PUT, HTTP POST, SFTP, MQTT and a local folder (Storage Access Framework); several
   sinks at once, each acknowledged independently.
