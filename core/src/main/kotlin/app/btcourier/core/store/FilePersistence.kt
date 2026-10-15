@@ -18,47 +18,35 @@ import java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
 import java.nio.file.StandardOpenOption.WRITE
 
 /**
- * Crash-safe [StoreDb] in one directory: the app's store (in its private files dir) and the JVM
- * tests'. Sticks to `java.nio.file` calls Android has had since API 26 (no `Files.readString`).
+ * Crash-safe [SnapshotPersistence] adapter in one directory: the app's store (in its private files
+ * dir) and the JVM tests'. Sticks to `java.nio.file` calls Android has had since API 26 (no
+ * `Files.readString`).
  *
- * Layout: `index.json` holds every table except page lines; `pages/<seq>.json` holds each page's
- * lines. A commit writes new page files, then the index, each to a `.tmp` sibling that is fsynced
- * and renamed over the target. The index rename is the commit point: page files not named by the
- * committed index are uncommitted leftovers and are deleted on [open], as are `.tmp` files.
+ * Layout: `index.json` holds the [StoreSnapshot]; `pages/<seq>.json` holds each page's lines as a
+ * JSON array. A commit writes new page files, then the index, each to a `.tmp` sibling that is
+ * fsynced and renamed over the target. The index rename is the commit point: page files not named
+ * by the committed index are uncommitted leftovers and are deleted on [load], as are `.tmp` files.
  *
  * The whole index is rewritten per commit. It holds page metadata only (~250 bytes per page
  * part), so even a full 200 MB cache of 40 KB export pages is a ~1.3 MB index; small enough to
  * rewrite on each commit at sync rates.
+ *
+ * @param beforeCommit runs between writing the index `.tmp` and renaming it, to simulate crashes.
  */
-class FileStoreDb private constructor(db: SnapshotStoreDb) : StoreDb by db {
-    companion object {
-        /** Opens (or creates) the store in [dir], discarding anything a crash left uncommitted. */
-        fun open(dir: Path): FileStoreDb = open(dir) {}
-
-        /** [beforeCommit] runs between writing the index `.tmp` and renaming it, to simulate crashes. */
-        internal fun open(dir: Path, beforeCommit: () -> Unit): FileStoreDb {
-            val persistence = FilePersistence(dir, beforeCommit)
-            return FileStoreDb(SnapshotStoreDb(persistence.recover(), persistence))
-        }
-    }
-}
-
-private val json = Json { ignoreUnknownKeys = true }
-private val linesSerializer = ListSerializer(String.serializer())
-
-private class FilePersistence(
+internal class FilePersistence(
     private val dir: Path,
-    private val beforeCommit: () -> Unit,
+    private val beforeCommit: () -> Unit = {},
 ) : SnapshotPersistence {
     private val index = dir.resolve("index.json")
     private val pagesDir = dir.resolve("pages")
 
-    fun recover(): DbSnapshot {
+    /** Reads the committed index (creating the store if there is none) and deletes crash leftovers. */
+    override fun load(): StoreSnapshot {
         Files.createDirectories(pagesDir)
         val snapshot = if (Files.exists(index)) {
-            json.decodeFromString(DbSnapshot.serializer(), Files.readAllBytes(index).decodeToString())
+            json.decodeFromString(StoreSnapshot.serializer(), Files.readAllBytes(index).decodeToString())
         } else {
-            DbSnapshot()
+            StoreSnapshot()
         }
         val committed = snapshot.pages.mapTo(HashSet()) { pageFile(it.seq).fileName.toString() }
         listOf(dir, pagesDir).forEach { d ->
@@ -72,15 +60,15 @@ private class FilePersistence(
         return snapshot
     }
 
-    override suspend fun commit(next: DbSnapshot, added: Map<Long, List<String>>, removed: Collection<Long>) =
+    override suspend fun commit(next: StoreSnapshot, added: Map<Long, List<String>>, removed: Collection<Long>) =
         withContext(Dispatchers.IO) {
             for ((seq, lines) in added) {
                 writeAtomically(pageFile(seq), json.encodeToString(linesSerializer, lines))
             }
             fsyncDir(pagesDir)
-            writeAtomically(index, json.encodeToString(DbSnapshot.serializer(), next), beforeCommit)
+            writeAtomically(index, json.encodeToString(StoreSnapshot.serializer(), next), beforeCommit)
             fsyncDir(dir)
-            // After the commit point; a crash here only leaves orphans that recover() deletes.
+            // After the commit point; a crash here only leaves orphans that load() deletes.
             removed.forEach { Files.deleteIfExists(pageFile(it)) }
         }
 
@@ -111,3 +99,6 @@ private class FilePersistence(
         }
     }
 }
+
+private val json = Json { ignoreUnknownKeys = true }
+private val linesSerializer = ListSerializer(String.serializer())

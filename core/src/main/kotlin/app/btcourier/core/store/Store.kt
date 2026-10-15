@@ -4,8 +4,8 @@ package app.btcourier.core.store
  * Durable local cache between sources and sinks.
  *
  * Pages are keyed by cursor so a re-pulled page is a no-op; sealed batches are immutable so a
- * retried upload is byte-identical. [DefaultStore] implements it over a [StoreDb]: [FileStoreDb] in
- * the app and on the JVM, [InMemoryStoreDb] in tests.
+ * retried upload is byte-identical. [DefaultStore] is the implementation: [DefaultStore.open] in
+ * the app and on the JVM, [DefaultStore.inMemory] in tests.
  */
 interface Store {
     /**
@@ -18,6 +18,13 @@ interface Store {
 
     /** Last persisted cursor for [sourceId], or null if nothing was pulled yet. */
     suspend fun cursor(sourceId: String): String?
+
+    /**
+     * The file [sourceId]'s stored lines last left open: the one named by the latest `{"_file":...}`
+     * marker stored for it, or null if none was. A pull resuming from [cursor] continues in this
+     * file until its page names another. Survives upload and eviction, like the cursor.
+     */
+    suspend fun openFile(sourceId: String): String?
 
     /**
      * Seals unsealed lines into batches wherever [policy] says a batch is complete, then enforces

@@ -6,7 +6,6 @@ import app.btcourier.core.source.Page
 import app.btcourier.core.source.Source
 import app.btcourier.core.source.SourceException
 import app.btcourier.core.store.DefaultStore
-import app.btcourier.core.store.InMemoryStoreDb
 import app.btcourier.core.store.SealPolicy
 import app.btcourier.core.store.pendingRows
 import app.btcourier.core.testing.WicanLines.boot
@@ -86,7 +85,7 @@ class SyncRunnerTest {
         storedRow(tsAfter + 2_000, tsAfter + 2_000, "device"),
     )
 
-    private val store = DefaultStore(InMemoryStoreDb(), clock = { 0 }, sinkIds = { setOf("sink") })
+    private val store = DefaultStore.inMemory(clock = { 0 }, sinkIds = { setOf("sink") })
 
     // Seals everything at the end of each run, so pending batches show what was stored.
     private fun runner(source: Source) =
@@ -115,6 +114,17 @@ class SyncRunnerTest {
         runner(ScriptedSource(resumed, clockJournal)).run()
 
         assertEquals(expectedRows, store.pendingRows("sink").flatten())
+    }
+
+    @Test
+    fun `a sync whose first page resumes mid-file without a marker re-bases it as the file the store left open`() = runTest {
+        val firstSync = mapOf<String?, Page>(null to Page(listOf(fileMarker(fileA), row(30_000), row(60_000)), "1:100", more = false))
+        runner(ScriptedSource(firstSync, clockJournal)).run()
+
+        val resumed = mapOf<String?, Page>("1:100" to Page(listOf(row(90_000)), "1:130", more = false))
+        runner(ScriptedSource(resumed, clockJournal)).run()
+
+        assertEquals(expectedRows.take(3), store.pendingRows("sink").flatten())
     }
 
     @Test
@@ -174,7 +184,7 @@ class SyncRunnerTest {
         assertEquals(3_000, currentTime)
 
         val stuck = ScriptedSource(pages, clockJournal).apply { failPull = { _, _ -> SourceException.Busy("export") } }
-        val report = SyncRunner("wican", stuck, DefaultStore(InMemoryStoreDb(), sinkIds = { emptySet() })).run()
+        val report = SyncRunner("wican", stuck, DefaultStore.inMemory(sinkIds = { emptySet() })).run()
         assertEquals(StopReason.Busy, report.stoppedBecause)
         assertEquals(4, stuck.calls.count { it.startsWith("pull") })
         assertEquals(3_000 + 7_000, currentTime)
