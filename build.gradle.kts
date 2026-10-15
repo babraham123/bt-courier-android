@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
 
@@ -28,8 +29,16 @@ subprojects {
             "testImplementation"(rootProject.libs.kotlinx.coroutines.test)
             "testRuntimeOnly"(rootProject.libs.junit.platform.launcher)
         }
-        tasks.withType<Test>().configureEach {
-            useJUnitPlatform()
+    }
+
+    // One test setup for every module: JUnit 5, and only failures in the console, with the full
+    // stack trace so a CI log is enough to diagnose them.
+    tasks.withType<Test>().configureEach {
+        useJUnitPlatform()
+        testLogging {
+            events("failed")
+            exceptionFormat = TestExceptionFormat.FULL
+            showStandardStreams = false
         }
     }
 
