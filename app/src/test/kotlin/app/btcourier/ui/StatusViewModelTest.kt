@@ -1,6 +1,5 @@
 package app.btcourier.ui
 
-import android.net.Uri
 import app.btcourier.ble.PairedDevice
 import app.btcourier.data.AppSettings
 import app.btcourier.data.DeviceKind
@@ -14,7 +13,6 @@ import app.btcourier.data.SyncStatus
 import app.btcourier.data.SyncStopKind
 import app.btcourier.data.UploadResultKind
 import app.btcourier.ui.status.DeviceRow
-import app.btcourier.ui.status.DiagnosticsExport
 import app.btcourier.ui.status.LastError
 import app.btcourier.ui.status.LastSync
 import app.btcourier.ui.status.LastUpload
@@ -44,14 +42,8 @@ class StatusViewModelTest {
     private val devices = FakePairedDevices(device)
     private val work = RecordingWorkControl()
 
-    private val diagnostics = object : DiagnosticsExport {
-        override suspend fun text() = "log"
-
-        override suspend fun save(target: Uri, text: String) = Unit
-    }
-
     private fun TestScope.subscribed(): StatusViewModel {
-        val vm = StatusViewModel(status.status, settings.settings, devices, work, diagnostics)
+        val vm = StatusViewModel(status.status, settings.settings, devices, work, NoDiagnostics)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
         return vm
     }
