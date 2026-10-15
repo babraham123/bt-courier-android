@@ -40,6 +40,12 @@ class FakeColmiRing(
     var malformedWrites: Int = 0
         private set
 
+    /**
+     * Commands the ring acts on but never answers, as when the answer is lost on air or (for a
+     * command the firmware does not know) never sent.
+     */
+    val silentCommands: MutableSet<Int> = mutableSetOf()
+
     private var corruptHeartRateSub: Int? = null
     private var corruptStepsIndex: Int? = null
 
@@ -75,7 +81,7 @@ class FakeColmiRing(
         val wall = LocalDateTime.of(2000 + f[0], f[1], f[2], f[3], f[4], f[5])
         _clockSets += wall
         today = wall.toLocalDate()
-        // Believed to answer set-time; whether or not it does, the app must skip it.
+        // The echo Gadgetbridge logs as the set date/time response; the app waits for it.
         send(CMD_SET_TIME)
     }
 
@@ -142,6 +148,7 @@ class FakeColmiRing(
         vararg payload: Int,
         corrupt: Boolean = false,
     ) {
+        if (command in silentCommands) return
         val p = ByteArray(16)
         p[0] = command.toByte()
         payload.forEachIndexed { i, b -> p[i + 1] = b.toByte() }
