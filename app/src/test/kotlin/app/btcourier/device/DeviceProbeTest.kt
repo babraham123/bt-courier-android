@@ -1,5 +1,6 @@
 package app.btcourier.device
 
+import app.btcourier.core.source.colmi.AutoHeartRate
 import app.btcourier.core.source.colmi.Battery
 import app.btcourier.data.DeviceKind
 import app.btcourier.fakes.FakeColmiRing
@@ -15,8 +16,9 @@ import java.io.IOException
 import java.time.LocalDate
 
 /**
- * Each kind's "test connection" probe over the scripted `ble_http` peripheral and the fake ring,
- * and the ring's heart-rate logging setting the pair wizard writes.
+ * Each kind's "test connection" probe over the scripted `ble_http` peripheral and the fake ring.
+ * The ring's probe applies the wizard's background heart-rate choice: checked turns logging on
+ * every 5 minutes, unchecked leaves the setting as it was; either way it reads the setting back.
  */
 class DeviceProbeTest {
     // Shape from dev_status_manager HTTP_API.md `GET /api/status`, padded past one notify frame.
@@ -29,28 +31,82 @@ class DeviceProbeTest {
         runTest {
             val peripheral =
                 ScriptedPeripheral(mapOf("/api/status" to Reply(200, status)), mtu = 247, scope = backgroundScope)
-            assertEquals(ProbeResult.Wican("v0.0.0-test", 247), DeviceKind.WICAN.support.probe(peripheral.link))
+            assertEquals(
+                ProbeResult.Wican("v0.0.0-test", 247),
+                DeviceKind.WICAN.support.probe(peripheral.link, PairingChoices()),
+            )
+        }
+
+    private fun ringWithLoggingOff() =
+        FakeColmiRing(
+            today = LocalDate.of(2026, 10, 15),
+            batteryLevel = 64,
+            charging = true,
+            autoHeartRateEnabled = false,
+            autoHeartRateIntervalMinutes = 30,
+        )
+
+    /** Command byte and, for `0x16`, its read/write byte, of each command the ring received. */
+    private fun FakeColmiRing.commandHeads() =
+        commands.map { c -> c.take(if (c[0].toInt() == FakeColmiRing.CMD_AUTO_HEART_RATE) 2 else 1).map { it.toInt() } }
+
+    @Test
+    fun `with the box checked the ring probe reads the battery, turns logging on every 5 min and reads it back`() =
+        runTest {
+            val ring = ringWithLoggingOff()
+
+            assertEquals(
+                ProbeResult.Ring(
+                    Battery(level = 64, charging = true),
+                    AutoHeartRate(enabled = true, intervalMinutes = 5),
+                ),
+                DeviceKind.COLMI_RING.support.probe(ring.link, PairingChoices(autoHeartRate = true)),
+            )
+
+            assertEquals(listOf(listOf(0x03), listOf(0x16, 0x02), listOf(0x16, 0x01)), ring.commandHeads())
+            assertEquals(true to 5, ring.autoHeartRateEnabled to ring.autoHeartRateIntervalMinutes)
+            assertEquals(listOf(true, true, true), ring.link.writesWithResponse)
+            assertEquals(emptyList<Any>(), ring.clockSets, "setting the clock is the sync's job")
         }
 
     @Test
-    fun `the ring probe reads the battery with one command that asks for a response, leaving its clock alone`() =
+    fun `with the box unchecked the ring probe only reads the setting, leaving the ring as it was`() =
         runTest {
-            val ring = FakeColmiRing(today = LocalDate.of(2026, 10, 15), batteryLevel = 64, charging = true)
+            val ring = ringWithLoggingOff()
 
             assertEquals(
-                ProbeResult.Ring(Battery(level = 64, charging = true)),
-                DeviceKind.COLMI_RING.support.probe(ring.link),
+                ProbeResult.Ring(
+                    Battery(level = 64, charging = true),
+                    AutoHeartRate(enabled = false, intervalMinutes = 30),
+                ),
+                DeviceKind.COLMI_RING.support.probe(ring.link, PairingChoices(autoHeartRate = false)),
             )
 
-            assertEquals(listOf(0x03), ring.commands.map { it[0].toInt() })
-            assertEquals(listOf(true), ring.link.writesWithResponse)
+            assertEquals(listOf(listOf(0x03), listOf(0x16, 0x01)), ring.commandHeads())
+            assertEquals(false to 30, ring.autoHeartRateEnabled to ring.autoHeartRateIntervalMinutes)
             assertEquals(emptyList<Any>(), ring.clockSets)
+        }
+
+    @Test
+    fun `a ring silent on the logging setting still passes the probe, with the setting unconfirmed`() =
+        runTest {
+            for (checked in listOf(true, false)) {
+                val ring = ringWithLoggingOff()
+                ring.silentCommands += FakeColmiRing.CMD_AUTO_HEART_RATE
+
+                assertEquals(
+                    ProbeResult.Ring(Battery(level = 64, charging = true), autoHeartRate = null),
+                    DeviceKind.COLMI_RING.support.probe(ring.link, PairingChoices(autoHeartRate = checked)),
+                )
+            }
         }
 
     @Test
     fun `a silent ring fails the probe`() =
         runTest {
-            assertThrows<IOException> { DeviceKind.COLMI_RING.support.probe(FakeGattLink(mtu = 23)) }
+            assertThrows<IOException> {
+                DeviceKind.COLMI_RING.support.probe(FakeGattLink(mtu = 23), PairingChoices())
+            }
         }
 
     @Test
@@ -92,7 +148,7 @@ class DeviceProbeTest {
     fun `a non-200 status fails the probe`() =
         runTest {
             val peripheral = ScriptedPeripheral(emptyMap(), scope = backgroundScope)
-            assertThrows<IOException> { DeviceKind.WICAN.support.probe(peripheral.link) }
+            assertThrows<IOException> { DeviceKind.WICAN.support.probe(peripheral.link, PairingChoices()) }
         }
 
     @Test

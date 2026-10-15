@@ -65,6 +65,7 @@ import app.btcourier.data.sinkkind.TransportCapability
 import app.btcourier.data.sinkkind.TransportField
 import app.btcourier.data.sinkkind.module
 import app.btcourier.ui.BackButton
+import app.btcourier.ui.Toggle
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

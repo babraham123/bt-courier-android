@@ -7,6 +7,7 @@ import app.btcourier.ble.PairingException
 import app.btcourier.ble.pairingStep
 import app.btcourier.data.DeviceConfig
 import app.btcourier.data.DeviceKind
+import app.btcourier.device.PairingChoices
 import app.btcourier.device.ProbeResult
 import app.btcourier.device.support
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +21,7 @@ enum class PairingStep { ChooseKind, Explain, Associate, Bond, Test }
 /**
  * @property address the associated device, upper-case; set from [PairingStep.Bond] on.
  * @property bondAttempt bumped by each retry, so the screen restarts bonding.
+ * @property choices what the explain step's checkboxes say; the test applies them.
  */
 data class PairingUiState(
     val step: PairingStep = PairingStep.ChooseKind,
@@ -29,6 +31,7 @@ data class PairingUiState(
     val error: String? = null,
     val probe: ProbeResult? = null,
     val bondAttempt: Int = 0,
+    val choices: PairingChoices = PairingChoices(),
 )
 
 /** The Android side of pairing that runs after the association; a seam for JVM tests. */
@@ -37,19 +40,21 @@ interface PairingPlatform {
     fun observePresence(address: String): Boolean
 
     /**
-     * Connects to [address] with [kind]'s GATT profile and runs its "test connection" probe;
-     * [ProbeResult.Busy] when a sync holds the device.
+     * Connects to [address] with [kind]'s GATT profile and runs its "test connection" probe with
+     * [choices]; [ProbeResult.Busy] when a sync holds the device.
      */
     suspend fun probe(
         address: String,
         kind: DeviceKind,
+        choices: PairingChoices,
     ): ProbeResult
 }
 
 /**
  * Pair wizard: kind → explain → companion-device association → bond (system passkey dialog, only
  * for kinds whose profile [wants one][app.btcourier.ble.GattProfile.wantsBond]) → test
- * connection. The association is the persisted record of the paired device; the wizard adds its
+ * connection, which also applies the [choices][PairingUiState.choices] made on the explain step.
+ * The association is the persisted record of the paired device; the wizard adds its
  * [DeviceConfig] right after it, before presence observation can start a sync that needs the kind.
  *
  * The screen owns what needs an activity: the permission request, the companion chooser and the
@@ -66,6 +71,10 @@ class PairingViewModel(
         mutableState.update {
             it.copy(step = PairingStep.Explain, kind = kind, error = null)
         }
+
+    /** The explain step's background heart-rate checkbox; only kinds that offer it show it. */
+    fun setAutoHeartRate(enabled: Boolean) =
+        mutableState.update { it.copy(choices = it.choices.copy(autoHeartRate = enabled)) }
 
     fun permissionGranted() = mutableState.update { it.copy(step = PairingStep.Associate, error = null) }
 
@@ -111,7 +120,8 @@ class PairingViewModel(
         viewModelScope.launch {
             val next =
                 try {
-                    val result = pairingStep("Test connection") { platform.probe(address, current.kind) }
+                    val result =
+                        pairingStep("Test connection") { platform.probe(address, current.kind, current.choices) }
                     state.value.copy(probe = result)
                 } catch (e: PairingException) {
                     state.value.copy(error = e.message)

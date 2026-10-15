@@ -1,8 +1,10 @@
 package app.btcourier.ui
 
+import app.btcourier.core.source.colmi.AutoHeartRate
 import app.btcourier.core.source.colmi.Battery
 import app.btcourier.data.DeviceConfig
 import app.btcourier.data.DeviceKind
+import app.btcourier.device.PairingChoices
 import app.btcourier.device.ProbeResult
 import app.btcourier.fakes.FakeColmiRing
 import app.btcourier.ui.pairing.PairingPlatform
@@ -26,7 +28,9 @@ import java.time.LocalDate
 
 /**
  * The pair wizard's steps per kind: a WiCAN bonds before presence starts, a ring goes straight
- * from the association to the test, which reads its battery. Every association stores its kind.
+ * from the association to the test, which reads its battery and applies the explain step's
+ * background heart-rate choice (checked by default) on the same link. Every association stores
+ * its kind.
  * The test opens its link through the link factory under the device lock syncs take, so it
  * reports the device busy, opening nothing, while a sync holds it.
  */
@@ -34,7 +38,14 @@ import java.time.LocalDate
 @ExtendWith(MainDispatcherExtension::class)
 class PairingViewModelTest {
     private val devices = FakePairedDevices()
-    private val ring = FakeColmiRing(today = LocalDate.of(2026, 10, 15), batteryLevel = 42)
+    private val ring =
+        FakeColmiRing(
+            today = LocalDate.of(2026, 10, 15),
+            batteryLevel = 42,
+            autoHeartRateEnabled = false,
+            autoHeartRateIntervalMinutes = 30,
+        )
+    private val battery = Battery(42, charging = false)
     private val locks = DeviceLocks()
 
     private inner class RecordingPlatform : PairingPlatform {
@@ -69,7 +80,8 @@ class PairingViewModelTest {
         override suspend fun probe(
             address: String,
             kind: DeviceKind,
-        ): ProbeResult = pairingProbe.run(address, kind)
+            choices: PairingChoices,
+        ): ProbeResult = pairingProbe.run(address, kind, choices)
     }
 
     private val platform = RecordingPlatform()
@@ -80,10 +92,12 @@ class PairingViewModelTest {
         kind: DeviceKind,
         address: String,
         name: String?,
+        onExplain: () -> Unit = {},
     ) {
         assertEquals(PairingStep.ChooseKind, vm.state.value.step)
         vm.chooseKind(kind)
         assertEquals(PairingStep.Explain, vm.state.value.step)
+        onExplain()
         vm.permissionGranted()
         assertEquals(PairingStep.Associate, vm.state.value.step)
         vm.scanning()
@@ -107,19 +121,55 @@ class PairingViewModelTest {
         }
 
     @Test
-    fun `the ring's connection test reads its battery`() =
+    fun `the ring's connection test reads its battery and turns background heart rate on by default`() =
         runTest {
             pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
+            assertTrue(vm.state.value.choices.autoHeartRate)
 
             vm.test()
             testScheduler.advanceUntilIdle()
 
-            assertEquals(ProbeResult.Ring(Battery(42, charging = false)), vm.state.value.probe)
+            assertEquals(
+                ProbeResult.Ring(battery, AutoHeartRate(enabled = true, intervalMinutes = 5)),
+                vm.state.value.probe,
+            )
+            assertEquals(true to 5, ring.autoHeartRateEnabled to ring.autoHeartRateIntervalMinutes)
             assertEquals(listOf("AA:BB:CC:DD:EE:02" to DeviceKind.COLMI_RING), platform.opened)
-            assertEquals(listOf(0x03), ring.commands.map { it[0].toInt() })
+            assertEquals(listOf(0x03, 0x16, 0x16), ring.commands.map { it[0].toInt() })
             assertFalse(vm.state.value.busy)
             assertTrue(ring.link.closed)
             assertFalse(locks.of("AA:BB:CC:DD:EE:02").isLocked, "the lock is released for syncs")
+        }
+
+    @Test
+    fun `unchecking background heart rate is carried to the test, which only reads the setting`() =
+        runTest {
+            pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null) { vm.setAutoHeartRate(false) }
+            assertEquals(PairingChoices(autoHeartRate = false), vm.state.value.choices)
+
+            vm.test()
+            testScheduler.advanceUntilIdle()
+
+            assertEquals(
+                ProbeResult.Ring(battery, AutoHeartRate(enabled = false, intervalMinutes = 30)),
+                vm.state.value.probe,
+            )
+            assertEquals(false to 30, ring.autoHeartRateEnabled to ring.autoHeartRateIntervalMinutes)
+            assertEquals(listOf(0x03, 0x16), ring.commands.map { it[0].toInt() })
+        }
+
+    @Test
+    fun `a ring that does not answer the heart-rate setting still passes the test, unconfirmed`() =
+        runTest {
+            pairUpToAssociation(DeviceKind.COLMI_RING, "AA:BB:CC:DD:EE:02", null)
+            ring.silentCommands += FakeColmiRing.CMD_AUTO_HEART_RATE
+
+            vm.test()
+            testScheduler.advanceUntilIdle()
+
+            assertEquals(ProbeResult.Ring(battery, autoHeartRate = null), vm.state.value.probe)
+            assertNull(vm.state.value.error)
+            assertFalse(vm.state.value.busy)
         }
 
     @Test
@@ -143,7 +193,10 @@ class PairingViewModelTest {
             vm.test()
             testScheduler.advanceUntilIdle()
 
-            assertEquals(ProbeResult.Ring(Battery(42, charging = false)), vm.state.value.probe)
+            assertEquals(
+                ProbeResult.Ring(battery, AutoHeartRate(enabled = true, intervalMinutes = 5)),
+                vm.state.value.probe,
+            )
         }
 
     @Test

@@ -3,11 +3,15 @@ package app.btcourier.ui
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.onNodeWithText
 import app.btcourier.R
+import app.btcourier.core.source.colmi.AutoHeartRate
 import app.btcourier.core.source.colmi.Battery
 import app.btcourier.data.DeviceConfig
 import app.btcourier.data.DeviceKind
+import app.btcourier.device.PairingChoices
 import app.btcourier.device.ProbeResult
 import app.btcourier.ui.pairing.PairingPlatform
 import app.btcourier.ui.pairing.PairingScreen
@@ -26,6 +30,7 @@ class PairingScreenTest : ScreenTest() {
             override suspend fun probe(
                 address: String,
                 kind: DeviceKind,
+                choices: PairingChoices,
             ) = probeResult
         }
     private val vm = PairingViewModel(devices, platform)
@@ -55,6 +60,28 @@ class PairingScreenTest : ScreenTest() {
 
         onText(R.string.pairing_explain_ring).assertIsDisplayed()
         onText(R.string.pairing_start).assertIsDisplayed()
+    }
+
+    @Test
+    fun `the ring's explain step offers background heart rate, checked, and unchecking it is kept`() {
+        vm.chooseKind(DeviceKind.COLMI_RING)
+        show()
+
+        onText(R.string.pairing_auto_hr_choice_help).assertIsDisplayed()
+        toggle(R.string.pairing_auto_hr_choice).assertIsOn().tap()
+
+        toggle(R.string.pairing_auto_hr_choice).assertIsOff()
+        assertEquals(PairingChoices(autoHeartRate = false), vm.state.value.choices)
+    }
+
+    @Test
+    fun `the WiCAN's explain step offers no heart-rate choice`() {
+        vm.chooseKind(DeviceKind.WICAN)
+        show()
+
+        onText(R.string.pairing_explain_ble).assertIsDisplayed()
+        assertNoText(R.string.pairing_auto_hr_choice)
+        assertNoText(R.string.pairing_auto_hr_choice_help)
     }
 
     @Test
@@ -95,17 +122,35 @@ class PairingScreenTest : ScreenTest() {
 
     @Test
     fun `a paired ring is stored, its test shows the battery, and done closes the wizard`() {
-        probeResult = ProbeResult.Ring(Battery(42, charging = false))
+        probeResult =
+            ProbeResult.Ring(Battery(42, charging = false), AutoHeartRate(enabled = true, intervalMinutes = 5))
         pairedUpToTest(DeviceKind.COLMI_RING)
         show()
 
         onText(R.string.pairing_test_body_ring).assertIsDisplayed()
         onText(R.string.pairing_test).tap()
         onText(R.string.pairing_test_ok_ring, 42).assertIsDisplayed()
+        onText(R.string.pairing_test_auto_hr_on, 5).assertIsDisplayed()
         onText(R.string.pairing_done).tap()
 
         assertEquals(listOf(DeviceConfig(ADDRESS, DeviceKind.COLMI_RING, null)), devices.remembered)
         assertEquals(1, done)
+    }
+
+    @Test
+    fun `a ring test says when background heart rate is off or could not be confirmed`() {
+        probeResult =
+            ProbeResult.Ring(Battery(42, charging = false), AutoHeartRate(enabled = false, intervalMinutes = 30))
+        pairedUpToTest(DeviceKind.COLMI_RING)
+        show()
+
+        onText(R.string.pairing_test).tap()
+        onText(R.string.pairing_test_auto_hr_off).assertIsDisplayed()
+
+        probeResult = ProbeResult.Ring(Battery(42, charging = false), autoHeartRate = null)
+        onText(R.string.pairing_test).tap()
+        onText(R.string.pairing_test_auto_hr_unknown).assertIsDisplayed()
+        assertNoText(R.string.pairing_test_auto_hr_off)
     }
 
     @Test

@@ -5,7 +5,9 @@ import app.btcourier.ble.ColmiRingGatt
 import app.btcourier.core.source.Source
 import app.btcourier.core.source.colmi.ColmiPacketCodec
 import app.btcourier.core.source.colmi.ColmiRingSource
+import app.btcourier.core.source.colmi.ColmiTimeoutException
 import app.btcourier.core.source.colmi.colmiRequest
+import app.btcourier.core.source.colmi.readColmiAutoHeartRate
 import app.btcourier.core.source.colmi.writeColmiAutoHeartRate
 import app.btcourier.core.transport.GattLink
 import kotlin.time.Duration.Companion.seconds
@@ -13,8 +15,10 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * Colmi R02-family smart ring: unbonded UART-like service ([ColmiRingGatt]), day logs through
  * [ColmiRingSource]. The probe asks for the battery (`0x03`) and leaves the ring's clock alone:
- * setting it is the sync's job. Protocol assumptions are unverified on hardware; see
- * [ColmiRingSource].
+ * setting it is the sync's job. It then applies [PairingChoices.autoHeartRate] and reads the
+ * logging setting back (`0x16`): the ring records a heart-rate log only with it on, and the vendor
+ * app owns it, so the wizard asks once instead of writing it on every sync. Protocol assumptions
+ * are unverified on hardware; see [ColmiRingSource].
  */
 object ColmiRingSupport : DeviceSupport {
     private val REQUEST_TIMEOUT = 5.seconds
@@ -26,6 +30,9 @@ object ColmiRingSupport : DeviceSupport {
     // Worn, not in the car: the head unit says nothing about whether the ring is in range.
     override val syncsOnCarTrigger = false
 
+    /** The interval the pair wizard turns logging on with; its checkbox label states it. */
+    const val PAIRING_AUTO_HR_INTERVAL_MINUTES: Int = 5
+
     override val label = R.string.kind_colmi_ring
     override val pairingText =
         PairingText(
@@ -33,6 +40,8 @@ object ColmiRingSupport : DeviceSupport {
             explain = listOf(R.string.pairing_explain_ring),
             associate = R.string.pairing_associate_body_ring,
             test = R.string.pairing_test_body_ring,
+            autoHeartRateChoice =
+                PairingChoiceText(R.string.pairing_auto_hr_choice, R.string.pairing_auto_hr_choice_help),
         )
 
     override suspend fun <T> withSource(
@@ -41,12 +50,27 @@ object ColmiRingSupport : DeviceSupport {
         block: suspend (Source) -> T,
     ): T = block(ColmiRingSource(link, options.zone, options.clock))
 
-    override suspend fun probe(link: GattLink): ProbeResult =
-        ProbeResult.Ring(
+    override suspend fun probe(
+        link: GattLink,
+        choices: PairingChoices,
+    ): ProbeResult {
+        val battery =
             link.colmiRequest(ColmiPacketCodec.batteryRequest(), REQUEST_TIMEOUT) {
                 ColmiPacketCodec.parseBattery(it)
-            },
-        )
+            }
+        // The battery answer already proved the link; a ring silent on 0x16 still passes the test,
+        // with the setting unconfirmed. A dropped link fails it.
+        val autoHeartRate =
+            try {
+                if (choices.autoHeartRate) {
+                    setAutoHeartRate(link, enabled = true, intervalMinutes = PAIRING_AUTO_HR_INTERVAL_MINUTES)
+                }
+                link.readColmiAutoHeartRate(REQUEST_TIMEOUT)
+            } catch (e: ColmiTimeoutException) {
+                null
+            }
+        return ProbeResult.Ring(battery, autoHeartRate)
+    }
 
     /**
      * Turns the ring's own heart-rate logging on or off with a reading every [intervalMinutes]
