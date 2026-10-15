@@ -6,7 +6,7 @@ import java.time.ZoneOffset
 
 /**
  * A Colmi R02-family ring on a [FakeGattLink], answering from tables. Packets are built here byte
- * by byte from the published layout (`colmi_r02_client`, Gadgetbridge ColmiR0x), independently
+ * by byte from the published layout (PulseLoopiOS), independently
  * of core's codec, so a codec mistake shows up as a mismatch instead of cancelling out.
  *
  * Packets: 16 bytes, byte 0 command, byte 15 = `sum(bytes 0..14) & 0xFF`. One packet per
