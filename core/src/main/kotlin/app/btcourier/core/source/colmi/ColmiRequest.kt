@@ -22,7 +22,8 @@ import kotlin.time.Duration
  * packets after the one that completes the answer are dropped. Not acknowledged; unverified on
  * hardware, from `colmi_r02_client` and Gadgetbridge.
  *
- * @throws IOException on timeout or when the link drops before the answer is whole.
+ * @throws ColmiTimeoutException when no complete answer arrives in time.
+ * @throws IOException when the link drops before the answer is whole.
  */
 @OptIn(FlowPreview::class)
 suspend fun <T : Any> GattLink.colmiRequest(
@@ -41,7 +42,13 @@ suspend fun <T : Any> GattLink.colmiRequest(
                 .mapNotNull { assembler.feed(it) }
                 .firstOrNull()
         } catch (e: TimeoutCancellationException) {
-            throw IOException("no complete answer to command 0x%02x within %s".format(command, timeout), e)
+            throw ColmiTimeoutException("no complete answer to command 0x%02x within %s".format(command, timeout), e)
         }
     return result ?: throw IOException("link dropped during command 0x%02x".format(command))
 }
+
+/** [colmiRequest] saw no complete answer within its timeout, as opposed to the link dropping. */
+class ColmiTimeoutException(
+    message: String,
+    cause: Throwable,
+) : IOException(message, cause)

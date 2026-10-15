@@ -22,16 +22,27 @@ import kotlin.time.Duration.Companion.seconds
  * [ColmiGatt.RX] (writes) and [ColmiGatt.TX] (notifications). Protocol per [ColmiPacketCodec].
  *
  * Cursor: the last whole day pulled, `YYYY-MM-DD` in [zone]. [pull] fetches the day after it:
- * its heart-rate log (`0x15`) and steps log (`0x43`), as `{"_file":"colmi/<day>"}` followed by
- * `colmi.hr` (bpm per 5-minute slot) and `colmi.steps` (steps per quarter hour) rows in time order,
- * so the store seals one batch per day. Only days before today are pulled, because a partial
- * today stored under its cursor could never be topped up; `more` stays true while the day after
- * the one pulled is still before today. Once caught up, [pull] answers an empty page with the
- * same cursor and `more:false`.
+ * its heart-rate log (`0x15`), steps log (`0x43`) and HRV log (`0x39`), as
+ * `{"_file":"colmi/<day>"}` followed by `colmi.hr` (bpm per 5-minute slot), `colmi.steps` (steps
+ * per quarter hour) and `colmi.hrv` (ms per 30-minute slot) rows in time order, so the store seals
+ * one batch per day. Only days before today are pulled, because a partial today stored under its
+ * cursor could never be topped up; `more` stays true while the day after the one pulled is still
+ * before today. Once caught up, [pull] answers an empty page with the same cursor and `more:false`.
  *
  * The ring is assumed to keep today and the 7 days before it ([historyDays]). A null cursor
- * starts at the oldest day it holds (`today - (historyDays - 1)`), and an older cursor is clamped to that day: anything in between
- * was overwritten on the ring and is gone.
+ * starts at the oldest day it holds (`today - (historyDays - 1)`), and an older cursor is clamped
+ * to that day: anything in between was overwritten on the ring and is gone.
+ *
+ * HRV: the log reaches [ColmiPacketCodec.HRV_MAX_DAYS_AGO] days back, so the oldest day gets no
+ * HRV request. Older firmware never answers `0x39` (Gadgetbridge ends its sync before the HRV
+ * answer for that reason), and under the rule that a timeout retries the day such a ring would
+ * hold the cursor forever. So each instance probes once: when its first `0x39` request meets
+ * silence (no packet of the answer before the timeout), HRV counts as unsupported for the rest of
+ * the instance, that day and later ones go without `colmi.hrv` rows, and nothing re-enables it.
+ * The app opens one instance per connection, so the next sync probes again. Once the ring has
+ * answered, a later silent `0x39`, like an answer cut short, is an ordinary timeout that retries
+ * the day. A supporting ring whose first answer is lost entirely on air is mistaken for an old
+ * one, and that sync stores its days without HRV, which is never fetched again.
  *
  * Clock: the first [pull] of an instance sets the ring to the phone's wall clock in [zone]
  * (`0x01`), as the vendor app and Gadgetbridge do, so the ring's days are the phone's days. It
@@ -52,6 +63,8 @@ import kotlin.time.Duration.Companion.seconds
  *   not the ring's echoed timestamp, as Gadgetbridge does.
  * - The steps request addresses days by offset from the ring's today, assumed equal to the phone's
  *   today right after set-time; each steps row is placed by the date the ring stamps on it.
+ * - The HRV request addresses days the same way and its answer ends at sub-index 4 (see
+ *   [HrvLogAssembler]); HRV rows are placed from the requested day's start.
  * - Writes go with response when RX declares it, else without, as PulseLoopiOS picks
  *   (`colmi_r02_client` always writes without).
  * - Answers are not acknowledged, and the ring may send packets of other commands at any time;
@@ -82,6 +95,9 @@ class ColmiRingSource(
     private var clockSet = false
     private var batteryReported = false
 
+    // Unknown until the first 0x39 request of this instance.
+    private var hrvSupported: Boolean? = null
+
     override suspend fun pull(cursor: String?): Page {
         val last = cursor?.let(::parseCursor)
         setClockOnce()
@@ -91,7 +107,7 @@ class ColmiRingSource(
         // A null cursor always has a day to pull, since oldest < today.
         if (!day.isBefore(today)) return Page(emptyList(), checkNotNull(cursor), more = false)
 
-        val rows = (heartRateRows(day) + stepsRows(day, today)).sortedBy { it.ts }
+        val rows = (heartRateRows(day) + stepsRows(day, today) + hrvRows(day, today)).sortedBy { it.ts }
         val lines =
             buildList {
                 add(StoredLine.marker("$FILE_PREFIX$day"))
@@ -129,10 +145,39 @@ class ColmiRingSource(
                 responseTimeout,
                 HeartRateLogAssembler(),
             )
-        return log.values.mapIndexedNotNull { slot, bpm ->
-            if (bpm == 0) null else Row(epochMs(start.plusMinutes(slot.toLong() * log.intervalMinutes)), PARAM_HR, bpm)
-        }
+        return slotRows(start, log.intervalMinutes, log.values, PARAM_HR)
     }
+
+    /** See the class KDoc for when the ring is not asked and how a silent ring is told apart. */
+    private suspend fun hrvRows(
+        day: LocalDate,
+        today: LocalDate,
+    ): List<Row> {
+        val daysAgo = ChronoUnit.DAYS.between(day, today).toInt()
+        if (hrvSupported == false || daysAgo > ColmiPacketCodec.HRV_MAX_DAYS_AGO) return emptyList()
+        val assembler = HrvLogAssembler()
+        val values =
+            try {
+                link.colmiRequest(ColmiPacketCodec.hrvLogRequest(daysAgo), responseTimeout, assembler)
+            } catch (e: ColmiTimeoutException) {
+                if (hrvSupported == true || assembler.started) throw e
+                hrvSupported = false
+                return emptyList()
+            }
+        hrvSupported = true
+        return slotRows(day.atStartOfDay(), HrvLogAssembler.SLOT_MINUTES, values, PARAM_HRV)
+    }
+
+    /** One row per non-zero reading, the reading at index i placed i * [minutes] after [start]. */
+    private fun slotRows(
+        start: LocalDateTime,
+        minutes: Int,
+        values: List<Int>,
+        param: String,
+    ): List<Row> =
+        values.mapIndexedNotNull { slot, value ->
+            if (value == 0) null else Row(epochMs(start.plusMinutes(slot.toLong() * minutes)), param, value)
+        }
 
     private suspend fun stepsRows(
         day: LocalDate,
@@ -169,6 +214,7 @@ class ColmiRingSource(
         const val FILE_PREFIX: String = "colmi/"
         const val PARAM_HR: String = "colmi.hr"
         const val PARAM_STEPS: String = "colmi.steps"
+        const val PARAM_HRV: String = "colmi.hrv"
         const val PARAM_BATTERY: String = "colmi.battery"
 
         /** Gadgetbridge's wait after connecting, "to give the ring time to settle". */
