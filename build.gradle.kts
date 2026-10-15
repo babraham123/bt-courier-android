@@ -1,6 +1,7 @@
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
+import org.jlleitschuh.gradle.ktlint.KtlintExtension
 
 plugins {
     alias(libs.plugins.android.application) apply false
@@ -8,6 +9,21 @@ plugins {
     alias(libs.plugins.kotlin.android) apply false
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.kotlin.serialization) apply false
+    alias(libs.plugins.ktlint) apply false
+}
+
+// ktlint for every project, the root included so its own build scripts are checked too. The style
+// (ktlint_official, 120 columns) comes from .editorconfig.
+allprojects {
+    apply(plugin = rootProject.libs.plugins.ktlint.get().pluginId)
+    extensions.configure<KtlintExtension> {
+        version.set(rootProject.libs.versions.ktlint.engine)
+    }
+    plugins.withId("com.android.application") {
+        extensions.configure<KtlintExtension> {
+            android.set(true)
+        }
+    }
 }
 
 // Shared setup for the pure-JVM modules (core, fakes). Bytecode targets 17 to match the app
