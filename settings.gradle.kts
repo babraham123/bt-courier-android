@@ -21,6 +21,16 @@ pluginManagement {
     }
 }
 
+// Locks the settings plugin classpath. Its default lockfile name is the one the root project's
+// buildscript writes too, so it gets a name of its own.
+buildscript {
+    dependencyLocking {
+        lockAllConfigurations()
+        lockMode.set(LockMode.STRICT)
+        lockFile.set(file("settings-buildscript-gradle.lockfile"))
+    }
+}
+
 // Downloads the toolchain JDK the build files ask for when no local install matches.
 plugins {
     id("org.gradle.toolchains.foojay-resolver-convention")
