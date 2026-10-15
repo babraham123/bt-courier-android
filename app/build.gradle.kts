@@ -112,7 +112,6 @@ dependencies {
 }
 
 tasks.withType<Test>().configureEach {
-    useJUnitPlatform()
     // Robolectric's SDK 36 sandbox sets file descriptors through this JDK-internal API.
     jvmArgs("--add-opens=java.base/jdk.internal.access=ALL-UNNAMED")
 }

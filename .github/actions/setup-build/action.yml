@@ -1,0 +1,24 @@
+name: Set up build
+description: JDK 21 and Gradle with wrapper validation, shared by every workflow that runs Gradle.
+
+inputs:
+  gradle-cache:
+    description: >-
+      "true" restores and saves the Gradle User Home cache. Release and reproducibility builds pass
+      "false" so their output depends on nothing but the checkout and the downloaded dependencies.
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      with:
+        distribution: temurin
+        java-version: "21"
+    - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      with:
+        # The open-source cache provider; the default one is a commercial service.
+        cache-provider: basic
+        cache-disabled: ${{ inputs.gradle-cache != 'true' }}
+        # Fails the job if gradle-wrapper.jar does not match a published Gradle release.
+        validate-wrappers: true

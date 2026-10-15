@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish, e.g. v0.1.0
+        required: true
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  # apksigner and zipalign come from this SDK build-tools release.
+  BUILD_TOOLS: "36.0.0"
+
+jobs:
+  build:
+    # Gradle runs third-party build code, so this job holds the signing key but no write token.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      # versionName stays a literal in the build file because F-Droid rebuilds from the tag and
+      # reads it from there; the tag must agree with it.
+      - id: version
+        name: Check the tag matches versionName
+        run: |
+          names=$(sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' app/build.gradle.kts)
+          if [ "$(printf '%s\n' "$names" | grep -c .)" -ne 1 ]; then
+            echo "::error::Expected exactly one literal versionName in app/build.gradle.kts, found: ${names:-none}"
+            exit 1
+          fi
+          if [ "$TAG" != "v$names" ]; then
+            echo "::error::Tag $TAG does not match versionName $names (expected v$names)"
+            exit 1
+          fi
+          case "$names" in
+            0.*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - id: assemble
+        uses: ./.github/actions/assemble-release
+
+      - name: Install build-tools
+        run: |
+          bt="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
+          if [ ! -x "$bt/apksigner" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "build-tools;$BUILD_TOOLS"
+          fi
+          echo "$bt" >> "$GITHUB_PATH"
+
+      - name: Sign
+        env:
+          UNSIGNED: ${{ steps.assemble.outputs.apk }}
+          SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KS_PASS: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          for v in SIGNING_KEYSTORE_B64 SIGNING_KEY_ALIAS KS_PASS KEY_PASS; do
+            if [ -z "${!v}" ]; then echo "::error::Signing secret for $v is not set"; exit 1; fi
+          done
+          keystore="$RUNNER_TEMP/release.keystore"
+          printf '%s' "$SIGNING_KEYSTORE_B64" | base64 -d > "$keystore"
+
+          # AGP already aligns the APK, with uncompressed .so files on 16 KiB pages (needed for
+          # 16 KiB-page devices); -P 16 checks and, if ever needed, keeps that page size.
+          aligned="$UNSIGNED"
+          if ! zipalign -c -P 16 4 "$UNSIGNED"; then
+            aligned="$RUNNER_TEMP/aligned.apk"
+            zipalign -f -P 16 4 "$UNSIGNED" "$aligned"
+          fi
+
+          mkdir -p dist
+          apk="dist/bt-courier-$TAG.apk"
+          # Passwords are read from the environment, never from the command line. No v4 (.idsig)
+          # file: it only serves incremental adb installs.
+          apksigner sign \
+            --v4-signing-enabled false \
+            --ks "$keystore" \
+            --ks-key-alias "$SIGNING_KEY_ALIAS" \
+            --ks-pass env:KS_PASS \
+            --key-pass env:KEY_PASS \
+            --out "$apk" \
+            "$aligned"
+          apksigner verify --verbose --print-certs "$apk"
+          (cd dist && sha256sum "$(basename "$apk")" > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Delete keystore
+        if: ${{ always() }}
+        run: rm -f "$RUNNER_TEMP/release.keystore"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: |
+            dist/bt-courier-${{ env.TAG }}.apk
+            dist/SHA256SUMS
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Creates the GitHub release and uploads its assets.
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: dist
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          version="${TAG#v}"
+          # Release notes: this version's "## [x.y.z]" section of CHANGELOG.md, up to the next
+          # "## " heading; the tag name when there is none.
+          if [ -f CHANGELOG.md ]; then
+            awk -v v="$version" '
+              index($0, "## [" v "]") == 1 { on = 1; next }
+              on && /^## / { exit }
+              on { print }
+            ' CHANGELOG.md > notes.md
+          fi
+          if [ ! -s notes.md ] || ! grep -q '[^[:space:]]' notes.md; then
+            printf '%s\n' "$TAG" > notes.md
+          fi
+
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file notes.md \
+            "${flags[@]}" \
+            "dist/bt-courier-$TAG.apk" dist/SHA256SUMS
