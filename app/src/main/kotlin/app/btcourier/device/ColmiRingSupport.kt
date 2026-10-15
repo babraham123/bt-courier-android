@@ -6,6 +6,7 @@ import app.btcourier.core.source.Source
 import app.btcourier.core.source.colmi.ColmiPacketCodec
 import app.btcourier.core.source.colmi.ColmiRingSource
 import app.btcourier.core.source.colmi.colmiRequest
+import app.btcourier.core.source.colmi.writeColmiAutoHeartRate
 import app.btcourier.core.transport.GattLink
 import kotlin.time.Duration.Companion.seconds
 
@@ -16,7 +17,7 @@ import kotlin.time.Duration.Companion.seconds
  * [ColmiRingSource].
  */
 object ColmiRingSupport : DeviceSupport {
-    private val PROBE_TIMEOUT = 5.seconds
+    private val REQUEST_TIMEOUT = 5.seconds
 
     override val profile = ColmiRingGatt.PROFILE
     override val filter = ColmiRingGatt.FILTER
@@ -42,8 +43,22 @@ object ColmiRingSupport : DeviceSupport {
 
     override suspend fun probe(link: GattLink): ProbeResult =
         ProbeResult.Ring(
-            link.colmiRequest(ColmiPacketCodec.batteryRequest(), PROBE_TIMEOUT) {
+            link.colmiRequest(ColmiPacketCodec.batteryRequest(), REQUEST_TIMEOUT) {
                 ColmiPacketCodec.parseBattery(it)
             },
         )
+
+    /**
+     * Turns the ring's own heart-rate logging on or off with a reading every [intervalMinutes]
+     * (in [ColmiPacketCodec.AUTO_HR_INTERVALS]) on the connected [link], and returns once the ring
+     * has answered. A ring with logging off records no heart rate for the sync to pull. Closes
+     * nothing.
+     *
+     * @throws java.io.IOException when the ring does not answer in time or the link drops.
+     */
+    suspend fun setAutoHeartRate(
+        link: GattLink,
+        enabled: Boolean,
+        intervalMinutes: Int,
+    ) = link.writeColmiAutoHeartRate(enabled, intervalMinutes, REQUEST_TIMEOUT)
 }

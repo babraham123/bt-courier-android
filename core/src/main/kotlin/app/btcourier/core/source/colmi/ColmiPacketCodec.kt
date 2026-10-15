@@ -36,6 +36,11 @@ object ColmiPacketCodec {
     const val CMD_HEART_RATE_LOG: Int = 0x15
     const val CMD_STEPS_LOG: Int = 0x43
     const val CMD_HRV_LOG: Int = 0x39
+    const val CMD_AUTO_HEART_RATE: Int = 0x16
+
+    /** Byte 1 of a setting command and its answer: read the setting, or write it. */
+    private const val SETTING_READ = 1
+    private const val SETTING_WRITE = 2
 
     /** Byte 1 of a log answer when the ring has nothing for the requested day. */
     const val NO_DATA: Int = 0xFF
@@ -119,6 +124,47 @@ object ColmiPacketCodec {
 
     private fun u32le(v: Long): ByteArray = ByteArray(4) { (v shr (8 * it)).toByte() }
 
+    /** `16 01`: reads the ring's own heart-rate logging setting (Gadgetbridge, PulseLoopiOS). */
+    fun autoHrRead(): ByteArray = packet(CMD_AUTO_HEART_RATE, byteArrayOf(SETTING_READ.toByte()))
+
+    /**
+     * `16 02 <on> <minutes>`: turns the ring's own heart-rate logging on (`01`) or off (`02`, not
+     * the `00` other settings use) with a reading every [intervalMinutes] (Gadgetbridge
+     * `onSendConfiguration`, PulseLoopiOS `ColmiEncoder.autoHeartRate`; both round the interval to
+     * a multiple of 5). The ring answers `16 02`.
+     */
+    fun autoHrWrite(
+        enabled: Boolean,
+        intervalMinutes: Int,
+    ): ByteArray {
+        require(
+            intervalMinutes in AUTO_HR_INTERVALS,
+        ) { "interval must be in $AUTO_HR_INTERVALS minutes, got $intervalMinutes" }
+        val onOff = if (enabled) 1 else 2
+        return packet(
+            CMD_AUTO_HEART_RATE,
+            byteArrayOf(SETTING_WRITE.toByte(), onOff.toByte(), intervalMinutes.toByte()),
+        )
+    }
+
+    /**
+     * The `16 01` answer to [autoHrRead]: byte 2 == 1 means on, byte 3 the interval in minutes
+     * (Gadgetbridge `hrIntervalSettings`). Null for the `16 02` answer to [autoHrWrite], which
+     * carries no setting.
+     */
+    fun parseAutoHr(packet: ByteArray): AutoHeartRate? {
+        requireAnswer(packet, CMD_AUTO_HEART_RATE)
+        if (u8(packet, 1) != SETTING_READ) return null
+        return AutoHeartRate(enabled = u8(packet, 2) == 1, intervalMinutes = u8(packet, 3))
+    }
+
+    /** Whether [packet] is the ring's `16 02` answer to [autoHrWrite]. */
+    fun isAutoHrWriteAnswer(packet: ByteArray): Boolean =
+        isValid(packet) && u8(packet, 0) == CMD_AUTO_HEART_RATE && u8(packet, 1) == SETTING_WRITE
+
+    /** Intervals [autoHrWrite] accepts, in minutes. */
+    val AUTO_HR_INTERVALS: IntRange = 5..60
+
     /** `0x03` answer: byte 1 the level in percent, byte 2 non-zero while charging. */
     fun parseBattery(packet: ByteArray): Battery {
         requireAnswer(packet, CMD_BATTERY)
@@ -149,6 +195,12 @@ object ColmiPacketCodec {
 data class Battery(
     val level: Int,
     val charging: Boolean,
+)
+
+/** The ring's own heart-rate logging: whether it takes a reading every [intervalMinutes]. */
+data class AutoHeartRate(
+    val enabled: Boolean,
+    val intervalMinutes: Int,
 )
 
 /** Collects the packets of one multi-packet answer; [feed] returns the result once it is whole. */

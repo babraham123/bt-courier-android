@@ -53,8 +53,12 @@ import kotlin.time.Duration.Companion.seconds
  * ring's own stamps, which the normaliser rates `device`. A ring whose clock was lost (flat
  * battery) before this sync logged under a wrong clock that cannot be repaired afterwards.
  *
- * The first page of an instance also carries one `colmi.battery` row (percent, stamped with the
- * phone clock); a sync that is already caught up stores no page and so no battery reading.
+ * The first page of an instance also carries one `colmi.battery` row (percent) and one
+ * `colmi.hr_logging` row (the ring's own heart-rate logging setting, `0x16`, as
+ * `{"enabled":<bool>,"interval_min":<minutes>}`), both stamped with the phone clock; a sync that
+ * is already caught up stores no page and so neither reading. The setting is reported rather than
+ * used: each heart-rate log's header carries the interval it was recorded at, which places its
+ * readings even when the setting changed since (there is no logger in core to flag a mismatch).
  *
  * Unverified on hardware (all from the public reverse engineering; to be checked against a ring):
  * - Ring timestamps are its wall clock counted as if UTC. `colmi_r02_client` sets the ring to UTC
@@ -65,6 +69,8 @@ import kotlin.time.Duration.Companion.seconds
  *   today right after set-time; each steps row is placed by the date the ring stamps on it.
  * - The HRV request addresses days the same way and its answer ends at sub-index 4 (see
  *   [HrvLogAssembler]); HRV rows are placed from the requested day's start.
+ * - The `0x16` read answer says on with byte 2 = 1 (Gadgetbridge); what an off ring sends there
+ *   is unknown, so anything else reads as off.
  * - Writes go with response when RX declares it, else without, as PulseLoopiOS picks
  *   (`colmi_r02_client` always writes without).
  * - Answers are not acknowledged, and the ring may send packets of other commands at any time;
@@ -118,6 +124,7 @@ class ColmiRingSource(
                             ColmiPacketCodec.parseBattery(it)
                         }
                     add(Row(phoneClock(), PARAM_BATTERY, battery.level).json())
+                    add(hrLoggingRow().json())
                     batteryReported = true
                 }
             }
@@ -125,6 +132,12 @@ class ColmiRingSource(
     }
 
     override suspend fun clockJournal(): List<ClockEvent> = emptyList()
+
+    private suspend fun hrLoggingRow(): Row {
+        val setting = link.readColmiAutoHeartRate(responseTimeout)
+        val value = """{"enabled":${setting.enabled},"interval_min":${setting.intervalMinutes}}"""
+        return Row(phoneClock(), PARAM_HR_LOGGING, value)
+    }
 
     private suspend fun setClockOnce() {
         if (clockSet) return
@@ -201,12 +214,15 @@ class ColmiRingSource(
             throw IllegalArgumentException("not a Colmi cursor (YYYY-MM-DD): $cursor", e)
         }
 
+    /** @property valueJson the `value` as JSON text. */
     private class Row(
         val ts: Long,
         val param: String,
-        val value: Int,
+        val valueJson: String,
     ) {
-        fun json() = """{"ts":$ts,"param":"$param","value":$value}"""
+        constructor(ts: Long, param: String, value: Int) : this(ts, param, value.toString())
+
+        fun json() = """{"ts":$ts,"param":"$param","value":$valueJson}"""
     }
 
     companion object {
@@ -216,6 +232,7 @@ class ColmiRingSource(
         const val PARAM_STEPS: String = "colmi.steps"
         const val PARAM_HRV: String = "colmi.hrv"
         const val PARAM_BATTERY: String = "colmi.battery"
+        const val PARAM_HR_LOGGING: String = "colmi.hr_logging"
 
         /** Gadgetbridge's wait after connecting, "to give the ring time to settle". */
         val DEFAULT_SETTLE_DELAY: Duration = 2.seconds

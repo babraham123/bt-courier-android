@@ -70,6 +70,42 @@ class ColmiPacketCodecTest {
     }
 
     @Test
+    fun `auto heart-rate setting reads with 16 01 and writes 16 02, 01 on or 02 off, then 5 to 60 minutes`() {
+        assertArrayEquals(hex("16 01 00 00 00 00 00 00 00 00 00 00 00 00 00 17"), ColmiPacketCodec.autoHrRead())
+        assertArrayEquals(
+            hex("16 02 01 05 00 00 00 00 00 00 00 00 00 00 00 1E"),
+            ColmiPacketCodec.autoHrWrite(enabled = true, intervalMinutes = 5),
+        )
+        // Off is 02, not 00; 60 = 0x3C.
+        assertArrayEquals(
+            hex("16 02 02 3C 00 00 00 00 00 00 00 00 00 00 00 56"),
+            ColmiPacketCodec.autoHrWrite(enabled = false, intervalMinutes = 60),
+        )
+        assertThrows<IllegalArgumentException> { ColmiPacketCodec.autoHrWrite(true, 4) }
+        assertThrows<IllegalArgumentException> { ColmiPacketCodec.autoHrWrite(true, 61) }
+    }
+
+    @Test
+    fun `auto heart-rate read answer is on when byte 2 is 1, with byte 3 the minutes, and the write answer carries none`() {
+        assertEquals(
+            AutoHeartRate(enabled = true, intervalMinutes = 10),
+            ColmiPacketCodec.parseAutoHr(answer(0x16, 1, 1, 10)),
+        )
+        assertEquals(
+            AutoHeartRate(enabled = false, intervalMinutes = 5),
+            ColmiPacketCodec.parseAutoHr(answer(0x16, 1, 2, 5)),
+        )
+        assertEquals(
+            AutoHeartRate(enabled = false, intervalMinutes = 30),
+            ColmiPacketCodec.parseAutoHr(answer(0x16, 1, 0, 30)),
+        )
+        assertNull(ColmiPacketCodec.parseAutoHr(answer(0x16, 2)))
+        assertTrue(ColmiPacketCodec.isAutoHrWriteAnswer(answer(0x16, 2)))
+        assertFalse(ColmiPacketCodec.isAutoHrWriteAnswer(answer(0x16, 1, 1, 10)))
+        assertFalse(ColmiPacketCodec.isAutoHrWriteAnswer(answer(0x15, 2)))
+    }
+
+    @Test
     fun `HRV log takes 12 readings from byte 3 of sub-index 1 and 13 from byte 2 of 2 to 4, 48 half hours`() {
         val a = HrvLogAssembler()
         assertFalse(a.started)

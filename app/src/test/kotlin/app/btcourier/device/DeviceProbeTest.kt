@@ -14,7 +14,10 @@ import org.junit.jupiter.api.assertThrows
 import java.io.IOException
 import java.time.LocalDate
 
-/** Each kind's "test connection" probe over the scripted `ble_http` peripheral and the fake ring. */
+/**
+ * Each kind's "test connection" probe over the scripted `ble_http` peripheral and the fake ring,
+ * and the ring's heart-rate logging setting the pair wizard writes.
+ */
 class DeviceProbeTest {
     // Shape from dev_status_manager HTTP_API.md `GET /api/status`, padded past one notify frame.
     private val status =
@@ -48,6 +51,41 @@ class DeviceProbeTest {
     fun `a silent ring fails the probe`() =
         runTest {
             assertThrows<IOException> { DeviceKind.COLMI_RING.support.probe(FakeGattLink(mtu = 23)) }
+        }
+
+    @Test
+    fun `setting the ring's heart-rate logging writes 16 02, on 01 or off 02, the minutes, and waits for its answer`() =
+        runTest {
+            val ring = FakeColmiRing(today = LocalDate.of(2026, 10, 15), autoHeartRateEnabled = true)
+
+            ColmiRingSupport.setAutoHeartRate(ring.link, enabled = false, intervalMinutes = 30)
+            assertEquals(
+                listOf(0x16, 0x02, 0x02, 0x1E),
+                ring.commands
+                    .single()
+                    .take(4)
+                    .map { it.toInt() and 0xFF },
+            )
+            assertEquals(false to 30, ring.autoHeartRateEnabled to ring.autoHeartRateIntervalMinutes)
+
+            ColmiRingSupport.setAutoHeartRate(ring.link, enabled = true, intervalMinutes = 10)
+            assertEquals(
+                listOf(0x16, 0x02, 0x01, 0x0A),
+                ring.commands
+                    .last()
+                    .take(4)
+                    .map { it.toInt() and 0xFF },
+            )
+            assertEquals(true to 10, ring.autoHeartRateEnabled to ring.autoHeartRateIntervalMinutes)
+
+            ring.silentCommands += FakeColmiRing.CMD_AUTO_HEART_RATE
+            assertThrows<IOException> {
+                ColmiRingSupport.setAutoHeartRate(
+                    ring.link,
+                    enabled = true,
+                    intervalMinutes = 5,
+                )
+            }
         }
 
     @Test

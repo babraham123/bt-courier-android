@@ -20,6 +20,9 @@ import java.time.ZoneOffset
  * @param steps per day, steps by quarter hour (0..95).
  * @param hrv per day, HRV in ms every 30 minutes from midnight (index = slot 0..47, 0 = none).
  *   Put `0x39` in [silentCommands] for older firmware, which never answers it.
+ * @param autoHeartRateEnabled initial heart-rate logging setting (`0x16`); writes change it.
+ * @param autoHeartRateIntervalMinutes initial logging interval. The heart-rate log answers keep
+ *   their own 5-minute header whatever this says.
  */
 class FakeColmiRing(
     private var today: LocalDate,
@@ -28,8 +31,18 @@ class FakeColmiRing(
     private val hrv: Map<LocalDate, IntArray> = emptyMap(),
     private val batteryLevel: Int = 80,
     private val charging: Boolean = false,
+    autoHeartRateEnabled: Boolean = true,
+    autoHeartRateIntervalMinutes: Int = 5,
 ) {
     val link: FakeGattLink = FakeGattLink(mtu = 23) { bytes, _ -> receive(bytes) }
+
+    /** The heart-rate logging setting, as last written with `16 02`. */
+    var autoHeartRateEnabled: Boolean = autoHeartRateEnabled
+        private set
+
+    /** The logging interval in minutes, as last written with `16 02`. */
+    var autoHeartRateIntervalMinutes: Int = autoHeartRateIntervalMinutes
+        private set
 
     private val _clockSets = mutableListOf<LocalDateTime>()
     private val _commands = mutableListOf<ByteArray>()
@@ -83,6 +96,24 @@ class FakeColmiRing(
             CMD_HEART_RATE_LOG -> heartRateLog(bytes)
             CMD_STEPS_LOG -> stepsLog(bytes)
             CMD_HRV_LOG -> hrvLog(bytes)
+            CMD_AUTO_HEART_RATE -> autoHeartRate(bytes)
+        }
+    }
+
+    // Gadgetbridge / PulseLoopiOS: `16 01` reads, `16 02 <01 on, 02 off> <minutes>` writes and is
+    // answered with a bare `16 02`.
+    private fun autoHeartRate(p: ByteArray) {
+        when (p[1].toInt()) {
+            1 -> {
+                // The read answer is assumed to mirror the write's 01/02.
+                send(CMD_AUTO_HEART_RATE, 1, if (autoHeartRateEnabled) 1 else 2, autoHeartRateIntervalMinutes)
+            }
+
+            2 -> {
+                autoHeartRateEnabled = p[2].toInt() == 1
+                autoHeartRateIntervalMinutes = p[3].toInt() and 0xFF
+                send(CMD_AUTO_HEART_RATE, 2)
+            }
         }
     }
 
@@ -198,5 +229,6 @@ class FakeColmiRing(
         const val CMD_HEART_RATE_LOG: Int = 0x15
         const val CMD_STEPS_LOG: Int = 0x43
         const val CMD_HRV_LOG: Int = 0x39
+        const val CMD_AUTO_HEART_RATE: Int = 0x16
     }
 }
