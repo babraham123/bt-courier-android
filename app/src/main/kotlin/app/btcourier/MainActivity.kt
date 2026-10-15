@@ -118,9 +118,8 @@ class MainActivity : ComponentActivity() {
         SinkEditorViewModel(
             sinkId = sinkId,
             settings = AppGraph.settings,
-            secrets = AppGraph.secrets,
+            credentials = AppGraph.sinkCredentials,
             work = SchedulerWorkControl(applicationContext),
-            sshKeys = AppGraph.sshKeys,
             http = AppGraph.httpClient,
             appScope = AppGraph.scope,
         )

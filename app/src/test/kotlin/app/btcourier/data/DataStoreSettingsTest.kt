@@ -32,7 +32,7 @@ class DataStoreSettingsTest {
     /** A store over [file]; each needs its own scope, cancelled before another opens the file. */
     private fun open(migrate: Boolean): DataStore<Preferences> {
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob()).also { scopes += it }
-        val migrations = if (migrate) listOf(LegacySinkMigration(secrets)) else emptyList()
+        val migrations = if (migrate) listOf(LegacySinkMigration(testCredentials(secrets))) else emptyList()
         return PreferenceDataStoreFactory.create(migrations = migrations, scope = scope) { file }
     }
 
@@ -73,7 +73,7 @@ class DataStoreSettingsTest {
             it[SettingsKeys.LEGACY_COMPRESS] = false
             it[SettingsKeys.CELLULAR] = true
         }
-        secrets.put(LegacySinkMigration.LEGACY_UPLOAD_SECRET, "s3cret")
+        secrets.put(StoredNames.LEGACY_SECRET, "s3cret")
         val store = open(migrate = true)
 
         val settings = DataStoreSettings(store).current()
@@ -92,8 +92,8 @@ class DataStoreSettingsTest {
             settings.sinks,
         )
         assertEquals(true, settings.uploadOverCellular, "unrelated settings are kept")
-        assertEquals("s3cret", secrets.get("sink_http_secret"))
-        assertNull(secrets.get(LegacySinkMigration.LEGACY_UPLOAD_SECRET))
+        assertEquals("s3cret", secrets.get(StoredNames.secret("http")))
+        assertNull(secrets.get(StoredNames.LEGACY_SECRET))
         val prefs = store.data.first()
         assertFalse(SettingsKeys.LEGACY.any { it in prefs }, "legacy keys are gone")
         assertEquals(setOf("http"), configuredSinkIds(settings))
@@ -121,7 +121,7 @@ class DataStoreSettingsTest {
             it[SettingsKeys.LEGACY_URL] = " "
             it[SettingsKeys.LEGACY_AUTH] = "BEARER"
         }
-        secrets.put(LegacySinkMigration.LEGACY_UPLOAD_SECRET, "stale")
+        secrets.put(StoredNames.LEGACY_SECRET, "stale")
 
         val store = open(migrate = true)
 
@@ -136,12 +136,12 @@ class DataStoreSettingsTest {
             it[SettingsKeys.LEGACY_URL] = "https://sink.invalid/"
             it[SettingsKeys.LEGACY_AUTH] = "BEARER"
         }
-        secrets.put("sink_http_secret", "moved")
-        secrets.put(LegacySinkMigration.LEGACY_UPLOAD_SECRET, "moved")
+        secrets.put(StoredNames.secret("http"), "moved")
+        secrets.put(StoredNames.LEGACY_SECRET, "moved")
 
         DataStoreSettings(open(migrate = true)).current()
 
-        assertEquals(mapOf("sink_http_secret" to "moved"), secrets.names.associateWith { runBlocking { secrets.get(it) } })
+        assertEquals(mapOf(StoredNames.secret("http") to "moved"), secrets.names.associateWith { runBlocking { secrets.get(it) } })
     }
 
     @Test

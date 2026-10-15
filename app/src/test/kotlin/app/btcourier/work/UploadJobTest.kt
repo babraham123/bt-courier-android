@@ -14,8 +14,8 @@ import app.btcourier.data.AuthConfig
 import app.btcourier.data.InMemorySyncStatus
 import app.btcourier.data.SinkConfig
 import app.btcourier.data.SinkEnvironment
-import app.btcourier.data.SinkSecrets
 import app.btcourier.data.SinkUpload
+import app.btcourier.data.StoredNames
 import app.btcourier.data.TransportConfig
 import app.btcourier.data.UploadResultKind
 import app.btcourier.data.buildSinks
@@ -173,7 +173,7 @@ class UploadJobTest {
         val store = storeWithTwoBatches(setOf("put"))
         repeat(2) { server.enqueue(MockResponse.Builder().code(201).build()) }
         val sink = SinkConfig("put", "Put", transport = TransportConfig.HttpPut(server.url("/ingest/").toString()), auth = AuthConfig.Basic("courier"))
-        val secrets = MapSecretStore(SinkSecrets.secret("put") to "s3cret")
+        val secrets = MapSecretStore(StoredNames.secret("put") to "s3cret")
 
         val outcome = UploadJob(store, { buildSinks(AppSettings(sinks = listOf(sink)), secrets, env()) }, status, clock = { NOW }).run(0, sealEverything)
 

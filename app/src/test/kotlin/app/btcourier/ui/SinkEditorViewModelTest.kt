@@ -7,15 +7,17 @@ import app.btcourier.data.AuthKind
 import app.btcourier.data.FormatKind
 import app.btcourier.data.OidcClientAuth
 import app.btcourier.data.PostEncoding
+import app.btcourier.data.RecordingFolderGrants
 import app.btcourier.data.SinkConfig
-import app.btcourier.data.SinkSecrets
+import app.btcourier.data.StoredNames
 import app.btcourier.data.TransportConfig
 import app.btcourier.data.TransportKind
-import app.btcourier.data.sftpKeyAlias
+import app.btcourier.data.testCredentials
 import app.btcourier.ui.settings.HostKeyFetcher
 import app.btcourier.ui.settings.HostKeyState
 import app.btcourier.ui.settings.SinkEditorViewModel
 import app.btcourier.ui.settings.SinkField
+import app.btcourier.ui.settings.SignInState
 import app.btcourier.ui.settings.SinkUrlProblem
 import app.btcourier.work.InMemorySshKeys
 import app.btcourier.work.MapSecretStore
@@ -36,18 +38,18 @@ import java.io.IOException
 class SinkEditorViewModelTest {
     private val other = SinkConfig("other", "Other", transport = TransportConfig.HttpPut("https://other.invalid/"), auth = AuthConfig.Bearer)
     private val settings = FakeSettings(AppSettings(sinks = listOf(other)))
-    private val secrets = MapSecretStore(SinkSecrets.secret("other") to "other-token")
+    private val secrets = MapSecretStore(StoredNames.secret("other") to "other-token")
     private val work = RecordingWorkControl()
-    private val sshKeys = InMemorySshKeys()
+    private val folders = RecordingFolderGrants()
+    private val credentials = testCredentials(secrets, InMemorySshKeys(), folders)
     private val fetched = mutableListOf<Pair<String, Int>>()
     private var hostKeyResult: () -> String = { "SHA256:presented" }
 
     private fun vm(id: String? = null) = SinkEditorViewModel(
         sinkId = id,
         settings = settings,
-        secrets = secrets,
+        credentials = credentials,
         work = work,
-        sshKeys = sshKeys,
         http = OkHttpClient(),
         appScope = CoroutineScope(Dispatchers.Unconfined),
         hostKeys = HostKeyFetcher { host, port -> fetched += host to port; hostKeyResult() },
@@ -72,8 +74,7 @@ class SinkEditorViewModelTest {
             listOf(other, SinkConfig(id, "Archive", true, TransportConfig.HttpPut("https://sink.invalid/up/"), FormatKind.CSV, AuthConfig.Basic("courier"))),
             settings.current().sinks,
         )
-        assertEquals("s3cret", secrets.get("sink_${id}_secret"))
-        assertEquals("other-token", secrets.get(SinkSecrets.secret("other")), "other sinks' secrets are untouched")
+        assertEquals("s3cret", secrets.get(StoredNames.secret(id)))
         assertEquals(listOf(false to true), work.uploads)
         val state = vm.state.value
         assertTrue(state.saved)
@@ -86,7 +87,7 @@ class SinkEditorViewModelTest {
     fun `editing keeps the id and position, and the stored secret is never read back`() = runTest {
         val first = SinkConfig("s1", "One", transport = TransportConfig.HttpPost("https://a.invalid/", PostEncoding.IDENTITY), auth = AuthConfig.Basic("u"))
         settings.update { it.copy(sinks = listOf(first, other)) }
-        secrets.put(SinkSecrets.secret("s1"), "hunter22")
+        secrets.put(StoredNames.secret("s1"), "hunter22")
         val vm = vm("s1")
 
         val loaded = vm.state.value
@@ -102,7 +103,7 @@ class SinkEditorViewModelTest {
 
         assertEquals(listOf("s1", "other"), settings.current().sinks.map { it.id })
         assertEquals(first.copy(name = "Renamed", transport = TransportConfig.HttpPost("https://b.invalid/import?extra_label=car", PostEncoding.IDENTITY)), stored("s1"))
-        assertEquals("hunter22", secrets.get(SinkSecrets.secret("s1")), "empty input keeps the stored secret")
+        assertEquals("hunter22", secrets.get(StoredNames.secret("s1")), "empty input keeps the stored secret")
     }
 
     @Test
@@ -172,7 +173,7 @@ class SinkEditorViewModelTest {
             SinkConfig(id, "Broker", transport = TransportConfig.Mqtt("mqtt.invalid", 11883, true, "btcourier-1", "car/obd"), auth = AuthConfig.Basic("broker")),
             stored(id),
         )
-        assertEquals("pw", secrets.get(SinkSecrets.secret(id)))
+        assertTrue(credentials.stored(id).secret)
     }
 
     @Test
@@ -201,8 +202,7 @@ class SinkEditorViewModelTest {
         val id = vm.state.value.id
         vm.setTransport(TransportKind.SFTP)
 
-        assertTrue(vm.state.value.publicKey!!.startsWith("ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY"))
-        assertNotNull(sshKeys.load(sftpKeyAlias(id)), "the key lives under the sink's alias")
+        assertEquals(credentials.sftpPublicKey(id), vm.state.value.publicKey)
 
         vm.edit { it.copy(name = "Box", host = " sftp.invalid ", sftpPort = "2222", sftpUser = "courier", remoteDir = "uploads") }
         vm.fetchHostKey()
@@ -213,7 +213,7 @@ class SinkEditorViewModelTest {
         vm.trustHostKey()
         vm.save()
         assertEquals(
-            TransportConfig.Sftp("sftp.invalid", 2222, "courier", "uploads", "SHA256:presented", sftpKeyAlias(id)),
+            TransportConfig.Sftp("sftp.invalid", 2222, "courier", "uploads", "SHA256:presented"),
             stored(id).transport,
         )
 
@@ -226,21 +226,7 @@ class SinkEditorViewModelTest {
     }
 
     @Test
-    fun `leaving SFTP deletes the sink's key`() = runTest {
-        val sftp = SinkConfig("s", "S", transport = TransportConfig.Sftp("h.invalid", 22, "u", "", "SHA256:x", sftpKeyAlias("s")))
-        settings.update { it.copy(sinks = listOf(sftp)) }
-        val vm = vm("s")
-        assertNotNull(sshKeys.load(sftpKeyAlias("s")))
-
-        vm.setTransport(TransportKind.HTTP_PUT)
-        vm.edit { it.copy(url = "https://sink.invalid/") }
-        vm.save()
-
-        assertNull(sshKeys.load(sftpKeyAlias("s")))
-    }
-
-    @Test
-    fun `secrets the new auth does not use are deleted on save`() = runTest {
+    fun `after saving, the editor shows which secrets the saved auth keeps`() = runTest {
         val oidc = SinkConfig(
             "o",
             "O",
@@ -248,18 +234,19 @@ class SinkEditorViewModelTest {
             auth = AuthConfig.Oidc("https://auth.invalid", "c", OidcClientAuth.SECRET_BASIC, "https://auth.invalid/t", "https://auth.invalid/d"),
         )
         settings.update { it.copy(sinks = listOf(oidc, other)) }
-        secrets.put(SinkSecrets.oidcClientSecret("o"), "client-secret")
-        secrets.put(SinkSecrets.oidcTokens("o"), TokenSet("a", "r", 0).encode())
+        secrets.put(StoredNames.clientSecret("o"), "client-secret")
         val vm = vm("o")
+        assertTrue(vm.state.value.hasStoredClientSecret)
 
         vm.setAuth(AuthKind.BEARER)
         vm.edit { it.copy(secretInput = "tok") }
         vm.save()
-        assertEquals(setOf(SinkSecrets.secret("o"), SinkSecrets.secret("other")), secrets.names)
+        assertTrue(vm.state.value.hasStoredSecret)
+        assertFalse(vm.state.value.hasStoredClientSecret)
 
         vm.setAuth(AuthKind.NONE)
         vm.save()
-        assertEquals(setOf(SinkSecrets.secret("other")), secrets.names)
+        assertFalse(vm.state.value.hasStoredSecret)
         assertEquals(AuthConfig.None, stored("o").auth)
     }
 
@@ -272,47 +259,49 @@ class SinkEditorViewModelTest {
             auth = AuthConfig.Oidc("https://auth.invalid", "c", OidcClientAuth.NONE, "https://auth.invalid/t", "https://auth.invalid/d"),
         )
         settings.update { it.copy(sinks = listOf(oidc)) }
-        secrets.put(SinkSecrets.oidcTokens("o"), TokenSet("a", "r", 0).encode())
+        secrets.put(StoredNames.tokens("o"), TokenSet("a", "r", 0).encode())
         val vm = vm("o")
+        assertEquals(SignInState.SignedIn, vm.state.value.signIn)
 
         vm.edit { it.copy(oidcIssuer = "https://other-auth.invalid") }
         vm.save()
 
         assertEquals(AuthConfig.Oidc("https://other-auth.invalid", "c"), stored("o").auth)
-        assertNull(secrets.get(SinkSecrets.oidcTokens("o")))
+        assertFalse(credentials.stored("o").tokens)
+        assertEquals(SignInState.SignedOut, vm.state.value.signIn)
     }
 
     @Test
-    fun `deleting removes the sink, every secret and the key of that id, nothing else`() = runTest {
+    fun `deleting removes the sink and its credentials, then replaces the upload`() = runTest {
         val target = SinkConfig("t", "T", transport = TransportConfig.HttpPut("https://sink.invalid/"), auth = AuthConfig.Basic("u"))
         settings.update { it.copy(sinks = listOf(target, other)) }
-        SinkSecrets.all("t").forEach { secrets.put(it, "x") }
-        sshKeys.loadOrCreate(sftpKeyAlias("t"))
+        secrets.put(StoredNames.secret("t"), "x")
         val vm = vm("t")
 
         vm.delete()
 
         assertEquals(listOf(other), settings.current().sinks)
-        assertEquals(setOf(SinkSecrets.secret("other")), secrets.names)
-        assertNull(sshKeys.load(sftpKeyAlias("t")))
+        assertFalse(credentials.stored("t").secret)
         assertTrue(vm.state.value.deleted)
         assertEquals(listOf(false to true), work.uploads)
     }
 
     @Test
-    fun `discarding a never-saved sink drops what was stored for it, a saved one keeps everything`() = runTest {
+    fun `discarding a never-saved sink drops its key and picked folder, a saved one keeps everything`() = runTest {
         val fresh = vm()
         val id = fresh.state.value.id
         fresh.setTransport(TransportKind.SFTP)
-        secrets.put(SinkSecrets.oidcTokens(id), "{}")
+        assertNotNull(credentials.sftpKey(id))
+        fresh.setTransport(TransportKind.LOCAL_FOLDER)
+        fresh.edit { it.copy(treeUri = "content://tree/picked") }
 
         fresh.discard()
 
-        assertNull(sshKeys.load(sftpKeyAlias(id)))
-        assertEquals(setOf(SinkSecrets.secret("other")), secrets.names)
+        assertNull(credentials.sftpKey(id))
+        assertEquals(listOf("content://tree/picked"), folders.released)
 
         vm("other").discard()
-        assertEquals("other-token", secrets.get(SinkSecrets.secret("other")))
+        assertTrue(credentials.stored("other").secret)
         assertEquals(listOf(other), settings.current().sinks)
     }
 
@@ -329,7 +318,7 @@ class SinkEditorViewModelTest {
 
         assertEquals("", vm.state.value.form.secretInput)
         assertEquals("", vm.state.value.form.oidcClientSecretInput)
-        assertNull(sshKeys.load(sftpKeyAlias(id)))
+        assertNull(credentials.sftpKey(id))
         assertEquals(listOf(other), settings.current().sinks)
     }
 
@@ -340,7 +329,7 @@ class SinkEditorViewModelTest {
         vm.signOut()
 
         assertEquals(emptyList<String>(), work.calls)
-        assertEquals(setOf(SinkSecrets.secret("other")), secrets.names)
+        assertTrue(credentials.stored("other").secret)
     }
 
     @Test
@@ -350,7 +339,7 @@ class SinkEditorViewModelTest {
 
         vm.clearSecret()
 
-        assertNull(secrets.get(SinkSecrets.secret("other")))
+        assertFalse(credentials.stored("other").secret)
         assertFalse(vm.state.value.hasStoredSecret)
         assertEquals(listOf(false to true), work.uploads)
     }

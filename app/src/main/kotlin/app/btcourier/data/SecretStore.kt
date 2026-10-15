@@ -17,7 +17,7 @@ import javax.crypto.spec.GCMParameterSpec
 
 /**
  * Small secrets (sink passwords, tokens, OIDC token sets) kept apart from plain settings. Names
- * are `[A-Za-z0-9_-]+`; sinks use [SinkSecrets].
+ * are `[A-Za-z0-9_-]+`; [SinkCredentials] owns the names sinks use.
  */
 interface SecretStore {
     /** The secret under [name], or null if none is stored or it can no longer be decrypted. */

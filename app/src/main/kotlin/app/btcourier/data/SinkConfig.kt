@@ -14,7 +14,7 @@ import java.security.SecureRandom
 
 /**
  * One upload target: a transport, the format batches are encoded in, and how the transport
- * authenticates. Secrets are not here: they live in [SecretStore] under [SinkSecrets] names.
+ * authenticates. Credentials are not here: [SinkCredentials] keeps them under the sink's [id].
  *
  * @property id the store's ack key for this sink, generated once by [newSinkId]. Renaming or
  *   re-pointing the sink keeps it, so batches the old target did not take go to the new one.
@@ -54,8 +54,8 @@ sealed interface TransportConfig {
     }
 
     /**
-     * Authenticates with the AndroidKeyStore key under [keyAlias] ([SshKeys]). Uploads fail until
-     * the user has confirmed a [hostKeyFingerprint] (trust on first use).
+     * Authenticates with the sink's Keystore key ([SinkCredentials.sftpKey]). Uploads fail until the
+     * user has confirmed a [hostKeyFingerprint] (trust on first use).
      */
     @Serializable
     @SerialName("sftp")
@@ -65,7 +65,6 @@ sealed interface TransportConfig {
         val username: String,
         val remoteDir: String,
         val hostKeyFingerprint: String? = null,
-        val keyAlias: String,
     ) : TransportConfig {
         override val kind get() = TransportKind.SFTP
     }
@@ -139,14 +138,14 @@ sealed interface AuthConfig {
         override val kind get() = AuthKind.NONE
     }
 
-    /** [user] plus the [SinkSecrets.secret] password; for MQTT these are the broker credentials. */
+    /** [user] plus the sink's secret as password; for MQTT these are the broker credentials. */
     @Serializable
     @SerialName("basic")
     data class Basic(val user: String) : AuthConfig {
         override val kind get() = AuthKind.BASIC
     }
 
-    /** The [SinkSecrets.secret] token. */
+    /** The sink's secret as token. */
     @Serializable
     @SerialName("bearer")
     data object Bearer : AuthConfig {
@@ -154,9 +153,9 @@ sealed interface AuthConfig {
     }
 
     /**
-     * A bearer token from the OIDC device flow, refreshed with the tokens in
-     * [SinkSecrets.oidcTokens]. The endpoints are discovered at sign-in and kept here so building
-     * the sink later needs no network; they are null until the first sign-in.
+     * A bearer token from the OIDC device flow, refreshed with the sink's stored token set. The
+     * endpoints are discovered at sign-in and kept here so building the sink later needs no
+     * network; they are null until the first sign-in.
      */
     @Serializable
     @SerialName("oidc")
@@ -181,22 +180,6 @@ enum class OidcClientAuth(val core: ClientAuthMethod) {
     SECRET_BASIC(ClientAuthMethod.ClientSecretBasic),
     SECRET_POST(ClientAuthMethod.ClientSecretPost),
 }
-
-/** [SecretStore] names of a sink's secrets; all match the store's `[A-Za-z0-9_-]+` rule. */
-object SinkSecrets {
-    /** Basic password, bearer token, or MQTT password. */
-    fun secret(sinkId: String) = "sink_${sinkId}_secret"
-
-    fun oidcClientSecret(sinkId: String) = "sink_${sinkId}_oidc_client_secret"
-
-    /** [app.btcourier.core.auth.TokenSet] JSON. */
-    fun oidcTokens(sinkId: String) = "sink_${sinkId}_oidc_tokens"
-
-    fun all(sinkId: String) = listOf(secret(sinkId), oidcClientSecret(sinkId), oidcTokens(sinkId))
-}
-
-/** AndroidKeyStore alias of an SFTP sink's client key. */
-fun sftpKeyAlias(sinkId: String) = "btcourier.sftp.$sinkId"
 
 private val idRandom = SecureRandom()
 private const val ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"

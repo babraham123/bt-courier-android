@@ -28,8 +28,8 @@ class SinkConfigTest {
             ),
         ),
         SinkConfig("oidc2", "Oidc unsigned", transport = TransportConfig.HttpPut("https://sink.invalid/"), auth = AuthConfig.Oidc("https://auth.invalid", "c")),
-        SinkConfig("sftp1", "Sftp", transport = TransportConfig.Sftp("sftp.invalid", 2222, "courier", "uploads", "SHA256:abc", sftpKeyAlias("sftp1"))),
-        SinkConfig("sftp2", "Sftp unpinned", transport = TransportConfig.Sftp("sftp.invalid", username = "u", remoteDir = "", keyAlias = sftpKeyAlias("sftp2"))),
+        SinkConfig("sftp1", "Sftp", transport = TransportConfig.Sftp("sftp.invalid", 2222, "courier", "uploads", "SHA256:abc")),
+        SinkConfig("sftp2", "Sftp unpinned", transport = TransportConfig.Sftp("sftp.invalid", username = "u", remoteDir = "")),
         SinkConfig("mqtt1", "Mqtt", transport = TransportConfig.Mqtt("mqtt.invalid", 1883, tls = false, clientId = "btcourier-x", baseTopic = "car/obd"), auth = AuthConfig.Basic("broker")),
         SinkConfig("dir1", "Folder", transport = TransportConfig.LocalFolder("content://com.android.externalstorage.documents/tree/primary%3ABT")),
     )
@@ -84,8 +84,6 @@ class SinkConfigTest {
 
         assertEquals(1000, ids.toSet().size)
         assertTrue(ids.all { it.length == 10 })
-        assertTrue(ids.flatMap(SinkSecrets::all).all { it.matches(Regex("[A-Za-z0-9_-]+")) })
-        assertEquals(listOf("sink_ab_secret", "sink_ab_oidc_client_secret", "sink_ab_oidc_tokens"), SinkSecrets.all("ab"))
-        assertEquals("btcourier.sftp.ab", sftpKeyAlias("ab"))
+        assertTrue(ids.flatMap(StoredNames::all).all { it.matches(Regex("[A-Za-z0-9_-]+")) })
     }
 }
