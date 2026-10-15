@@ -31,17 +31,34 @@ import kotlin.coroutines.resumeWithException
 
 /** Builds the system's companion-device scan filter from the testable [DeviceFilterSpec]. */
 fun DeviceFilterSpec.toAssociationRequest(): AssociationRequest {
-    // One filter carrying both conditions: the service UUID sits in the advertising PDU and the
-    // name in the scan response (legacy advertising), which the system's active scan merges.
-    val filter =
-        BluetoothLeDeviceFilter
-            .Builder()
-            .setNamePattern(Pattern.compile(namePattern.pattern))
-            .setScanFilter(ScanFilter.Builder().setServiceUuid(ParcelUuid(serviceUuid)).build())
-            .build()
+    val name = Pattern.compile(namePattern.pattern)
+    val service = ScanFilter.Builder().setServiceUuid(ParcelUuid(serviceUuid)).build()
+    // The chooser offers a device that matches any one filter, so AND is one filter carrying both
+    // conditions and OR one filter per condition. For AND the service UUID sits in the advertising
+    // PDU and the name in the scan response (legacy advertising), which the system's active scan
+    // merges.
+    val filters =
+        when (match) {
+            DeviceFilterSpec.Match.NAME_AND_SERVICE -> {
+                listOf(
+                    BluetoothLeDeviceFilter
+                        .Builder()
+                        .setNamePattern(name)
+                        .setScanFilter(service)
+                        .build(),
+                )
+            }
+
+            DeviceFilterSpec.Match.NAME_OR_SERVICE -> {
+                listOf(
+                    BluetoothLeDeviceFilter.Builder().setNamePattern(name).build(),
+                    BluetoothLeDeviceFilter.Builder().setScanFilter(service).build(),
+                )
+            }
+        }
     return AssociationRequest
         .Builder()
-        .addDeviceFilter(filter)
+        .apply { filters.forEach { addDeviceFilter(it) } }
         // A list rather than a single-device prompt: a household may have more than one device.
         .setSingleDevice(false)
         .build()

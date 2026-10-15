@@ -65,6 +65,7 @@ class WicanGattTest {
     fun `companion filter needs both the FFF0 service and the name`() {
         val spec = WicanGatt.FILTER
         assertEquals(WicanGatt.SERVICE, spec.serviceUuid)
+        assertEquals(DeviceFilterSpec.Match.NAME_AND_SERVICE, spec.match)
         assertTrue(spec.matches("WiC_0123456789ab", listOf(WicanGatt.SERVICE)))
         // FFF0 is common on generic BLE UART modules; the name keeps them out of the chooser.
         assertFalse(spec.matches("HM-10", listOf(WicanGatt.SERVICE)))

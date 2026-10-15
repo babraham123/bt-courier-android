@@ -37,5 +37,5 @@ object WicanGatt {
      */
     val PROFILE = GattProfile(SERVICE, notify = HTTP_OUT, write = HTTP_IN, mtu = PREFERRED_MTU, wantsBond = true)
 
-    val FILTER = DeviceFilterSpec(SERVICE, NAME_PATTERN)
+    val FILTER = DeviceFilterSpec(SERVICE, NAME_PATTERN, DeviceFilterSpec.Match.NAME_AND_SERVICE)
 }
