@@ -11,6 +11,10 @@ object WicanLines {
     fun row(ts: Long, param: String = "autopid.TEST", value: String = "1") =
         """{"ts":$ts,"param":"$param","value":$value}"""
 
+    /** [row] as the normaliser stores it: `ts` repaired in place, `ts_raw` and `ts_quality` appended. */
+    fun storedRow(raw: Long, ts: Long?, quality: String, param: String = "autopid.TEST", value: String = "1") =
+        """{"ts":$ts,"param":"$param","value":$value,"ts_raw":$raw,"ts_quality":"$quality"}"""
+
     fun fileMarker(name: String) = """{"_file":"$name"}"""
 
     fun meta(cursor: String, more: Boolean) = """{"_cursor":"$cursor","more":$more}"""

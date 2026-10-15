@@ -3,13 +3,10 @@ package app.btcourier.core.sync
 import app.btcourier.core.normalize.Anchor
 import app.btcourier.core.normalize.JournalNormalizer
 import app.btcourier.core.normalize.Normalizer
-import app.btcourier.core.source.ClockEvent
 import app.btcourier.core.source.Source
 import app.btcourier.core.source.SourceException
 import app.btcourier.core.store.SealPolicy
 import app.btcourier.core.store.Store
-import app.btcourier.core.transport.blehttp.BleHttpException
-import app.btcourier.core.wican.fileMarkerName
 import kotlinx.coroutines.delay
 import java.io.IOException
 import kotlin.time.Duration
@@ -20,8 +17,9 @@ import kotlin.time.Duration.Companion.seconds
  *
  * 1. Device status, for the [Anchor] (phone vs device clock).
  * 2. Clock journal.
- * 3. Pull from the store's cursor until `more:false`, normalising each page and storing it with
- *    its cursor in one transaction.
+ * 3. Pull from the store's cursor until `more:false`; the [Normalizer] turns each page into the
+ *    lines to store, carrying the open file from page to page, and the store keeps them with the
+ *    page's cursor in one transaction.
  * 4. Seal, whatever the outcome, so every persisted page can reach the sinks.
  *
  * The journal is fetched before the loop, not after it, because the store keeps normalised lines:
@@ -33,6 +31,10 @@ import kotlin.time.Duration.Companion.seconds
  * keep `anchor` quality from this sync's anchor, which is right as long as the device did not
  * reboot between writing them and the sync. Re-basing at seal time instead would need the store
  * to keep raw lines.
+ *
+ * The open file is carried only within one sync: the first page starts with none, so a source
+ * must start every page with the marker of the file it resumes in (the WiCAN export and
+ * `ColmiRingSource` both do), or its leading rows are re-based as belonging to no file.
  *
  * Failures end the sync cleanly: the store's cursor stays at the last page persisted, so the next
  * sync resumes there, and a page that was pulled but not persisted is pulled again.
@@ -60,8 +62,6 @@ class SyncRunner(
             StopReason.Truncated(e)
         } catch (e: SourceException) {
             StopReason.DeviceError(e)
-        } catch (e: BleHttpException.Truncated) {
-            StopReason.Truncated(e)
         } catch (e: IOException) {
             StopReason.LinkLost(e)
         }
@@ -84,16 +84,12 @@ class SyncRunner(
             val cursor = store.cursor(sourceId)
             val page = retryBusy { source.pull(cursor) }
             progress.pages++
-            val normalized = normalize(page.lines, journal, anchor, openFile)
-            openFile = normalized.lastFile
-            if (normalized.rows == 0) {
-                // Markers alone are not worth a stored page (they would seal into a batch with no
-                // rows), but the cursor still has to move past them.
-                store.appendPage(sourceId, page.nextCursor, emptyList())
-            } else if (store.appendPage(sourceId, page.nextCursor, normalized.lines)) {
-                progress.linesStored += normalized.rows
-            } else {
-                progress.duplicates++
+            val fixed = normalizer.fix(page.lines, journal, anchor, openFile)
+            openFile = fixed.lastFile
+            when {
+                // A page without rows stores nothing, but the cursor still has to move past it.
+                store.appendPage(sourceId, page.nextCursor, fixed.lines) -> progress.linesStored += fixed.rows
+                fixed.rows > 0 -> progress.duplicates++
             }
             if (!page.more) return StopReason.CaughtUp
             // The device promised more but did not move; asking again would loop forever.
@@ -110,39 +106,6 @@ class SyncRunner(
             }
         }
         return call()
-    }
-
-    private class Normalized(val lines: List<String>, val rows: Int, val lastFile: String?)
-
-    /**
-     * Normalises the rows of [lines] file by file and keeps the `_file` markers in place: the
-     * normaliser drops them, but the store splits batches on them.
-     */
-    private fun normalize(lines: List<String>, journal: List<ClockEvent>, anchor: Anchor?, openFile: String?): Normalized {
-        val out = ArrayList<String>(lines.size)
-        var rows = 0
-        var file = openFile
-        val segment = mutableListOf<String>()
-        fun flush() {
-            if (segment.isEmpty()) return
-            normalizer.fix(segment, journal, anchor, file).forEach {
-                out += it.line
-                rows++
-            }
-            segment.clear()
-        }
-        for (line in lines) {
-            val marker = fileMarkerName(line)
-            if (marker == null) {
-                segment += line
-            } else {
-                flush()
-                out += line
-                file = marker
-            }
-        }
-        flush()
-        return Normalized(out, rows, file)
     }
 }
 
@@ -174,7 +137,7 @@ sealed interface StopReason {
     data class LinkLost(val cause: IOException) : StopReason
 
     /** A response was cut short; the page was not stored and is pulled again next time. */
-    data class Truncated(val cause: Exception) : StopReason
+    data class Truncated(val cause: SourceException.Truncated) : StopReason
 
     /** 429 on every attempt; try again later. */
     data object Busy : StopReason

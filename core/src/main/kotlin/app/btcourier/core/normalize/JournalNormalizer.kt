@@ -1,9 +1,9 @@
 package app.btcourier.core.normalize
 
+import app.btcourier.core.lines.StoredLine
+import app.btcourier.core.lines.walkFiles
 import app.btcourier.core.source.ClockEvent
-import app.btcourier.core.wican.fileMarkerName
 import app.btcourier.core.wican.long
-import app.btcourier.core.wican.parseObjectOrNull
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -34,38 +34,47 @@ import kotlinx.serialization.json.buildJsonObject
  * records sets, so it cannot vouch that the clock was right when a row it never mentions was
  * written.
  *
- * Output is a pure function of the input: identical lines, journal and anchor give identical
- * bytes, which batch hashing relies on.
+ * Lines: a row (any JSON object that is not a [StoredLine.Marker]) is rewritten with `ts`
+ * repaired in place and `ts_raw`, `ts_quality` appended; a line that is not a JSON object is kept
+ * verbatim and counted as a row, so nothing the device sent is lost; blank lines and a stray
+ * `_cursor` meta object are dropped.
+ *
+ * Output is a pure function of the input: identical lines, journal, anchor and open file give
+ * identical bytes, which batch hashing relies on.
  */
 class JournalNormalizer : Normalizer {
     override fun fix(
-        lines: List<String>,
+        page: List<String>,
         journal: List<ClockEvent>,
         anchor: Anchor?,
         openFile: String?,
-    ): List<Record> {
+    ): Normalized {
         val setsByFile = setsByFile(journal)
-        var file = openFile
-        return lines.mapNotNull { line ->
-            if (line.isBlank()) return@mapNotNull null
-            fileMarkerName(line)?.let {
-                file = it
-                return@mapNotNull null
+        val out = ArrayList<String>(page.size)
+        var rows = 0
+        val lastFile = walkFiles(page, openFile) { line, kind, file ->
+            when (kind) {
+                is StoredLine.Marker -> out += line
+                is StoredLine.Row -> if (!kind.fields.containsKey("_cursor")) {
+                    out += fixRow(kind.fields, setsByFile[file].orEmpty(), anchor)
+                    rows++
+                }
+                StoredLine.Other -> if (line.isNotBlank()) {
+                    out += line
+                    rows++
+                }
             }
-            val row = parseObjectOrNull(line)
-                ?: return@mapNotNull Record(line, ts = null, tsRaw = null, tsQuality = TsQuality.UNKNOWN, file = file)
-            if (row.containsKey("_cursor")) return@mapNotNull null
-            fixRow(row, file, setsByFile[file].orEmpty(), anchor)
         }
+        return Normalized(if (rows == 0) emptyList() else out, rows, lastFile)
     }
 
-    private fun fixRow(row: JsonObject, file: String?, sets: List<FileSet>, anchor: Anchor?): Record {
+    private fun fixRow(row: JsonObject, sets: List<FileSet>, anchor: Anchor?): String {
         val raw = row.long("ts")
         val (ts, quality) = when {
             raw == null -> null to TsQuality.UNKNOWN
             else -> repair(raw, sets, anchor)
         }
-        return Record(rewrite(row, ts, quality), ts, raw, quality, file)
+        return rewrite(row, ts, quality)
     }
 
     private fun repair(raw: Long, sets: List<FileSet>, anchor: Anchor?): Pair<Long?, TsQuality> {
