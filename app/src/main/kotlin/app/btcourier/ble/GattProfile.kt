@@ -1,16 +1,20 @@
 package app.btcourier.ble
 
+import app.btcourier.core.source.colmi.ColmiBigDataGatt
 import app.btcourier.core.source.colmi.ColmiGatt
+import app.btcourier.core.transport.GattChannel
 import com.juul.kable.WriteType
 import java.util.UUID
 
 /**
- * Where a [KableGattLink] subscribes and writes: one notify characteristic and one write
- * characteristic in [service], which is all `GattLink` models.
+ * Where a [KableGattLink] subscribes and writes: the primary channel's notify and write
+ * characteristics in [service], and optionally a [secondary] channel in a service of its own.
  *
  * @property mtu ATT MTU to ask for after service discovery; [DEFAULT_MTU] or less asks for none.
  * @property wantsBond whether pairing bonds with the device (system passkey dialog) before use.
  * @property writeTypeRule how the caller's `withResponse` flag becomes the ATT write type.
+ * @property secondary the `GattChannel.SECONDARY` characteristics, or null when the device has
+ *   only the primary channel.
  */
 data class GattProfile(
     val service: UUID,
@@ -19,7 +23,15 @@ data class GattProfile(
     val mtu: Int,
     val wantsBond: Boolean,
     val writeTypeRule: WriteTypeRule = WriteTypeRule.AS_ASKED,
+    val secondary: ChannelSpec? = null,
 ) {
+    /** One channel's characteristics: notifications from [notify], writes to [write], both in [service]. */
+    data class ChannelSpec(
+        val service: UUID,
+        val notify: UUID,
+        val write: UUID,
+    )
+
     /** One `GattLink.write` routed to its characteristic and ATT write type. */
     data class WriteRoute(
         val characteristic: UUID,
@@ -55,6 +67,36 @@ data class GattProfile(
         return WriteRoute(write, if (response) WriteType.WithResponse else WriteType.WithoutResponse)
     }
 
+    /** [channel]'s characteristics, or null when the profile does not declare it. */
+    fun channel(channel: GattChannel): ChannelSpec? =
+        when (channel) {
+            GattChannel.PRIMARY -> ChannelSpec(service, notify, write)
+            GattChannel.SECONDARY -> secondary
+        }
+
+    /** One write on a channel: [route] to a characteristic of [service]. */
+    data class ChannelWrite(
+        val service: UUID,
+        val route: WriteRoute,
+    )
+
+    /**
+     * A write on [channel]: to that channel's write characteristic, with the write type
+     * [routeWrite] picks; null when the profile does not declare [channel].
+     *
+     * @param writeWithResponseSupported whether that channel's discovered write characteristic
+     *   declares the write (with response) property.
+     */
+    fun routeWrite(
+        withResponse: Boolean,
+        writeWithResponseSupported: Boolean,
+        channel: GattChannel,
+    ): ChannelWrite? {
+        val spec = channel(channel) ?: return null
+        val route = routeWrite(withResponse, writeWithResponseSupported).copy(characteristic = spec.write)
+        return ChannelWrite(spec.service, route)
+    }
+
     companion object {
         /** ATT default before any exchange. */
         const val DEFAULT_MTU: Int = 23
@@ -67,8 +109,18 @@ data class GattProfile(
  * MTU carries them and none is negotiated. Commands ask for a write with response, which goes
  * without one when RX does not declare it, as PulseLoopiOS picks by the characteristic's
  * properties (`colmi_r02_client` always writes without).
+ *
+ * The secondary channel is the big-data service ([ColmiBigDataGatt]); a model without it still
+ * connects, with only the primary channel.
  */
 object ColmiRingGatt {
+    private val BIG_DATA =
+        GattProfile.ChannelSpec(
+            ColmiBigDataGatt.SERVICE,
+            notify = ColmiBigDataGatt.NOTIFY,
+            write = ColmiBigDataGatt.WRITE,
+        )
+
     val PROFILE =
         GattProfile(
             ColmiGatt.SERVICE,
@@ -77,6 +129,7 @@ object ColmiRingGatt {
             mtu = GattProfile.DEFAULT_MTU,
             wantsBond = false,
             writeTypeRule = GattProfile.WriteTypeRule.AS_ASKED_IF_SUPPORTED,
+            secondary = BIG_DATA,
         )
 
     /**
