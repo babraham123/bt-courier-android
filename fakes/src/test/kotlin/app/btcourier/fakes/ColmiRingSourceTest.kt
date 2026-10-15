@@ -128,10 +128,15 @@ class ColmiRingSourceTest {
     @Test
     fun `a null or too-old cursor starts at the oldest day the ring keeps`() =
         runTest {
-            val oldest = """{"_file":"colmi/2026-10-09"}"""
+            // Today (10-15) and the 7 days before it are on the ring; today itself is never pulled.
+            val oldest = """{"_file":"colmi/2026-10-08"}"""
             assertEquals(oldest, source(ring()).pull(null).lines.first())
             assertEquals(oldest, source(ring()).pull("2026-09-01").lines.first())
-            assertEquals("2026-10-09", source(ring()).pull("2026-09-01").nextCursor)
+            assertEquals("2026-10-08", source(ring()).pull("2026-09-01").nextCursor)
+            // The oldest day is 7 days before the ring's today in the steps request.
+            val ring = ring()
+            source(ring).pull(null)
+            assertEquals(listOf(7), ring.commands.filter { it[0].toInt() == 0x43 }.map { it[1].toInt() })
         }
 
     @Test
