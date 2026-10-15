@@ -10,6 +10,20 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
+    // The version catalog is not available to settings plugins, so its pinned version is read
+    // straight from the file; the catalog stays the one place Renovate updates.
+    val foojayVersion =
+        file("gradle/libs.versions.toml")
+            .readLines()
+            .firstNotNullOf { Regex("""^foojay-resolver\s*=\s*"([^"]+)"""").find(it)?.groupValues?.get(1) }
+    plugins {
+        id("org.gradle.toolchains.foojay-resolver-convention") version foojayVersion
+    }
+}
+
+// Downloads the toolchain JDK the build files ask for when no local install matches.
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention")
 }
 
 dependencyResolutionManagement {
