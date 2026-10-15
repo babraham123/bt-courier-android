@@ -17,6 +17,11 @@ checks on every push, but nothing has been verified on real hardware yet. To try
 Distribution is planned through GitHub Releases installable with Obtainium, then F-Droid. Changes
 are listed in `CHANGELOG.md`; design notes and the task list live in `planning/`.
 
+## Credits
+
+The Colmi smart ring protocol code (`core/.../source/colmi/`) is derived from
+[PulseLoopiOS](https://github.com/saksham2001/PulseLoopiOS).
+
 ## Build
 
 Build with JDK 21 and the Android SDK (platform 36), pointing `sdk.dir` in `local.properties` or
