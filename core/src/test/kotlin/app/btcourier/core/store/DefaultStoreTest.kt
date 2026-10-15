@@ -1,5 +1,6 @@
 package app.btcourier.core.store
 
+import app.btcourier.core.lines.StoredLine
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -105,6 +106,26 @@ class DefaultStoreTest {
         assertEquals(emptyList<String>(), s.seal(neverByAgeOrSize, h.now))
         s.seal(neverByAgeOrSize.copy(maxBatchAgeMs = 0), h.now)
         assertEquals(listOf(listOf(marker("f1")) + rows(1..2) + marker("f1") + rows(3..4)), s.pending("a").map { it.lines })
+    }
+
+    @ParameterizedTest
+    @EnumSource(DbKind::class)
+    fun `batches split where the shared classifier sees a marker and nowhere else`(kind: DbKind) = runTest {
+        val h = harness(kind)
+        val s = h.store
+        // Spaced marker: a marker. A row that also carries _file: a row, so it neither splits nor
+        // stands in for the marker a batch restates.
+        val spaced = """ { "_file" : "f2" } """
+        val rowWithFile = """{"_file":"f9","ts":1700000000005,"param":"SPEED","value":5}"""
+        s.appendPage("dev", "c1", listOf(marker("f1")) + rows(1..2) + spaced + rows(3..4))
+        s.appendPage("dev", "c2", listOf(rowWithFile) + rows(6..6) + marker("f3"))
+
+        s.seal(neverByAgeOrSize, h.now)
+
+        assertEquals(
+            listOf(listOf(marker("f1")) + rows(1..2), listOf(spaced) + rows(3..4) + rowWithFile + rows(6..6)),
+            s.pending("a").map { it.lines },
+        )
     }
 
     @ParameterizedTest
@@ -248,7 +269,7 @@ class DefaultStoreTest {
         for (p in 0 until 40) {
             val lines = (if (p % 7 == 0) listOf(marker("f$p")) else emptyList()) + rows(p * 10 until p * 10 + 10)
             assertTrue(s.appendPage("dev", "c$p", lines))
-            expected += lines.filterNot(::isFileMarker)
+            expected += lines.filterNot(StoredLine::isMarker)
             // A link drop makes the source resend the page it last served.
             assertFalse(s.appendPage("dev", "c$p", lines))
             h.now += 5_000

@@ -1,23 +1,24 @@
 package app.btcourier.core.sink.formats
 
-import app.btcourier.core.wican.parseObjectOrNull
-import app.btcourier.core.wican.string
+import app.btcourier.core.lines.StoredLine
+import app.btcourier.core.lines.walkFiles
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Walks stored JSONL [lines] for the tabular formats. `{"_file":...}` markers are consumed and set
+ * Walks stored JSONL [lines] for the tabular formats. [StoredLine.Marker]s are consumed and set
  * the file every later line is attributed to (null before the first marker); every other line is
  * passed on with its parsed object, or null when it is not a JSON object.
  */
 internal inline fun forEachRow(lines: List<String>, onRow: (file: String?, row: JsonObject?, line: String) -> Unit) {
-    var file: String? = null
-    for (line in lines) {
-        val row = parseObjectOrNull(line)
-        val marker = row?.string("_file")
-        if (marker != null) file = marker else onRow(file, row, line)
+    walkFiles(lines) { line, kind, file ->
+        when (kind) {
+            is StoredLine.Marker -> Unit
+            is StoredLine.Row -> onRow(file, kind.fields, line)
+            StoredLine.Other -> onRow(file, null, line)
+        }
     }
 }
 
