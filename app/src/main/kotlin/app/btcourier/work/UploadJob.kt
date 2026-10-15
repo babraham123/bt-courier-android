@@ -60,6 +60,9 @@ class UploadJob(
         }
     }
 
+    /** Lets [sinkId]'s next round try it at once, after it was edited or deleted ([Delivery.forget]). */
+    fun forgetRetries(sinkId: String) = delivery.forget(sinkId)
+
     private suspend fun deliver(configured: List<Sink>, attempt: Int, onLargeBacklog: suspend () -> Unit): UploadOutcome {
         if (configured.isEmpty()) {
             record(UploadResultKind.NO_SINK, null, bySink = emptyMap())

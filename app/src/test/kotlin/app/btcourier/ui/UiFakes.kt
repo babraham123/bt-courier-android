@@ -38,7 +38,7 @@ class RecordingWorkControl : WorkControl {
     val uploads = mutableListOf<Pair<Boolean, Boolean>>()
     val periodic = mutableListOf<Boolean>()
 
-    /** `cancel` and `upload` in call order, to check what a cancellation precedes. */
+    /** `cancel`, `upload` and `forget <sink id>` in call order, to check what precedes what. */
     val calls = mutableListOf<String>()
 
     /** Runs inside [cancelUpload], to observe state at the moment of cancelling. */
@@ -60,6 +60,10 @@ class RecordingWorkControl : WorkControl {
 
     override fun setPeriodicSync(enabled: Boolean) {
         periodic += enabled
+    }
+
+    override fun forgetRetries(sinkId: String) {
+        calls += "forget $sinkId"
     }
 }
 

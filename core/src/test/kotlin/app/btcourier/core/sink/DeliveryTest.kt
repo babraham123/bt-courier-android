@@ -22,8 +22,8 @@ import kotlin.io.path.readBytes
  * [Delivery] through its interface, over a real store. Expected values follow its contract:
  * batches go out oldest first and each sink stops at its first failure; a sink that answered
  * Retry is not contacted again before the server's `Retry-After` (capped at a day) or, without
- * one, 30 s doubling per consecutive retry up to an hour; Acked or Failed starts over; all of it
- * keyed by sink id, so rebuilding a sink keeps its schedule.
+ * one, 30 s doubling per consecutive retry up to an hour; Acked, Failed or [Delivery.forget]
+ * starts over; all of it keyed by sink id, so rebuilding a sink keeps its schedule.
  */
 class DeliveryTest {
     @TempDir
@@ -182,6 +182,27 @@ class DeliveryTest {
 
         assertEquals(UploadResult.Failed("HTTP 401"), delivery.deliverPending(a))
         assertNull(delivery.deliverPending(a), "after a config fix the sink is tried at once")
+    }
+
+    @Test
+    fun `forgetting a sink makes it due at once with a fresh streak, leaving other sinks' schedules`() = runTest {
+        storeWith(1, "edited", "other")
+        val delivery = delivery()
+        val down = scripted(UploadResult.Retry("connection refused"))
+        val otherDown = scripted(UploadResult.Retry("offline", retryAfterMs = 600_000))
+        repeat(3) {
+            delivery.deliverPending(sink("edited", down))
+            h.now += delivery.waitLeft(sink("edited", down), down)
+        }
+        delivery.deliverPending(sink("edited", down))
+        delivery.deliverPending(sink("other", otherDown))
+
+        delivery.forget("edited")
+
+        val fixed = scripted(UploadResult.Retry("still down"))
+        assertEquals(UploadResult.Retry("still down"), delivery.deliverPending(sink("edited", fixed)), "contacted without waiting")
+        assertEquals(30_000, delivery.waitLeft(sink("edited", fixed), fixed), "the streak starts over")
+        assertEquals(600_000, delivery.waitLeft(sink("other", otherDown), otherDown))
     }
 
     @Test

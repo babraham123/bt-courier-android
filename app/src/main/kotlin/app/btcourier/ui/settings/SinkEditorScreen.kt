@@ -56,9 +56,14 @@ import app.btcourier.R
 import app.btcourier.data.AuthKind
 import app.btcourier.data.FormatKind
 import app.btcourier.data.OidcClientAuth
-import app.btcourier.data.PostEncoding
 import app.btcourier.data.TransportKind
 import app.btcourier.data.saf.persistGrant
+import app.btcourier.data.sinkkind.FieldKeyboard
+import app.btcourier.data.sinkkind.FieldProblem
+import app.btcourier.data.sinkkind.SinkUrlProblem
+import app.btcourier.data.sinkkind.TransportCapability
+import app.btcourier.data.sinkkind.TransportField
+import app.btcourier.data.sinkkind.module
 import app.btcourier.ui.BackButton
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -94,14 +99,9 @@ fun SinkEditorScreen(viewModel: SinkEditorViewModel, onDone: () -> Unit) {
         ) {
             Field(R.string.sink_name, form.name, SinkField.NAME in state.invalid) { v -> viewModel.edit { it.copy(name = v) } }
             Toggle(R.string.sink_enabled, R.string.sink_enabled_help, form.enabled) { v -> viewModel.edit { it.copy(enabled = v) } }
-            Picker(R.string.sink_transport, TransportKind.entries, form.kind, ::transportLabel, viewModel::setTransport)
+            Picker(R.string.sink_transport, TransportKind.entries, form.kind, { it.module.label }, viewModel::setTransport)
 
-            when (form.kind) {
-                TransportKind.HTTP_PUT, TransportKind.HTTP_POST -> HttpFields(state, viewModel)
-                TransportKind.SFTP -> SftpFields(state, viewModel)
-                TransportKind.MQTT -> MqttFields(state, viewModel)
-                TransportKind.LOCAL_FOLDER -> FolderFields(state, viewModel)
-            }
+            TransportFields(state, viewModel)
 
             Picker(R.string.sink_format, FormatKind.entries, form.format, ::formatLabel) { v -> viewModel.edit { it.copy(format = v) } }
 
@@ -137,43 +137,52 @@ fun SinkEditorScreen(viewModel: SinkEditorViewModel, onDone: () -> Unit) {
     }
 }
 
+/** The current kind's fields, then its capabilities, as its [SinkTransportKind] lists them. */
 @Composable
-private fun HttpFields(state: SinkEditorState, viewModel: SinkEditorViewModel) {
-    val form = state.form
-    val post = form.kind == TransportKind.HTTP_POST
-    OutlinedTextField(
-        value = form.url,
-        onValueChange = { v -> viewModel.edit { it.copy(url = v) } },
-        label = { Text(stringResource(R.string.settings_sink_url)) },
-        placeholder = { Text(stringResource(R.string.settings_sink_url_placeholder)) },
-        supportingText = {
-            val help = if (post) R.string.sink_post_url_help else R.string.settings_sink_url_help
-            Text(stringResource(state.urlProblem?.let(::urlProblemText) ?: help))
-        },
-        isError = state.urlProblem != null,
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-        modifier = Modifier.fillMaxWidth(),
-    )
-    if (post) {
-        Picker(R.string.sink_post_encoding, PostEncoding.entries, form.postEncoding, ::postEncodingLabel) { v ->
-            viewModel.edit { it.copy(postEncoding = v) }
+private fun TransportFields(state: SinkEditorState, viewModel: SinkEditorViewModel) {
+    val transport = state.form.transport
+    val values = state.form.values
+    for (field in transport.fields) {
+        if (!field.visibleWhen(values)) continue
+        when (field) {
+            is TransportField.Text -> TextField(field, values[field.key], state.transportProblems[field.key]) { viewModel.setField(field.key, it) }
+            is TransportField.Toggle -> Toggle(field.label, field.help, values.flag(field.key)) { viewModel.setField(field.key, it.toString()) }
+            is TransportField.Choice -> {
+                val selected = field.options.firstOrNull { it.value == values[field.key] } ?: field.options.first()
+                Picker(field.label, field.options, selected, { it.label }) { viewModel.setField(field.key, it.value) }
+            }
         }
-        Toggle(R.string.sink_name_query, R.string.sink_name_query_help, form.nameQuery) { v -> viewModel.edit { it.copy(nameQuery = v) } }
-    } else {
-        Toggle(R.string.settings_compress, R.string.settings_compress_help, form.compress) { v -> viewModel.edit { it.copy(compress = v) } }
+    }
+    for (capability in transport.capabilities) {
+        when (capability) {
+            TransportCapability.ClientKey -> ClientKeySection(state)
+            is TransportCapability.HostKeyPin -> HostKeySection(state, values.orNull(capability.fingerprintKey), viewModel)
+            is TransportCapability.FolderPick ->
+                FolderSection(values.orNull(capability.treeUriKey), capability.treeUriKey in state.transportProblems) {
+                    viewModel.setField(capability.treeUriKey, it)
+                }
+        }
     }
 }
 
 @Composable
-private fun SftpFields(state: SinkEditorState, viewModel: SinkEditorViewModel) {
-    val form = state.form
-    val context = LocalContext.current
-    Field(R.string.sink_host, form.host, SinkField.HOST in state.invalid, KeyboardType.Uri) { v -> viewModel.edit { it.copy(host = v) } }
-    Field(R.string.sink_port, form.sftpPort, SinkField.PORT in state.invalid, KeyboardType.Number) { v -> viewModel.edit { it.copy(sftpPort = v) } }
-    Field(R.string.settings_username, form.sftpUser, SinkField.USERNAME in state.invalid) { v -> viewModel.edit { it.copy(sftpUser = v) } }
-    Field(R.string.sink_remote_dir, form.remoteDir, help = R.string.sink_remote_dir_help) { v -> viewModel.edit { it.copy(remoteDir = v) } }
+private fun TextField(field: TransportField.Text, value: String, problem: FieldProblem?, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        label = { Text(stringResource(field.label)) },
+        placeholder = field.placeholder?.let { { Text(stringResource(it)) } },
+        supportingText = ((problem as? FieldProblem.Url)?.problem?.let(::urlProblemText) ?: field.help)?.let { { Text(stringResource(it)) } },
+        isError = problem != null,
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = field.keyboard.type),
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
 
+@Composable
+private fun ClientKeySection(state: SinkEditorState) {
+    val context = LocalContext.current
     Text(stringResource(R.string.sink_public_key), style = MaterialTheme.typography.labelLarge)
     val publicKey = state.publicKey
     when {
@@ -185,65 +194,52 @@ private fun SftpFields(state: SinkEditorState, viewModel: SinkEditorViewModel) {
         state.keyError != null -> ErrorText(stringResource(R.string.sink_key_error, state.keyError))
         else -> Text(stringResource(R.string.pairing_working))
     }
+}
 
+@Composable
+private fun HostKeySection(state: SinkEditorState, pinned: String?, viewModel: SinkEditorViewModel) {
     Text(stringResource(R.string.sink_host_key), style = MaterialTheme.typography.labelLarge)
-    val pinned = form.hostKeyFingerprint
     if (pinned != null) {
         SelectionContainer { Text(pinned, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
         OutlinedButton(onClick = viewModel::forgetHostKey) { Text(stringResource(R.string.sink_host_key_forget)) }
-    } else {
-        Text(stringResource(R.string.sink_host_key_missing), style = MaterialTheme.typography.bodySmall)
-        when (val hostKey = state.hostKey) {
-            HostKeyState.Idle, is HostKeyState.Failed -> {
-                if (hostKey is HostKeyState.Failed) ErrorText(hostKey.message)
-                OutlinedButton(onClick = viewModel::fetchHostKey) { Text(stringResource(R.string.sink_host_key_fetch)) }
-            }
-            HostKeyState.Fetching -> Text(stringResource(R.string.pairing_working))
-            is HostKeyState.Presented -> {
-                SelectionContainer { Text(hostKey.fingerprint, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
-                Text(stringResource(R.string.sink_host_key_confirm), style = MaterialTheme.typography.bodySmall)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = viewModel::trustHostKey) { Text(stringResource(R.string.sink_host_key_trust)) }
-                    OutlinedButton(onClick = viewModel::forgetHostKey) { Text(stringResource(R.string.sink_cancel)) }
-                }
+        return
+    }
+    Text(stringResource(R.string.sink_host_key_missing), style = MaterialTheme.typography.bodySmall)
+    when (val hostKey = state.hostKey) {
+        HostKeyState.Idle, is HostKeyState.Failed -> {
+            if (hostKey is HostKeyState.Failed) ErrorText(hostKey.message)
+            OutlinedButton(onClick = viewModel::fetchHostKey) { Text(stringResource(R.string.sink_host_key_fetch)) }
+        }
+        HostKeyState.Fetching -> Text(stringResource(R.string.pairing_working))
+        is HostKeyState.Presented -> {
+            SelectionContainer { Text(hostKey.fingerprint, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
+            Text(stringResource(R.string.sink_host_key_confirm), style = MaterialTheme.typography.bodySmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = viewModel::trustHostKey) { Text(stringResource(R.string.sink_host_key_trust)) }
+                OutlinedButton(onClick = viewModel::forgetHostKey) { Text(stringResource(R.string.sink_cancel)) }
             }
         }
     }
 }
 
 @Composable
-private fun MqttFields(state: SinkEditorState, viewModel: SinkEditorViewModel) {
-    val form = state.form
-    Field(R.string.sink_host, form.host, SinkField.HOST in state.invalid, KeyboardType.Uri) { v -> viewModel.edit { it.copy(host = v) } }
-    Toggle(R.string.sink_tls, R.string.sink_tls_help, form.mqttTls, viewModel::setMqttTls)
-    Field(R.string.sink_port, form.mqttPort, SinkField.PORT in state.invalid, KeyboardType.Number) { v -> viewModel.edit { it.copy(mqttPort = v) } }
-    Field(R.string.sink_client_id, form.mqttClientId, SinkField.MQTT_CLIENT_ID in state.invalid, help = R.string.sink_client_id_help) { v ->
-        viewModel.edit { it.copy(mqttClientId = v) }
-    }
-    Field(R.string.sink_base_topic, form.baseTopic, SinkField.BASE_TOPIC in state.invalid, help = R.string.sink_base_topic_help) { v ->
-        viewModel.edit { it.copy(baseTopic = v) }
-    }
-}
-
-@Composable
-private fun FolderFields(state: SinkEditorState, viewModel: SinkEditorViewModel) {
+private fun FolderSection(treeUri: String?, isError: Boolean, onPicked: (String?) -> Unit) {
     val context = LocalContext.current
-    val treeUri = state.form.treeUri
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
             try {
                 persistGrant(context, uri)
-                viewModel.edit { it.copy(treeUri = uri.toString()) }
+                onPicked(uri.toString())
             } catch (_: SecurityException) {
                 // The provider offers no persistable grant; the folder would be lost on reboot.
-                viewModel.edit { it.copy(treeUri = null) }
+                onPicked(null)
             }
         }
     }
     val folderName = remember(treeUri) {
         treeUri?.let { runCatching { DocumentFile.fromTreeUri(context, it.toUri())?.name }.getOrNull() ?: it }
     }
-    Text(folderName ?: stringResource(R.string.sink_folder_none), color = if (SinkField.FOLDER in state.invalid) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+    Text(folderName ?: stringResource(R.string.sink_folder_none), color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
     OutlinedButton(onClick = { pick.launch(treeUri?.toUri()) }) { Text(stringResource(R.string.sink_folder_pick)) }
 }
 
@@ -398,15 +394,6 @@ private fun open(context: Context, uri: String) {
 }
 
 @StringRes
-internal fun transportLabel(kind: TransportKind): Int = when (kind) {
-    TransportKind.HTTP_PUT -> R.string.transport_http_put
-    TransportKind.HTTP_POST -> R.string.transport_http_post
-    TransportKind.SFTP -> R.string.transport_sftp
-    TransportKind.MQTT -> R.string.transport_mqtt
-    TransportKind.LOCAL_FOLDER -> R.string.transport_local_folder
-}
-
-@StringRes
 internal fun formatLabel(kind: FormatKind): Int = when (kind) {
     FormatKind.JSONL -> R.string.format_jsonl
     FormatKind.CSV -> R.string.format_csv
@@ -419,13 +406,6 @@ private fun authLabel(kind: AuthKind): Int = when (kind) {
     AuthKind.BASIC -> R.string.settings_auth_basic
     AuthKind.BEARER -> R.string.settings_auth_bearer
     AuthKind.OIDC -> R.string.settings_auth_oidc
-}
-
-@StringRes
-private fun postEncodingLabel(encoding: PostEncoding): Int = when (encoding) {
-    PostEncoding.GZIP_FILE -> R.string.post_encoding_gzip_file
-    PostEncoding.CONTENT_ENCODING_GZIP -> R.string.post_encoding_content_encoding
-    PostEncoding.IDENTITY -> R.string.post_encoding_identity
 }
 
 @StringRes
@@ -442,3 +422,10 @@ private fun urlProblemText(problem: SinkUrlProblem): Int = when (problem) {
     SinkUrlProblem.QUERY_OR_FRAGMENT -> R.string.settings_url_query
     SinkUrlProblem.CLEARTEXT -> R.string.settings_url_cleartext
 }
+
+private val FieldKeyboard.type: KeyboardType
+    get() = when (this) {
+        FieldKeyboard.TEXT -> KeyboardType.Text
+        FieldKeyboard.URI -> KeyboardType.Uri
+        FieldKeyboard.NUMBER -> KeyboardType.Number
+    }

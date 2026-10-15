@@ -70,15 +70,6 @@ class SinkConfigTest {
     }
 
     @Test
-    fun `HTTP transports allow every auth, MQTT only basic, SFTP and folders none`() {
-        assertEquals(AuthKind.entries, TransportKind.HTTP_PUT.allowedAuth)
-        assertEquals(AuthKind.entries, TransportKind.HTTP_POST.allowedAuth)
-        assertEquals(listOf(AuthKind.NONE, AuthKind.BASIC), TransportKind.MQTT.allowedAuth)
-        assertEquals(listOf(AuthKind.NONE), TransportKind.SFTP.allowedAuth)
-        assertEquals(listOf(AuthKind.NONE), TransportKind.LOCAL_FOLDER.allowedAuth)
-    }
-
-    @Test
     fun `sink ids are short, distinct and valid secret names`() {
         val ids = List(1000) { newSinkId() }
 
