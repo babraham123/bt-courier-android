@@ -6,13 +6,13 @@ import app.btcourier.data.AuthConfig
 import app.btcourier.data.AuthKind
 import app.btcourier.data.OidcClientAuth
 import app.btcourier.data.SinkConfig
-import app.btcourier.data.SinkSecrets
+import app.btcourier.data.StoredNames
 import app.btcourier.data.TransportConfig
+import app.btcourier.data.testCredentials
 import app.btcourier.ui.settings.SignInState
 import app.btcourier.ui.settings.SinkForm
 import app.btcourier.ui.settings.SinkEditorViewModel
 import app.btcourier.ui.settings.SinkUrlProblem
-import app.btcourier.work.InMemorySshKeys
 import app.btcourier.work.MapSecretStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
@@ -96,9 +96,8 @@ class OidcSignInTest {
     private fun vm() = SinkEditorViewModel(
         sinkId = "o1",
         settings = settings,
-        secrets = secrets,
+        credentials = testCredentials(secrets),
         work = work,
-        sshKeys = InMemorySshKeys(),
         http = client,
         appScope = CoroutineScope(main),
         oidcSleep = { polls.receive() },
@@ -168,7 +167,7 @@ class OidcSignInTest {
 
         val awaiting = await(vm, "awaiting user") { it as? SignInState.AwaitingUser }
         assertEquals(SignInState.AwaitingUser("WDJB-MJHT", "https://auth.invalid/device", "https://auth.invalid/device?user_code=WDJB-MJHT"), awaiting)
-        assertNull(runBlocking { secrets.get(SinkSecrets.oidcTokens("o1")) })
+        assertNull(runBlocking { secrets.get(StoredNames.tokens("o1")) })
 
         runBlocking {
             polls.send(Unit)
@@ -194,10 +193,10 @@ class OidcSignInTest {
         runBlocking(main) { vm.save() }
         runBlocking { withTimeout(10_000) { vm.state.first { it.saved } } }
 
-        val tokens = TokenSet.decode(checkNotNull(runBlocking { secrets.get("sink_o1_oidc_tokens") }))
+        val tokens = TokenSet.decode(checkNotNull(runBlocking { secrets.get(StoredNames.tokens("o1")) }))
         assertEquals("at-1", tokens.accessToken)
         assertEquals("rt-1", tokens.refreshToken)
-        assertEquals("cs-1", runBlocking { secrets.get(SinkSecrets.oidcClientSecret("o1")) })
+        assertEquals("cs-1", runBlocking { secrets.get(StoredNames.clientSecret("o1")) })
         val expected = AuthConfig.Oidc(issuer, "bt-courier", OidcClientAuth.SECRET_POST, "$issuer/api/oidc/token", "$issuer/api/oidc/device-authorization")
         assertEquals(expected, runBlocking { settings.current() }.sinks.single().auth, "the sink keeps the endpoints its tokens belong to")
         assertEquals(listOf(false to true), work.uploads)
@@ -259,14 +258,14 @@ class OidcSignInTest {
         assertEquals(SignInState.SignedOut, vm.state.value.signIn)
         assertEquals(2, server.requestCount, "no token request after cancelling")
 
-        runBlocking { secrets.put(SinkSecrets.oidcTokens("o1"), TokenSet("a", "r", 0).encode()) }
+        runBlocking { secrets.put(StoredNames.tokens("o1"), TokenSet("a", "r", 0).encode()) }
         var storedAtCancel = emptySet<String>()
         work.onCancelUpload = { storedAtCancel = secrets.names }
         runBlocking(main) { vm.signOut() }
         // The fakes never suspend, so anything signing out queued on main has run after this.
         runBlocking(main) {}
-        assertNull(runBlocking { secrets.get(SinkSecrets.oidcTokens("o1")) })
-        assertEquals(setOf(SinkSecrets.oidcTokens("o1")), storedAtCancel)
+        assertNull(runBlocking { secrets.get(StoredNames.tokens("o1")) })
+        assertEquals(setOf(StoredNames.tokens("o1")), storedAtCancel)
         assertEquals(listOf("cancel", "upload"), work.calls)
         assertEquals(listOf(false to true), work.uploads)
         assertEquals(SignInState.SignedOut, vm.state.value.signIn)

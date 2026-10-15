@@ -22,6 +22,21 @@ fun persistGrant(context: Context, treeUri: Uri) {
     )
 }
 
+/**
+ * Gives up what [persistGrant] took, so the tree stops counting against the app's persisted-grant
+ * limit and leaves the system's list of apps with access. A grant already gone is not an error.
+ */
+fun releaseGrant(context: Context, treeUri: Uri) {
+    try {
+        context.contentResolver.releasePersistableUriPermission(
+            treeUri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+        )
+    } catch (_: SecurityException) {
+        // Not held any more (revoked in system settings, or the provider was uninstalled).
+    }
+}
+
 /** A [DocumentTree] over the top level of a persisted SAF tree grant. */
 class SafDocumentTree(context: Context, private val treeUri: Uri) : DocumentTree {
     private val context = context.applicationContext

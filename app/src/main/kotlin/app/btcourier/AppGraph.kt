@@ -15,9 +15,11 @@ import app.btcourier.data.AndroidKeystoreSshKeys
 import app.btcourier.data.DataStoreSettings
 import app.btcourier.data.DataStoreSyncStatus
 import app.btcourier.data.FolderAccess
+import app.btcourier.data.FolderGrants
 import app.btcourier.data.KeystoreSecretStore
 import app.btcourier.data.SecretStore
 import app.btcourier.data.SettingsRepository
+import app.btcourier.data.SinkCredentials
 import app.btcourier.data.SinkEnvironment
 import app.btcourier.data.SshKeys
 import app.btcourier.data.SyncStatusRepository
@@ -25,6 +27,7 @@ import app.btcourier.data.buildSinks
 import app.btcourier.data.statusDataStore
 import app.btcourier.data.configuredSinkIds
 import app.btcourier.data.saf.SafDocumentTree
+import app.btcourier.data.saf.releaseGrant
 import app.btcourier.data.settingsDataStore
 import app.btcourier.log.AppLog
 import app.btcourier.work.LinkFactory
@@ -71,7 +74,7 @@ object AppGraph {
     /** Outlives any screen; for fire-and-forget work such as a receiver's `goAsync`. */
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    val settings: SettingsRepository by lazy { DataStoreSettings(settingsDataStore(app, secrets)) }
+    val settings: SettingsRepository by lazy { DataStoreSettings(settingsDataStore(app, sinkCredentials)) }
     val status: SyncStatusRepository by lazy {
         DataStoreSyncStatus(statusDataStore(app) { newestAssociation(associations.list())?.address })
     }
@@ -79,6 +82,9 @@ object AppGraph {
     val syncFanOut: SyncFanOut by lazy { SyncFanOut(pairedDevices) { Scheduler.syncNow(app, it) } }
     val secrets: SecretStore by lazy { KeystoreSecretStore(File(app.noBackupFilesDir, "secrets")) }
     val sshKeys: SshKeys by lazy { AndroidKeystoreSshKeys() }
+    val sinkCredentials: SinkCredentials by lazy {
+        SinkCredentials(secrets, sshKeys, FolderGrants { releaseGrant(app, it.toUri()) })
+    }
     val log: AppLog by lazy { AppLog(file = File(app.noBackupFilesDir, "app.log")) }
 
     /** [FileStoreDb]'s directory; also listed by the diagnostics export. */

@@ -17,8 +17,8 @@ import kotlinx.coroutines.flow.map
 
 /**
  * User settings. Whether a device is paired is not here: `CompanionDeviceManager` owns the
- * association, and [devices] only adds what it cannot store. Upload secrets are not here either:
- * they live in [SecretStore].
+ * association, and [devices] only adds what it cannot store. Upload credentials are not here
+ * either: [SinkCredentials] keeps them.
  *
  * @property sinks every configured upload target, enabled or not; empty keeps data on the phone.
  * @property uploadOverCellular false restricts uploads to unmetered networks.
@@ -52,8 +52,8 @@ interface SettingsRepository {
  * The app's settings store, with [LegacySinkMigration] run before the first read. Exactly one
  * instance may exist per file, so `AppGraph` holds it.
  */
-fun settingsDataStore(context: Context, secrets: SecretStore): DataStore<Preferences> =
-    PreferenceDataStoreFactory.create(migrations = listOf(LegacySinkMigration(secrets))) {
+fun settingsDataStore(context: Context, credentials: SinkCredentials): DataStore<Preferences> =
+    PreferenceDataStoreFactory.create(migrations = listOf(LegacySinkMigration(credentials))) {
         context.applicationContext.preferencesDataStoreFile("settings")
     }
 
@@ -126,20 +126,20 @@ internal object SettingsKeys {
 
 /**
  * Turns the flat single-sink settings of earlier versions into a one-element [AppSettings.sinks]
- * and moves its secret to [SinkSecrets.secret]. DataStore runs it before any read completes, so
- * nothing ever sees the half-migrated state; its secret half runs first and is idempotent, so a
- * crash between the two halves is repaired on the next start.
+ * and moves its secret to that sink ([SinkCredentials.adoptLegacySecret]). DataStore runs it
+ * before any read completes, so nothing ever sees the half-migrated state; its secret half runs
+ * first and is idempotent, so a crash between the two halves is repaired on the next start.
  *
  * The migrated sink keeps id [LEGACY_SINK_ID], the ack key the old single sink used, so batches it
  * had not acked yet still go to it.
  */
-class LegacySinkMigration(private val secrets: SecretStore) : DataMigration<Preferences> {
+class LegacySinkMigration(private val credentials: SinkCredentials) : DataMigration<Preferences> {
     override suspend fun shouldMigrate(currentData: Preferences): Boolean =
         SettingsKeys.LEGACY.any { it in currentData }
 
     override suspend fun migrate(currentData: Preferences): Preferences {
         val sink = legacySink(currentData)
-        if (sink != null && currentData[SettingsKeys.SINKS] == null) moveLegacySecret()
+        if (sink != null && currentData[SettingsKeys.SINKS] == null) credentials.adoptLegacySecret(LEGACY_SINK_ID)
         return currentData.toMutablePreferences().apply {
             if (sink != null && this[SettingsKeys.SINKS] == null) this[SettingsKeys.SINKS] = encodeSinks(listOf(sink))
             SettingsKeys.LEGACY.forEach { remove(it) }
@@ -148,14 +148,7 @@ class LegacySinkMigration(private val secrets: SecretStore) : DataMigration<Pref
 
     override suspend fun cleanUp() {
         // A secret left without a sink to use it (no URL was set) is deleted rather than kept forever.
-        secrets.put(LEGACY_UPLOAD_SECRET, null)
-    }
-
-    private suspend fun moveLegacySecret() {
-        val legacy = secrets.get(LEGACY_UPLOAD_SECRET) ?: return
-        val target = SinkSecrets.secret(LEGACY_SINK_ID)
-        if (secrets.get(target) == null) secrets.put(target, legacy)
-        secrets.put(LEGACY_UPLOAD_SECRET, null)
+        credentials.dropLegacySecret()
     }
 
     private fun legacySink(prefs: Preferences): SinkConfig? {
@@ -178,8 +171,5 @@ class LegacySinkMigration(private val secrets: SecretStore) : DataMigration<Pref
     companion object {
         const val LEGACY_SINK_ID = "http"
         const val LEGACY_SINK_NAME = "HTTP PUT"
-
-        /** Where earlier versions kept the single sink's password or token. */
-        const val LEGACY_UPLOAD_SECRET = "upload"
     }
 }

@@ -14,8 +14,8 @@ import java.security.spec.ECGenParameterSpec
 import java.util.Base64
 
 /**
- * SFTP client keys, one P-256 pair per sink alias ([sftpKeyAlias]). A seam so the settings and the
- * sink builder run on the JVM, where AndroidKeyStore does not exist.
+ * SFTP client keys, one P-256 pair per alias; [SinkCredentials] picks each sink's alias. A seam so
+ * the settings and the sink builder run on the JVM, where AndroidKeyStore does not exist.
  */
 interface SshKeys {
     /** The pair under [alias], or null if none exists. */
