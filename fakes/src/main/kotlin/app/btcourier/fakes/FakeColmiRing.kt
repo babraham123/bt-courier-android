@@ -1,5 +1,6 @@
 package app.btcourier.fakes
 
+import app.btcourier.core.transport.GattChannel
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneOffset
@@ -14,6 +15,11 @@ import java.time.ZoneOffset
  * notification. Days are in the ring's wall clock, which [set-time][CMD_SET_TIME] moves; its
  * "today" (the steps log's day offset 0) is the date last set, or [today] before any set.
  *
+ * The big-data channel (PulseLoopiOS, Gadgetbridge YawellRing) is the link's secondary channel:
+ * requests `bc <type> <len u16 LE> <crc16-modbus u16 LE> <payload>`, answers in the same framing
+ * split into notifications of at most `mtu - 3` bytes. Its history answers cover the
+ * [BIG_DATA_HISTORY_DAYS] days up to the ring's today, each tagged with how many days ago it is.
+ *
  * Not thread-safe; drive it from one dispatcher (`runTest`).
  *
  * @param heartRate per day, readings every 5 minutes from midnight (index = slot, 0 = none).
@@ -23,6 +29,11 @@ import java.time.ZoneOffset
  * @param autoHeartRateEnabled initial heart-rate logging setting (`0x16`); writes change it.
  * @param autoHeartRateIntervalMinutes initial logging interval. The heart-rate log answers keep
  *   their own 5-minute header whatever this says.
+ * @param spo2 per day, `(min, max)` percent by hour (0..23).
+ * @param sleep per day a session ended on, its sessions.
+ * @param temperature per day, tenths of a degree Celsius by half hour (0..47); 20.1..45.5 °C.
+ * @param bigDataChannel whether the ring has the big-data service at all.
+ * @param silentBigDataTypes big-data types the ring never answers, as a model without them.
  */
 class FakeColmiRing(
     private var today: LocalDate,
@@ -33,8 +44,17 @@ class FakeColmiRing(
     private val charging: Boolean = false,
     autoHeartRateEnabled: Boolean = true,
     autoHeartRateIntervalMinutes: Int = 5,
+    private val spo2: Map<LocalDate, Map<Int, Pair<Int, Int>>> = emptyMap(),
+    private val sleep: Map<LocalDate, List<Sleep>> = emptyMap(),
+    private val temperature: Map<LocalDate, Map<Int, Int>> = emptyMap(),
+    bigDataChannel: Boolean = true,
+    private val silentBigDataTypes: Set<Int> = emptySet(),
 ) {
-    val link: FakeGattLink = FakeGattLink(mtu = 23) { bytes, _ -> receive(bytes) }
+    val link: FakeGattLink =
+        FakeGattLink(
+            mtu = 23,
+            onSecondaryWrite = if (bigDataChannel) { bytes, _ -> receiveBigData(bytes) } else null,
+        ) { bytes, _ -> receive(bytes) }
 
     /** The heart-rate logging setting, as last written with `16 02`. */
     var autoHeartRateEnabled: Boolean = autoHeartRateEnabled
@@ -53,7 +73,10 @@ class FakeColmiRing(
     /** Every well-formed command packet received, in order. */
     val commands: List<ByteArray> get() = _commands.map { it.copyOf() }
 
-    /** Writes that were not a 16-byte packet with a correct checksum. */
+    /**
+     * Writes that were not a 16-byte packet with a correct checksum, or on the big-data channel
+     * not a request with matching length and CRC.
+     */
     var malformedWrites: Int = 0
         private set
 
@@ -223,6 +246,109 @@ class FakeColmiRing(
 
     private fun toBcd(v: Int): Int = (v / 10 shl 4) or (v % 10)
 
+    /**
+     * One sleep session as the ring sends it.
+     *
+     * @property start minute of day it began; greater than [end] when that was the evening before.
+     * @property end minute of the day it ended.
+     * @property stages `(stage code, minutes)` in order; 2 light, 3 deep, 4 REM, 5 awake.
+     */
+    data class Sleep(
+        val start: Int,
+        val end: Int,
+        val stages: List<Pair<Int, Int>>,
+    )
+
+    private val _bigDataRequests = mutableListOf<Int>()
+    private var dropOnBigData: Int? = null
+
+    /** Types of the well-formed big-data requests received, in order. */
+    val bigDataRequests: List<Int> get() = _bigDataRequests.toList()
+
+    /** The next big-data request of [type] drops the link instead of being answered. */
+    fun dropLinkOnBigDataRequest(type: Int) {
+        dropOnBigData = type
+    }
+
+    private fun receiveBigData(bytes: ByteArray) {
+        val u = { i: Int -> bytes[i].toInt() and 0xFF }
+        val wellFramed =
+            bytes.size >= 6 &&
+                u(0) == BIG_DATA_MAGIC &&
+                (u(2) or (u(3) shl 8)) == bytes.size - 6 &&
+                (u(4) or (u(5) shl 8)) == crc16Modbus(bytes.copyOfRange(6, bytes.size))
+        if (!wellFramed) {
+            malformedWrites++
+            return
+        }
+        val type = u(1)
+        _bigDataRequests += type
+        if (dropOnBigData == type) {
+            dropOnBigData = null
+            return link.drop()
+        }
+        if (type in silentBigDataTypes) return
+        val payload =
+            when (type) {
+                BIG_DATA_SPO2 -> spo2Answer()
+                BIG_DATA_SLEEP -> sleepAnswer()
+                BIG_DATA_TEMPERATURE -> temperatureAnswer()
+                else -> return
+            }
+        val frame =
+            byteArrayOf(BIG_DATA_MAGIC.toByte(), type.toByte()) + u16(payload.size) + u16(crc16Modbus(payload)) +
+                payload
+        frame.toList().chunked(link.mtu - 3).forEach { link.notify(it.toByteArray(), GattChannel.SECONDARY) }
+    }
+
+    /** The history window, oldest first, as `(daysAgo, date)`. */
+    private fun historyDays(): List<Pair<Int, LocalDate>> {
+        val oldest = BIG_DATA_HISTORY_DAYS - 1
+        return (oldest downTo 0).map { daysAgo -> daysAgo to today.minusDays(daysAgo.toLong()) }
+    }
+
+    private fun spo2Answer(): ByteArray =
+        historyDays().fold(ByteArray(0)) { acc, (daysAgo, date) ->
+            val hours = spo2[date].orEmpty()
+            acc + byteArrayOf(daysAgo.toByte()) +
+                ByteArray(48) { i -> hours[i / 2]?.let { if (i % 2 == 0) it.first else it.second }?.toByte() ?: 0 }
+        }
+
+    private fun temperatureAnswer(): ByteArray =
+        historyDays().fold(ByteArray(0)) { acc, (daysAgo, date) ->
+            val slots = temperature[date].orEmpty()
+            acc + byteArrayOf(daysAgo.toByte(), 0x1E) +
+                ByteArray(48) { slot -> slots[slot]?.let { (it - 200).toByte() } ?: 0 }
+        }
+
+    private fun sleepAnswer(): ByteArray {
+        val records =
+            historyDays().flatMap { (daysAgo, date) ->
+                sleep[date].orEmpty().map { s ->
+                    val stages = s.stages.flatMap { (code, minutes) -> listOf(code.toByte(), byte(minutes)) }
+                    val body = u16(s.start) + u16(s.end) + stages.toByteArray()
+                    byteArrayOf(daysAgo.toByte(), byte(body.size)) + body
+                }
+            }
+        return records.fold(byteArrayOf(byte(records.size))) { acc, r -> acc + r }
+    }
+
+    private fun u16(v: Int): ByteArray = byteArrayOf(v.toByte(), (v shr 8).toByte())
+
+    private fun byte(v: Int): Byte {
+        require(v in 0..0xFF) { "$v does not fit the one byte the ring sends" }
+        return v.toByte()
+    }
+
+    private fun crc16Modbus(bytes: ByteArray): Int {
+        var crc = 0xFFFF
+        for (b in bytes) {
+            crc = crc xor (b.toInt() and 0xFF)
+            repeat(8) { crc = if (crc and 1 == 1) (crc shr 1) xor 0xA001 else crc shr 1 }
+        }
+        return crc
+    }
+
     companion object {
         const val CMD_SET_TIME: Int = 0x01
         const val CMD_BATTERY: Int = 0x03
@@ -230,5 +356,11 @@ class FakeColmiRing(
         const val CMD_STEPS_LOG: Int = 0x43
         const val CMD_HRV_LOG: Int = 0x39
         const val CMD_AUTO_HEART_RATE: Int = 0x16
+
+        const val BIG_DATA_MAGIC: Int = 0xBC
+        const val BIG_DATA_TEMPERATURE: Int = 0x25
+        const val BIG_DATA_SLEEP: Int = 0x27
+        const val BIG_DATA_SPO2: Int = 0x2A
+        const val BIG_DATA_HISTORY_DAYS: Int = 7
     }
 }
