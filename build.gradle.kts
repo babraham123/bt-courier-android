@@ -1,6 +1,7 @@
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
+import org.jetbrains.kotlin.gradle.dsl.KotlinProjectExtension
 import org.jlleitschuh.gradle.ktlint.KtlintExtension
 
 plugins {
@@ -12,15 +13,13 @@ plugins {
     alias(libs.plugins.ktlint) apply false
 }
 
+// Compilers and test JVMs run on the JDK CI installs; settings.gradle.kts provisions it if missing.
+val toolchainJdk = 21
+
 // ktlint for every project, the root included so its own build scripts are checked too. The style
 // (ktlint_official, 120 columns) comes from .editorconfig.
 allprojects {
-    apply(
-        plugin =
-            rootProject.libs.plugins.ktlint
-                .get()
-                .pluginId,
-    )
+    apply(plugin = "org.jlleitschuh.gradle.ktlint")
     extensions.configure<KtlintExtension> {
         version.set(rootProject.libs.versions.ktlint.engine)
     }
@@ -31,9 +30,18 @@ allprojects {
     }
 }
 
-// Shared setup for the pure-JVM modules (core, fakes). Bytecode targets 17 to match the app
-// module, so core runs unchanged on every Android release the app supports.
 subprojects {
+    // The toolchain only picks the JDK that compiles and tests; bytecode targets stay at 17.
+    listOf("org.jetbrains.kotlin.jvm", "org.jetbrains.kotlin.android").forEach { kotlinPlugin ->
+        plugins.withId(kotlinPlugin) {
+            extensions.configure<KotlinProjectExtension> {
+                jvmToolchain(toolchainJdk)
+            }
+        }
+    }
+
+    // Shared setup for the pure-JVM modules (core, fakes). Bytecode targets 17 to match the app
+    // module, so core runs unchanged on every Android release the app supports.
     plugins.withId("org.jetbrains.kotlin.jvm") {
         extensions.configure<JavaPluginExtension> {
             sourceCompatibility = JavaVersion.VERSION_17
