@@ -1,0 +1,62 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices"
+  ],
+  "enabledManagers": [
+    "gradle",
+    "gradle-wrapper",
+    "github-actions"
+  ],
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "timezone": "Etc/UTC",
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 2,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 6am on monday"
+    ]
+  },
+  "packageRules": [
+    {
+      "description": "One PR for all AndroidX libraries and the Compose BOM.",
+      "matchPackageNames": [
+        "androidx.**"
+      ],
+      "groupName": "AndroidX"
+    },
+    {
+      "description": "Kotlin, its Gradle plugins and the Compose compiler plugin (everything on the kotlin version ref) move together. Does not match org.jetbrains.kotlinx.",
+      "matchPackageNames": [
+        "org.jetbrains.kotlin:**",
+        "org.jetbrains.kotlin.**"
+      ],
+      "groupName": "Kotlin"
+    },
+    {
+      "description": "OkHttp artifacts share one version.",
+      "matchPackageNames": [
+        "com.squareup.okhttp3:**"
+      ],
+      "groupName": "OkHttp"
+    },
+    {
+      "description": "AGP 9 needs Gradle 9; stay on AGP 8 until the wrapper moves to Gradle 9.",
+      "matchPackageNames": [
+        "com.android.application**",
+        "com.android.tools.build:gradle"
+      ],
+      "allowedVersions": "<9"
+    },
+    {
+      "description": "Kable releases after 0.42.0 are compiled against Kotlin 2.4 metadata; hold until the project is on Kotlin 2.4.",
+      "matchPackageNames": [
+        "com.juul.kable:**"
+      ],
+      "allowedVersions": "<=0.42.0"
+    }
+  ]
+}
