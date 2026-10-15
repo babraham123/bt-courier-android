@@ -4,7 +4,6 @@ import app.btcourier.core.sink.Batch
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.sink.UploadTransport
 import app.btcourier.core.store.DefaultStore
-import app.btcourier.core.store.FileStoreDb
 import app.btcourier.core.store.SealPolicy
 import app.btcourier.core.store.Store
 import app.btcourier.data.SecretStore
@@ -31,9 +30,9 @@ fun isMarker(line: String) = line.startsWith("""{"_file":""")
 /** Minutes, for advancing a test clock past [SealPolicy.maxBatchAgeMs]. */
 const val MINUTE = 60_000L
 
-/** The app's store as the app builds it: [DefaultStore] over [FileStoreDb]. */
+/** The app's store as the app builds it: [DefaultStore.open] on a directory. */
 fun openStore(dir: Path, sinks: Set<String>, clock: () -> Long = { NOW }): DefaultStore =
-    DefaultStore(FileStoreDb.open(dir), clock = clock, sinkIds = { sinks })
+    DefaultStore.open(dir, clock = clock, sinkIds = { sinks })
 
 /** Data rows (markers dropped) of every batch [sinkId] has not acked yet. */
 suspend fun Store.pendingRows(sinkId: String): List<String> =

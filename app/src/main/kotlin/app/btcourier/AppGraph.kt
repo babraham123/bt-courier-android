@@ -9,7 +9,6 @@ import app.btcourier.ble.CompanionPairedDeviceRepository
 import app.btcourier.ble.PairedDeviceRepository
 import app.btcourier.ble.newestAssociation
 import app.btcourier.core.store.DefaultStore
-import app.btcourier.core.store.FileStoreDb
 import app.btcourier.core.store.Store
 import app.btcourier.data.AndroidKeystoreSshKeys
 import app.btcourier.data.DataStoreSettings
@@ -50,8 +49,8 @@ import java.util.concurrent.TimeUnit
  * Manual dependency graph, initialised once by [BtCourierApp]. Workers, services and receivers
  * reach it statically because the system instantiates them.
  *
- * The store must be a single instance per process: [FileStoreDb] keeps its index in memory and
- * [DefaultStore] serialises writers with an in-process lock.
+ * The store must be a single instance per process: [DefaultStore] keeps its index in memory and
+ * serialises writers with an in-process lock.
  */
 // The application context lives as long as the process, so holding it statically leaks nothing.
 // Suppressed on the object: lint does not see the annotation on a Kotlin property's backing field.
@@ -87,7 +86,7 @@ object AppGraph {
     }
     val log: AppLog by lazy { AppLog(file = File(app.noBackupFilesDir, "app.log")) }
 
-    /** [FileStoreDb]'s directory; also listed by the diagnostics export. */
+    /** The store's directory; also listed by the diagnostics export. */
     val storeDir: File get() = File(app.filesDir, "store")
 
     val httpClient: OkHttpClient by lazy {
@@ -113,7 +112,7 @@ object AppGraph {
     }
 
     val store: Store by lazy {
-        DefaultStore(FileStoreDb.open(storeDir.toPath()), sinkIds = { sinkIds.value })
+        DefaultStore.open(storeDir.toPath(), sinkIds = { sinkIds.value })
     }
 
     val syncJob: SyncJob by lazy {

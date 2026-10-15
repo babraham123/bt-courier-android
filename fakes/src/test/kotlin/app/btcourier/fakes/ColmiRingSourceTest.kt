@@ -2,7 +2,6 @@ package app.btcourier.fakes
 
 import app.btcourier.core.source.colmi.ColmiRingSource
 import app.btcourier.core.store.DefaultStore
-import app.btcourier.core.store.InMemoryStoreDb
 import app.btcourier.core.sync.StopReason
 import app.btcourier.core.sync.SyncRunner
 import kotlinx.coroutines.test.runTest
@@ -109,7 +108,7 @@ class ColmiRingSourceTest {
     @Test
     fun `a sync stores one file per day, resumes at the stored cursor and rates stamps device`() = runTest {
         val ring = ring()
-        val store = DefaultStore(InMemoryStoreDb(), clock = { nowMs }, sinkIds = { setOf("sink") })
+        val store = DefaultStore.inMemory(clock = { nowMs }, sinkIds = { setOf("sink") })
         store.appendPage("colmi", "2026-10-12", emptyList())
 
         val report = SyncRunner("colmi", source(ring), store, clock = { nowMs }).run()
@@ -134,7 +133,7 @@ class ColmiRingSourceTest {
     @Test
     fun `a packet lost mid-answer interrupts the sync without moving the cursor, and the next sync stores the whole day`() = runTest {
         val ring = ring()
-        val store = DefaultStore(InMemoryStoreDb(), clock = { nowMs }, sinkIds = { setOf("sink") })
+        val store = DefaultStore.inMemory(clock = { nowMs }, sinkIds = { setOf("sink") })
         store.appendPage("colmi", "2026-10-12", emptyList())
         fun sync() = SyncRunner("colmi", source(ring), store, clock = { nowMs })
 

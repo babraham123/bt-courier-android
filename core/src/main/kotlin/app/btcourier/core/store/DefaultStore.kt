@@ -1,11 +1,17 @@
 package app.btcourier.core.store
 
 import app.btcourier.core.lines.StoredLine
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.nio.file.Path
 
 /**
- * [Store] policy over any [StoreDb]: cursor dedupe, sealing, ack lifecycle and the byte cap.
+ * The [Store]: cursor dedupe, sealing, the ack lifecycle and the byte cap over one immutable
+ * [StoreSnapshot]. Each call builds the next snapshot and hands it to [SnapshotPersistence] as one
+ * commit, so every call is atomic: a crash leaves the state before or after it, never between.
+ * Open it with [open] (a directory) or [inMemory].
  *
  * Every row lands in exactly one batch because pages are deduped by cursor before they are
  * stored, each page part is assigned to one batch at seal, and a batch's lines never change.
@@ -17,32 +23,52 @@ import kotlinx.coroutines.sync.withLock
  * in [StoreCounters.droppedLines] and [StoreCounters.droppedBytes]. The cap is enforced in
  * [seal], so a long sync can overshoot it until the next seal; callers seal after each sync.
  *
+ * One instance per storage: the instance holds the committed snapshot and serialises writers with
+ * an in-process lock, so a second instance on the same directory would overwrite its commits.
+ *
  * @param clock stamps appended pages; their age drives [SealPolicy.maxBatchAgeMs].
  * @param sinkIds the sinks currently configured. A batch is deleted once all of them acked it;
  *   with none configured, nothing is deleted, so data waits for the first sink.
  */
-class DefaultStore(
-    private val db: StoreDb,
-    private val clock: () -> Long = System::currentTimeMillis,
+class DefaultStore internal constructor(
+    private val persistence: SnapshotPersistence,
+    private val clock: () -> Long,
     private val sinkIds: () -> Set<String>,
 ) : Store {
-    // StoreDb promises atomic writes, not atomic read-modify-write; one writer at a time covers that.
+    companion object {
+        /** Opens (or creates) the store in [dir], discarding anything a crash left uncommitted. */
+        fun open(dir: Path, clock: () -> Long = System::currentTimeMillis, sinkIds: () -> Set<String>): DefaultStore =
+            DefaultStore(FilePersistence(dir), clock, sinkIds)
+
+        /** A volatile store, for tests and a sink-less dry run. */
+        fun inMemory(clock: () -> Long = System::currentTimeMillis, sinkIds: () -> Set<String>): DefaultStore =
+            DefaultStore(MemoryPersistence(), clock, sinkIds)
+    }
+
     private val mutex = Mutex()
 
+    // Replaced only by commit, so it always equals what persistence last committed.
+    private var snapshot = persistence.load()
+
     override suspend fun appendPage(sourceId: String, cursor: String, lines: List<String>): Boolean = mutex.withLock {
-        val state = db.source(sourceId)
+        val s = snapshot
+        val state = s.sources[sourceId]
         // The current cursor is checked too because its page may already be uploaded and deleted.
-        if (state?.cursor == cursor || db.hasPage(sourceId, cursor)) return@withLock false
+        if (state?.cursor == cursor || s.pages.any { it.sourceId == sourceId && it.cursor == cursor }) {
+            return@withLock false
+        }
         var marker = state?.fileMarker
         val now = clock()
-        val parts = splitAtNewFiles(lines, marker).mapIndexed { i, part ->
+        val parts = splitAtNewFiles(lines, marker)
+        val metas = parts.mapIndexed { i, part ->
             val startsFile = part.newMarker != null
             if (startsFile) marker = part.newMarker
-            NewPage(
+            PageMeta(
+                seq = s.nextPageSeq + i,
                 sourceId = sourceId,
                 cursor = cursor,
                 part = i,
-                lines = part.lines,
+                lineCount = part.lines.size,
                 bytes = part.lines.sumOf(::encodedSize),
                 receivedAtMs = now,
                 fileMarker = marker,
@@ -51,34 +77,51 @@ class DefaultStore(
         }
         // Repeated markers for the current file don't split, but the latest text is kept.
         val lastMarker = lines.lastOrNull(StoredLine::isMarker) ?: marker
-        db.insertPages(SourceState(sourceId, cursor, lastMarker), parts)
+        val next = s.copy(
+            sources = s.sources + (sourceId to SourceState(sourceId, cursor, lastMarker)),
+            pages = s.pages + metas,
+            nextPageSeq = s.nextPageSeq + metas.size,
+        )
+        commit(next, added = metas.zip(parts).associate { (meta, part) -> meta.seq to part.lines })
         true
     }
 
-    override suspend fun cursor(sourceId: String): String? = db.source(sourceId)?.cursor
+    override suspend fun cursor(sourceId: String): String? = mutex.withLock { snapshot.sources[sourceId]?.cursor }
+
+    override suspend fun openFile(sourceId: String): String? =
+        mutex.withLock { snapshot.sources[sourceId]?.fileMarker?.let(StoredLine::markerFile) }
 
     override suspend fun seal(policy: SealPolicy, nowMs: Long): List<String> = mutex.withLock {
-        val runs = db.pages().filter { it.batchId == null }.groupBy { it.sourceId }.values
+        val s = snapshot
+        val runs = s.pages.filter { it.batchId == null }.groupBy { it.sourceId }.values
             .flatMap { closedRuns(it, policy, nowMs) }
             // Batch ids then follow data age across sources, which is what eviction walks.
             .sortedBy { it.first().seq }
-        val sealed = runs.map { run ->
-            db.insertBatch(NewBatch(run.first().sourceId, run.first().cursor, nowMs), run.map { it.seq })
+        val batchOfPage = HashMap<Long, Long>()
+        val sealed = runs.mapIndexed { i, run ->
+            val id = s.nextBatchId + i
+            run.forEach { batchOfPage[it.seq] = id }
+            BatchRow(id, run.first().sourceId, run.first().cursor, nowMs)
         }
-        prune()
-        evict(policy.maxStoreBytes)
-        sealed.map(Long::toString)
+        val next = s.copy(
+            pages = s.pages.map { page -> batchOfPage[page.seq]?.let { page.copy(batchId = it) } ?: page },
+            batches = s.batches + sealed,
+            nextBatchId = s.nextBatchId + sealed.size,
+        )
+        commit(next.pruned().evicted(policy.maxStoreBytes))
+        sealed.map { it.id.toString() }
     }
 
     override suspend fun pending(sinkId: String, limit: Int): List<SealedBatch> = mutex.withLock {
-        val pagesByBatch = db.pages().filter { it.batchId != null }.groupBy { it.batchId!! }
-        db.batches()
+        val s = snapshot
+        val pagesByBatch = s.pages.filter { it.batchId != null }.groupBy { it.batchId!! }
+        s.batches
             .filter { sinkId !in it.acks }
             .sortedBy { pagesByBatch[it.id]?.first()?.seq ?: Long.MAX_VALUE }
             .take(limit)
             .map { batch ->
                 val pages = pagesByBatch[batch.id].orEmpty()
-                val lines = pages.flatMap { db.pageLines(it.seq) }
+                val lines = pages.flatMap { persistence.lines(it.seq) }
                 val first = pages.firstOrNull()
                 // A batch cut by size or age starts mid-file; restating the marker keeps every
                 // batch self-describing (plan: "each batch starts with the _file marker").
@@ -95,18 +138,35 @@ class DefaultStore(
 
     override suspend fun ack(batchId: String, sinkId: String) = mutex.withLock {
         val id = batchId.toLongOrNull() ?: return@withLock
-        db.addAck(id, sinkId)
-        prune()
+        val s = snapshot
+        commit(s.copy(batches = s.batches.map { if (it.id == id) it.copy(acks = it.acks + sinkId) else it }).pruned())
     }
 
     override suspend fun counters(): StoreCounters = mutex.withLock {
-        val dropped = db.dropped()
+        val s = snapshot
         StoreCounters(
-            bytesStored = db.pages().sumOf { it.bytes },
-            pendingBatches = db.batches().size,
-            droppedLines = dropped.lines,
-            droppedBytes = dropped.bytes,
+            bytesStored = s.pages.sumOf { it.bytes },
+            pendingBatches = s.batches.size,
+            droppedLines = s.dropped.lines,
+            droppedBytes = s.dropped.bytes,
         )
+    }
+
+    /**
+     * Makes [next] the committed snapshot, storing [added] page lines and dropping the lines of
+     * pages [next] no longer has. A no-op when nothing changed.
+     */
+    private suspend fun commit(next: StoreSnapshot, added: Map<Long, List<String>> = emptyMap()) {
+        val prev = snapshot
+        if (next == prev) return
+        val kept = next.pages.mapTo(HashSet()) { it.seq }
+        val removed = prev.pages.map { it.seq }.filterNot(kept::contains)
+        // Non-cancellable so a caller cancelled mid-commit can't skip `snapshot = next` after the
+        // commit reached disk; a stale snapshot would be written back by the next commit.
+        withContext(NonCancellable) {
+            persistence.commit(next, added, removed)
+            snapshot = next
+        }
     }
 
     /**
@@ -136,39 +196,49 @@ class DefaultStore(
         return closed
     }
 
-    /** Deletes batches every configured sink has acked. */
-    private suspend fun prune() {
+    /** Without the batches every configured sink has acked. */
+    private fun StoreSnapshot.pruned(): StoreSnapshot {
         val sinks = sinkIds()
-        if (sinks.isEmpty()) return
-        val done = db.batches().filter { it.acks.containsAll(sinks) }.map { it.id }
-        if (done.isNotEmpty()) db.delete(done, emptyList())
-    }
-
-    private suspend fun evict(capBytes: Long) {
-        val pages = db.pages()
-        var total = pages.sumOf { it.bytes }
-        if (total <= capBytes) return
-        val batchIds = mutableListOf<Long>()
-        val pageSeqs = mutableListOf<Long>()
-        var dropped = Dropped()
-        val (sealed, unsealed) = pages.partition { it.batchId != null }
-        // Pages are in seq order, so grouping keeps batches ordered by their oldest data.
-        for ((batchId, batchPages) in sealed.groupBy { it.batchId!! }) {
-            if (total <= capBytes) break
-            val bytes = batchPages.sumOf { it.bytes }
-            batchIds += batchId
-            dropped += Dropped(batchPages.sumOf { it.lineCount.toLong() }, bytes)
-            total -= bytes
-        }
-        for (page in unsealed) {
-            if (total <= capBytes) break
-            pageSeqs += page.seq
-            dropped += Dropped(page.lineCount.toLong(), page.bytes)
-            total -= page.bytes
-        }
-        db.delete(batchIds, pageSeqs, dropped)
+        if (sinks.isEmpty()) return this
+        return without(batches.filter { it.acks.containsAll(sinks) }.mapTo(HashSet()) { it.id })
     }
 }
+
+/** Without the oldest data beyond [capBytes]: sealed batches first, then unsealed pages. */
+private fun StoreSnapshot.evicted(capBytes: Long): StoreSnapshot {
+    var total = pages.sumOf { it.bytes }
+    if (total <= capBytes) return this
+    val batchIds = HashSet<Long>()
+    val pageSeqs = HashSet<Long>()
+    var dropped = Dropped()
+    val (sealed, unsealed) = pages.partition { it.batchId != null }
+    // Pages are in seq order, so grouping keeps batches ordered by their oldest data.
+    for ((batchId, batchPages) in sealed.groupBy { it.batchId!! }) {
+        if (total <= capBytes) break
+        val bytes = batchPages.sumOf { it.bytes }
+        batchIds += batchId
+        dropped += Dropped(batchPages.sumOf { it.lineCount.toLong() }, bytes)
+        total -= bytes
+    }
+    for (page in unsealed) {
+        if (total <= capBytes) break
+        pageSeqs += page.seq
+        dropped += Dropped(page.lineCount.toLong(), page.bytes)
+        total -= page.bytes
+    }
+    return without(batchIds, pageSeqs, dropped)
+}
+
+/** Without [batchIds] (with their pages and acks) and the pages [pageSeqs], counting [dropped]. */
+private fun StoreSnapshot.without(
+    batchIds: Set<Long>,
+    pageSeqs: Set<Long> = emptySet(),
+    dropped: Dropped = Dropped(),
+): StoreSnapshot = copy(
+    pages = pages.filterNot { it.seq in pageSeqs || it.batchId in batchIds },
+    batches = batches.filterNot { it.id in batchIds },
+    dropped = this.dropped + dropped,
+)
 
 /** Bytes a line occupies once encoded as JSONL: UTF-8 plus the newline. */
 internal fun encodedSize(line: String): Long = line.encodeToByteArray().size + 1L

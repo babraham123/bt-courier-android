@@ -13,6 +13,7 @@ fun marker(file: String): String = StoredLine.marker(file)
 /** Spec: a line costs its UTF-8 bytes plus the JSONL newline. */
 fun sizeOf(lines: List<String>): Long = lines.sumOf { it.toByteArray(Charsets.UTF_8).size + 1L }
 
+/** The [SnapshotPersistence] adapters every store test runs against. */
 enum class DbKind { MEMORY, FILE }
 
 /** A [DefaultStore] with a settable clock that can be reopened on the same storage. */
@@ -22,7 +23,7 @@ class StoreHarness(
     var sinks: Set<String> = setOf("a"),
 ) {
     var now = 1_000_000L
-    private var memoryDb: StoreDb? = null
+    private val memory = MemoryPersistence()
     var store: DefaultStore = open()
         private set
 
@@ -30,11 +31,11 @@ class StoreHarness(
     fun reopen(beforeCommit: () -> Unit = {}): DefaultStore = open(beforeCommit).also { store = it }
 
     private fun open(beforeCommit: () -> Unit = {}): DefaultStore {
-        val db = when (kind) {
-            DbKind.FILE -> FileStoreDb.open(dir, beforeCommit)
-            DbKind.MEMORY -> memoryDb ?: InMemoryStoreDb().also { memoryDb = it }
+        val persistence = when (kind) {
+            DbKind.FILE -> FilePersistence(dir, beforeCommit)
+            DbKind.MEMORY -> memory
         }
-        return DefaultStore(db, clock = { now }, sinkIds = { sinks })
+        return DefaultStore(persistence, clock = { now }, sinkIds = { sinks })
     }
 }
 

@@ -32,9 +32,8 @@ import kotlin.time.Duration.Companion.seconds
  * reboot between writing them and the sync. Re-basing at seal time instead would need the store
  * to keep raw lines.
  *
- * The open file is carried only within one sync: the first page starts with none, so a source
- * must start every page with the marker of the file it resumes in (the WiCAN export and
- * `ColmiRingSource` both do), or its leading rows are re-based as belonging to no file.
+ * The first page starts in the file the store last left open for the source ([Store.openFile]),
+ * so a page that resumes mid-file without restating its marker is still re-based as that file.
  *
  * Failures end the sync cleanly: the store's cursor stays at the last page persisted, so the next
  * sync resumes there, and a page that was pulled but not persisted is pulled again.
@@ -79,7 +78,7 @@ class SyncRunner(
         val status = retryBusy { source.deviceStatus() }
         val anchor = status?.let { Anchor(phoneEpochMs = it.phoneEpochMs, deviceEpochMs = it.deviceEpochMs) }
         val journal = retryBusy { source.clockJournal() }
-        var openFile: String? = null
+        var openFile = store.openFile(sourceId)
         while (true) {
             val cursor = store.cursor(sourceId)
             val page = retryBusy { source.pull(cursor) }

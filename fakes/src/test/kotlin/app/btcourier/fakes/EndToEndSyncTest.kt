@@ -8,7 +8,6 @@ import app.btcourier.core.sink.LocalDirectoryUploadTransport
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.sink.UploadTransport
 import app.btcourier.core.store.DefaultStore
-import app.btcourier.core.store.FileStoreDb
 import app.btcourier.core.store.SealPolicy
 import app.btcourier.core.sync.StopReason
 import app.btcourier.core.sync.SyncReport
@@ -32,7 +31,7 @@ import kotlin.io.path.readBytes
 
 /**
  * T7: [FakeWicanLogger] behind [ScriptedPeripheral] → [BleHttpTransport] → [WicanLoggerSource] →
- * [SyncRunner] → [DefaultStore] on [FileStoreDb] → seal → [CompositeSink] of
+ * [SyncRunner] → [DefaultStore] on a directory → seal → [CompositeSink] of
  * [LocalDirectoryUploadTransport] and [Jsonl]. Expected stamps follow the plan's guarantees and
  * log_clock.py's rule: rows of a file a clock set lists, stamped at or before its `ts_before`,
  * move by its `delta_ms`.
@@ -88,7 +87,7 @@ class EndToEndSyncTest {
     private val sink by lazy { CompositeSink("local", upload, Jsonl) }
 
     /** Opens the store from disk, as a fresh process would. */
-    private fun openStore() = DefaultStore(FileStoreDb.open(storeDir), clock = { 0 }, sinkIds = { setOf(sink.id) })
+    private fun openStore() = DefaultStore.open(storeDir, clock = { 0 }, sinkIds = { setOf(sink.id) })
 
     /**
      * One connection: a new link, transport and source over [device], one sync, then delivery.

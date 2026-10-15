@@ -279,4 +279,56 @@ class DefaultStoreTest {
 
         assertEquals(expected, s.pendingRows("a").flatten())
     }
+
+    @ParameterizedTest
+    @EnumSource(DbKind::class)
+    fun `the open file follows the latest stored marker and outlives its pages`(kind: DbKind) = runTest {
+        val h = harness(kind)
+        val s = h.store
+        assertNull(s.openFile("dev"))
+        s.appendPage("dev", "c1", rows(1..1))
+        assertNull(s.openFile("dev"))
+
+        s.appendPage("dev", "c2", listOf(marker("f1")) + rows(2..2) + marker("f2") + rows(3..3))
+        s.appendPage("dev", "c3", rows(4..4))
+        s.appendPage("ring", "r1", listOf(marker("colmi/day")))
+        assertEquals("f2", s.openFile("dev"))
+        assertEquals("colmi/day", s.openFile("ring"))
+
+        // Uploaded and deleted, or evicted: the next pull still resumes in f2.
+        s.seal(neverByAgeOrSize.copy(maxBatchAgeMs = 0), h.now)
+        s.pending("a").forEach { s.ack(it.id, "a") }
+        assertEquals(0L, s.counters().bytesStored)
+        assertEquals("f2", h.reopen().openFile("dev"))
+    }
+
+    @ParameterizedTest
+    @EnumSource(DbKind::class)
+    fun `cursor, pages, batches, acks and counters survive a reopen`(kind: DbKind) = runTest {
+        val h = harness(kind, sinks = setOf("http", "local"))
+        val f0 = listOf(marker("f0")) + rows(0..0)
+        val f1 = listOf(marker("f1")) + rows(1..5)
+        val f2 = listOf(marker("f2")) + rows(6..6)
+        h.store.appendPage("dev", "0:0", f0)
+        h.store.appendPage("dev", "1:100", f1.take(4))
+        h.store.appendPage("dev", "1:200", f1.drop(4))
+        h.store.appendPage("dev", "2:0", f2)
+        val (b0, b1) = h.store.seal(neverByAgeOrSize, h.now)
+        h.store.ack(b1, "http")
+        h.store.seal(neverByAgeOrSize.copy(maxStoreBytes = sizeOf(f1 + f2)), h.now)
+        val before = h.store.counters()
+        assertEquals(StoreCounters(sizeOf(f1 + f2), 1, f0.size.toLong(), sizeOf(f0)), before)
+
+        val s = h.reopen()
+
+        assertEquals("2:0", s.cursor("dev"))
+        assertFalse(s.appendPage("dev", "2:0", f2))
+        assertEquals(before, s.counters())
+        assertEquals(emptyList<SealedBatch>(), s.pending("http"))
+        assertEquals(listOf(f1), s.pending("local").map { it.lines })
+        // Batch ids are never reused, even for the evicted batch.
+        val b2 = s.seal(neverByAgeOrSize.copy(maxBatchAgeMs = 0), h.now).single()
+        assertTrue(b2 != b0 && b2 != b1)
+        assertEquals(listOf(f1, f2), s.pending("local").map { it.lines })
+    }
 }
