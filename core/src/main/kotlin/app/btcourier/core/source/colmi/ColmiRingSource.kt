@@ -6,7 +6,13 @@ import app.btcourier.core.source.Page
 import app.btcourier.core.source.Source
 import app.btcourier.core.transport.GattLink
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import java.io.IOException
+import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -24,10 +30,11 @@ import kotlin.time.Duration.Companion.seconds
  * Cursor: the last whole day pulled, `YYYY-MM-DD` in [zone]. [pull] fetches the day after it:
  * its heart-rate log (`0x15`), steps log (`0x43`) and HRV log (`0x39`), as
  * `{"_file":"colmi/<day>"}` followed by `colmi.hr` (bpm per 5-minute slot), `colmi.steps` (steps
- * per quarter hour) and `colmi.hrv` (ms per 30-minute slot) rows in time order, so the store seals
- * one batch per day. Only days before today are pulled, because a partial today stored under its
- * cursor could never be topped up; `more` stays true while the day after the one pulled is still
- * before today. Once caught up, [pull] answers an empty page with the same cursor and `more:false`.
+ * per quarter hour), `colmi.hrv` (ms per 30-minute slot) and the big-data rows below, in time order,
+ * so the store seals one batch per day. Only days before today are pulled, because a partial today
+ * stored under its cursor could never be topped up; `more` stays true while the day after the one
+ * pulled is still before today. Once caught up, [pull] answers an empty page with the same cursor
+ * and `more:false`.
  *
  * The ring is assumed to keep today and the 7 days before it ([historyDays]). A null cursor
  * starts at the oldest day it holds (`today - (historyDays - 1)`), and an older cursor is clamped
@@ -60,6 +67,25 @@ import kotlin.time.Duration.Companion.seconds
  * used: each heart-rate log's header carries the interval it was recorded at, which places its
  * readings even when the setting changed since (there is no logger in core to flag a mismatch).
  *
+ * Big-data channel ([ColmiBigData], the link's secondary channel): after the cursor day's UART
+ * logs, the first page of an instance asks for the ring's SpO2, sleep and temperature history.
+ * Each answer holds every day the ring keeps, so each type is asked for once per instance and
+ * every page takes the cursor day's part, by days before the phone's today as for steps:
+ * - `colmi.spo2`: one row per hour with a reading, `ts` the hour's start,
+ *   `"value":{"min":<percent>,"max":<percent>}`.
+ * - `colmi.sleep`: one row per session that ended on the cursor day, `ts` its start,
+ *   `"value":{"start_ts":<ms>,"end_ts":<ms>,"stages":[{"stage":<name>,"minutes":<n>},...],
+ *   "minutes":{"light":<n>,"deep":<n>,"rem":<n>,"awake":<n>}}`. Stages are in ring order, named
+ *   `light`, `deep`, `rem`, `awake`, or `stage_<code>` for an unnamed code; `minutes` totals each
+ *   stage, every named one included. A session that began the evening before has `ts` on the
+ *   previous day.
+ * - `colmi.temp`: one row per half hour with a reading, `ts` the slot's start,
+ *   `"value":{"c":<degrees Celsius, one decimal>}`.
+ *
+ * A type the ring does not answer in time (a model without it) yields no rows for the rest of the
+ * instance, and a link without the big-data channel yields none at all; neither fails the day,
+ * while a dropped link does.
+ *
  * Unverified on hardware (all from the public reverse engineering; to be checked against a ring):
  * - Ring timestamps are its wall clock counted as if UTC. `colmi_r02_client` sets the ring to UTC
  *   and requests UTC midnights, which is this rule with `zone = UTC`; with a local zone the ring's
@@ -77,11 +103,17 @@ import kotlin.time.Duration.Companion.seconds
  *   those are skipped, as are notifications that are not whole 16-byte packets or fail the checksum
  *   (a corrupted packet of the answer then surfaces as a timeout).
  * - [historyDays] = 8, as Gadgetbridge and PulseLoopiOS both ask for day offsets 0..7.
+ * - Everything on the big-data channel (from PulseLoopiOS and Gadgetbridge): its UUIDs, which
+ *   models have it, the request payloads, the write type, answers' `daysAgo` counting
+ *   from the phone's today after set-time, sleep start/end as minutes of the day it ended, and
+ *   the temperature scale.
  *
  * Not thread-safe: one pull at a time, as `SyncRunner` does.
  *
  * @param responseTimeout longest wait for each packet of an answer; exceeding it is an
- *   [IOException], like any other link failure, and the day is pulled again next sync.
+ *   [IOException], like any other link failure, and the day is pulled again next sync. On the
+ *   big-data channel it bounds each notification of an answer, and exceeding it marks the type
+ *   unsupported instead.
  * @param settleDelay wait between the instance's first [pull] (right after connecting) and its
  *   first command.
  */
@@ -100,6 +132,7 @@ class ColmiRingSource(
     private var settled = false
     private var clockSet = false
     private var batteryReported = false
+    private val bigData = ColmiBigDataLogs(link, responseTimeout)
 
     // Unknown until the first 0x39 request of this instance.
     private var hrvSupported: Boolean? = null
@@ -113,7 +146,12 @@ class ColmiRingSource(
         // A null cursor always has a day to pull, since oldest < today.
         if (!day.isBefore(today)) return Page(emptyList(), checkNotNull(cursor), more = false)
 
-        val rows = (heartRateRows(day) + stepsRows(day, today) + hrvRows(day, today)).sortedBy { it.ts }
+        val rows =
+            (
+                heartRateRows(
+                    day,
+                ) + stepsRows(day, today) + hrvRows(day, today) + bigDataRows(day, today)
+            ).sortedBy { it.ts }
         val lines =
             buildList {
                 add(StoredLine.marker("$FILE_PREFIX$day"))
@@ -225,6 +263,62 @@ class ColmiRingSource(
         fun json() = """{"ts":$ts,"param":"$param","value":$valueJson}"""
     }
 
+    /** The cursor day's rows from the big-data channel's answers, in no particular order. */
+    private suspend fun bigDataRows(
+        day: LocalDate,
+        today: LocalDate,
+    ): List<Row> {
+        val daysAgo = ChronoUnit.DAYS.between(day, today).toInt()
+        val start = day.atStartOfDay()
+        val spo2 =
+            ColmiBigData.parseSpo2(bigData.payload(ColmiBigData.TYPE_SPO2)).filter { it.daysAgo == daysAgo }.map {
+                val value =
+                    buildJsonObject {
+                        put("min", it.min)
+                        put("max", it.max)
+                    }
+                Row(epochMs(start.plusHours(it.hour.toLong())), PARAM_SPO2, value.toString())
+            }
+        val sleep =
+            ColmiBigData.parseSleep(bigData.payload(ColmiBigData.TYPE_SLEEP)).filter { it.daysAgo == daysAgo }.map {
+                val startTs = epochMs(start.plusMinutes(it.startOffsetMinutes.toLong()))
+                Row(startTs, PARAM_SLEEP, sleepValue(it, startTs, epochMs(start.plusMinutes(it.endMinute.toLong()))))
+            }
+        val temperature =
+            ColmiBigData
+                .parseTemperature(bigData.payload(ColmiBigData.TYPE_TEMPERATURE))
+                .filter { it.daysAgo == daysAgo }
+                .map {
+                    val value = buildJsonObject { put("c", BigDecimal.valueOf(it.deciCelsius.toLong(), 1)) }
+                    Row(epochMs(start.plusMinutes(it.slot * 30L)), PARAM_TEMP, value.toString())
+                }
+        return spo2 + sleep + temperature
+    }
+
+    /** `{"start_ts","end_ts","stages":[{"stage","minutes"}],"minutes":{<stage>:<total>}}`. */
+    private fun sleepValue(
+        session: ColmiSleepSession,
+        startTs: Long,
+        endTs: Long,
+    ): String {
+        // Every named stage appears in the totals, so receivers need not treat a missing key as 0.
+        val totals = ColmiSleepStage.STAGE_LABELS.values.associateWithTo(LinkedHashMap()) { 0 }
+        session.stages.forEach { totals.merge(it.label, it.minutes, Int::plus) }
+        return buildJsonObject {
+            put("start_ts", startTs)
+            put("end_ts", endTs)
+            putJsonArray("stages") {
+                session.stages.forEach {
+                    addJsonObject {
+                        put("stage", it.label)
+                        put("minutes", it.minutes)
+                    }
+                }
+            }
+            putJsonObject("minutes") { totals.forEach { (stage, minutes) -> put(stage, minutes) } }
+        }.toString()
+    }
+
     companion object {
         const val DEFAULT_HISTORY_DAYS: Int = 8
         const val FILE_PREFIX: String = "colmi/"
@@ -233,6 +327,9 @@ class ColmiRingSource(
         const val PARAM_HRV: String = "colmi.hrv"
         const val PARAM_BATTERY: String = "colmi.battery"
         const val PARAM_HR_LOGGING: String = "colmi.hr_logging"
+        const val PARAM_SPO2: String = "colmi.spo2"
+        const val PARAM_SLEEP: String = "colmi.sleep"
+        const val PARAM_TEMP: String = "colmi.temp"
 
         /** Gadgetbridge's wait after connecting, "to give the ring time to settle". */
         val DEFAULT_SETTLE_DELAY: Duration = 2.seconds
