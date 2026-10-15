@@ -72,6 +72,15 @@ class ColmiRingSourceTest {
                         },
                 ),
             batteryLevel = 87,
+            // Unlike the 5-minute header of every heart-rate answer: the header places readings.
+            autoHeartRateIntervalMinutes = 10,
+        )
+
+    // ring()'s battery and heart-rate logging setting, stamped with the phone clock on the first page.
+    private val statusRows =
+        listOf(
+            row(nowMs, "colmi.battery", 87),
+            """{"ts":$nowMs,"param":"colmi.hr_logging","value":{"enabled":true,"interval_min":10}}""",
         )
 
     // ring()'s day1 as rows, in time order.
@@ -105,7 +114,7 @@ class ColmiRingSourceTest {
             // Only the 2 s settle before set-time takes (virtual) time; every answer is immediate.
             assertEquals(2_000L, currentTime)
             assertEquals(
-                listOf("""{"_file":"colmi/2026-10-13"}""") + day1Rows + row(nowMs, "colmi.battery", 87),
+                listOf("""{"_file":"colmi/2026-10-13"}""") + day1Rows + statusRows,
                 first.lines,
             )
             assertEquals("2026-10-13", first.nextCursor)
@@ -136,6 +145,8 @@ class ColmiRingSourceTest {
             assertEquals(listOf(2, 1), commands.filter { it[0].toInt() == 0x43 }.map { it[1].toInt() })
             // So do HRV requests, as a 4-byte LE count.
             assertEquals(listOf(2L, 1L), commands.filter { it[0].toInt() == 0x39 }.map(::u32le))
+            // The logging setting is read (16 01) once per instance.
+            assertEquals(listOf(0x01), commands.filter { it[0].toInt() == 0x16 }.map { it[1].toInt() })
         }
 
     private fun u32le(p: ByteArray) =
@@ -166,8 +177,7 @@ class ColmiRingSourceTest {
 
             val first = source.pull("2026-10-12")
             assertEquals(
-                listOf("""{"_file":"colmi/2026-10-13"}""") + day1Rows.filterNot { "colmi.hrv" in it } +
-                    row(nowMs, "colmi.battery", 87),
+                listOf("""{"_file":"colmi/2026-10-13"}""") + day1Rows.filterNot { "colmi.hrv" in it } + statusRows,
                 first.lines,
             )
             // The 2 s settle, then one 5 s HRV timeout.
@@ -192,7 +202,7 @@ class ColmiRingSourceTest {
             ring.corruptNextHrvPacket(2)
             assertInstanceOf(IOException::class.java, runCatching { source.pull("2026-10-12") }.exceptionOrNull())
             val day1 = source.pull("2026-10-12")
-            assertEquals(listOf("""{"_file":"colmi/2026-10-13"}""") + day1Rows, day1.lines.dropLast(1))
+            assertEquals(listOf("""{"_file":"colmi/2026-10-13"}""") + day1Rows + statusRows, day1.lines)
 
             ring.silentCommands += FakeColmiRing.CMD_HRV_LOG
             assertInstanceOf(IOException::class.java, runCatching { source.pull(day1.nextCursor) }.exceptionOrNull())
@@ -243,15 +253,15 @@ class ColmiRingSourceTest {
             val report = sync(ring, store)
             assertEquals(StopReason.CaughtUp, report.stoppedBecause)
             assertEquals(2, report.pagesPulled)
-            // Day 1's 8 rows and the battery, then day 2's one.
-            assertEquals(10L, report.linesStored)
+            // Day 1's 8 rows, the battery and the logging setting, then day 2's one.
+            assertEquals(11L, report.linesStored)
             assertEquals("2026-10-14", store.cursor("colmi"))
 
             // The day-1 batch is sealed by day 2's marker; every row keeps its stamp as `device`.
             val day1Batch = store.pending("sink").first()
             assertEquals("""{"_file":"colmi/2026-10-13"}""", day1Batch.lines.first())
             val rows = day1Batch.lines.drop(1)
-            assertEquals(9, rows.size)
+            assertEquals(10, rows.size)
             assertTrue(rows.all { it.contains("\"ts_quality\":\"device\"") }, rows.joinToString("\n"))
 
             val again = sync(ring, store)
@@ -296,7 +306,7 @@ class ColmiRingSourceTest {
             assertEquals("""{"_file":"colmi/2026-10-13"}""", day1Batch.lines.first())
             // Stored rows are the source's with ts_raw and ts_quality appended.
             assertEquals(
-                day1Rows + row(nowMs, "colmi.battery", 87),
+                day1Rows + statusRows,
                 day1Batch.lines.drop(1).map { it.substringBefore(""","ts_raw"""") + "}" },
             )
         }
