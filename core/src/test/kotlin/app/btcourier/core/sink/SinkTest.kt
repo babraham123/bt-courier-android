@@ -1,5 +1,6 @@
 package app.btcourier.core.sink
 
+import app.btcourier.core.auth.OidcException
 import app.btcourier.core.store.DbKind
 import app.btcourier.core.store.SealPolicy
 import app.btcourier.core.store.SealedBatch
@@ -10,6 +11,7 @@ import app.btcourier.core.store.rows
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -36,8 +38,8 @@ class SinkTest {
 
     @Test
     fun `jsonl joins lines with a newline after each`() {
-        assertEquals("a\nb\n", Jsonl.encode(listOf("a", "b")).decodeToString())
-        assertEquals("", Jsonl.encode(emptyList()).decodeToString())
+        assertEquals("a\nb\n", Jsonl.encode(listOf("a", "b"), "wican").decodeToString())
+        assertEquals("", Jsonl.encode(emptyList(), "wican").decodeToString())
         assertEquals("jsonl", Jsonl.extension)
     }
 
@@ -46,7 +48,7 @@ class SinkTest {
         val a = encodeBatch(batch(), Jsonl)
         val b = encodeBatch(batch(lines.toList()), Jsonl)
         assertEquals(a, b)
-        assertArrayEquals(Gzip.compress(Jsonl.encode(lines)), a.bytes)
+        assertArrayEquals(Gzip.compress(Jsonl.encode(lines, "wican")), a.bytes)
     }
 
     @Test
@@ -56,13 +58,13 @@ class SinkTest {
         assertEquals(0x8b, gz[1].toInt() and 0xff)
         assertEquals(0, gz[3].toInt(), "FLG: no FNAME, FEXTRA or FCOMMENT")
         assertArrayEquals(ByteArray(4), gz.copyOfRange(4, 8), "MTIME")
-        assertArrayEquals(Jsonl.encode(lines), gunzip(gz))
+        assertArrayEquals(Jsonl.encode(lines, "wican"), gunzip(gz))
     }
 
     @Test
     fun `batch name is source, sanitised first cursor and content hash prefix`() {
         val name = encodeBatch(batch(), Jsonl).name
-        val hash = sha256Hex(Jsonl.encode(lines)).take(16)
+        val hash = sha256Hex(Jsonl.encode(lines, "wican")).take(16)
         assertEquals("wican-1700000000_0-$hash.jsonl.gz", name)
     }
 
@@ -119,5 +121,16 @@ class SinkTest {
 
         assertEquals(UploadResult.Retry("offline"), deliverPending(s, flaky))
         assertEquals(1, s.pending("flaky").size)
+    }
+
+    @Test
+    fun `a revoked sign-in is a permanent failure, not a crash or a retry`() = runTest {
+        val signedOut = CompositeSink("oidc", object : UploadTransport {
+            override suspend fun upload(batch: Batch): UploadResult =
+                throw OidcException.ReauthorizationRequired("invalid_grant")
+        }, Jsonl)
+
+        val result = assertInstanceOf(UploadResult.Failed::class.java, signedOut.upload(batch()))
+        assertTrue(result.reason.contains("sign in again"), result.reason)
     }
 }

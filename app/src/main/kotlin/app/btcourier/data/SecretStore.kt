@@ -15,18 +15,16 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Small secrets (upload password or token) kept apart from plain settings. */
+/**
+ * Small secrets (sink passwords, tokens, OIDC token sets) kept apart from plain settings. Names
+ * are `[A-Za-z0-9_-]+`; sinks use [SinkSecrets].
+ */
 interface SecretStore {
     /** The secret under [name], or null if none is stored or it can no longer be decrypted. */
     suspend fun get(name: String): String?
 
     /** Stores [value] under [name]; null deletes it. */
     suspend fun put(name: String, value: String?)
-
-    companion object {
-        /** The sink's Basic password or Bearer token, per [AppSettings.sinkAuth]. */
-        const val UPLOAD_SECRET = "upload"
-    }
 }
 
 /**

@@ -1,6 +1,5 @@
 package app.btcourier.ble
 
-import com.juul.kable.WriteType
 import java.util.UUID
 
 /**
@@ -31,27 +30,13 @@ object WicanGatt {
     /** The device prefers 517 (§6); Android must ask for it, iOS negotiates on its own. */
     const val PREFERRED_MTU: Int = 517
 
-    /** ATT default before any exchange. */
-    const val DEFAULT_MTU: Int = 23
-
-    /** One `GattLink.write` routed to its characteristic and ATT write type. */
-    data class WriteRoute(val characteristic: UUID, val writeType: WriteType)
-
     /**
-     * Every app → device frame goes to FFF4. Request frames ask for a response (the safe upload
-     * mode in §4 of the tunnel protocol); CREDIT and ABORT go without one so paying the device
-     * never waits for a connection event. The transport picks which; this only maps the flag.
+     * Notifications on FFF3, every app → device frame on FFF4. Request frames ask for a response
+     * (the safe upload mode in §4 of the tunnel protocol); CREDIT and ABORT go without one so
+     * paying the device never waits for a connection event. The transport picks which per write.
+     * Bonded: the characteristics need an encrypted, MITM-protected link.
      */
-    fun routeWrite(withResponse: Boolean): WriteRoute =
-        WriteRoute(HTTP_IN, if (withResponse) WriteType.WithResponse else WriteType.WithoutResponse)
-}
+    val PROFILE = GattProfile(SERVICE, notify = HTTP_OUT, write = HTTP_IN, mtu = PREFERRED_MTU, wantsBond = true)
 
-/** What a companion-device scan must match; kept free of Android types so it can be tested. */
-data class DeviceFilterSpec(val serviceUuid: UUID, val namePattern: Regex) {
-    fun matches(advertisedName: String?, advertisedServices: Collection<UUID>): Boolean =
-        advertisedName != null && namePattern.matches(advertisedName) && serviceUuid in advertisedServices
-
-    companion object {
-        val WICAN = DeviceFilterSpec(WicanGatt.SERVICE, WicanGatt.NAME_PATTERN)
-    }
+    val FILTER = DeviceFilterSpec(SERVICE, NAME_PATTERN)
 }

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import app.btcourier.ble.PairedDevice
 import app.btcourier.ble.PairedDeviceRepository
 import app.btcourier.data.AppSettings
+import app.btcourier.data.DeviceSync
 import app.btcourier.data.SinkUpload
 import app.btcourier.data.SyncResultKind
 import app.btcourier.data.SyncStatus
@@ -37,11 +38,16 @@ data class LastUpload(val atMs: Long, val result: UploadResultKind)
 
 data class LastError(val message: String, val atMs: Long?)
 
+/** A paired device with its latest sync; [lastSync] and [cursor] are null before its first sync. */
+data class DeviceRow(val device: PairedDevice, val lastSync: LastSync?, val cursor: String?)
+
+/** A sink's last outcome under its current name; its id when the sink has been deleted since. */
+data class SinkRow(val name: String, val upload: SinkUpload)
+
 data class StatusUiState(
     val loading: Boolean = true,
-    val device: PairedDevice? = null,
-    val lastSync: LastSync? = null,
-    val cursor: String? = null,
+    /** Every paired device, in pairing order. */
+    val devices: List<DeviceRow> = emptyList(),
     val pendingBatches: Int = 0,
     val bytesStored: Long = 0,
     val cacheCapBytes: Long = AppSettings().cacheCapBytes,
@@ -49,8 +55,8 @@ data class StatusUiState(
     val droppedBytes: Long = 0,
     val sinkConfigured: Boolean = false,
     val lastUpload: LastUpload? = null,
-    /** Sink id to its last outcome, sorted by id. */
-    val sinks: List<Pair<String, SinkUpload>> = emptyList(),
+    /** Every sink of the last upload round, sorted by name. */
+    val sinks: List<SinkRow> = emptyList(),
     val lastError: LastError? = null,
     val export: ExportResult? = null,
 )
@@ -64,23 +70,27 @@ interface DiagnosticsExport {
     suspend fun save(target: Uri, text: String)
 }
 
+private val REACHED_DEVICE = setOf(SyncResultKind.CAUGHT_UP, SyncResultKind.INTERRUPTED, SyncResultKind.DEVICE_ERROR)
+
+private fun DeviceSync.toLastSync(): LastSync {
+    val reachedDevice = result in REACHED_DEVICE
+    return LastSync(
+        atMs = atMs,
+        result = result,
+        pages = pages.takeIf { reachedDevice },
+        lines = linesStored.takeIf { reachedDevice },
+        stoppedBecause = stop.takeIf { reachedDevice },
+    )
+}
+
 /** Pure mapping from the persisted sources to what the status screen shows. */
-fun statusUiState(status: SyncStatus, settings: AppSettings, device: PairedDevice?): StatusUiState {
-    val reachedDevice = status.lastSync in setOf(SyncResultKind.CAUGHT_UP, SyncResultKind.INTERRUPTED, SyncResultKind.DEVICE_ERROR)
-    val lastSync = status.lastSync?.let { result ->
-        LastSync(
-            atMs = status.lastSyncAtMs ?: 0,
-            result = result,
-            pages = status.lastSyncPages.takeIf { reachedDevice },
-            lines = status.lastSyncLinesStored.takeIf { reachedDevice },
-            stoppedBecause = status.lastSyncStop.takeIf { reachedDevice },
-        )
-    }
-    return StatusUiState(
+fun statusUiState(status: SyncStatus, settings: AppSettings, devices: List<PairedDevice>): StatusUiState =
+    StatusUiState(
         loading = false,
-        device = device,
-        lastSync = lastSync,
-        cursor = status.cursor,
+        devices = devices.map { device ->
+            val sync = status.syncOf(device.address)
+            DeviceRow(device, sync?.toLastSync(), sync?.cursor)
+        },
         pendingBatches = status.pendingBatches,
         bytesStored = status.bytesStored,
         cacheCapBytes = settings.cacheCapBytes,
@@ -88,10 +98,11 @@ fun statusUiState(status: SyncStatus, settings: AppSettings, device: PairedDevic
         droppedBytes = status.droppedBytes,
         sinkConfigured = configuredSinkIds(settings).isNotEmpty(),
         lastUpload = status.lastUpload?.let { LastUpload(status.lastUploadAtMs ?: 0, it) },
-        sinks = status.lastUploadBySink.toList().sortedBy { it.first },
+        sinks = status.lastUploadBySink.map { (id, upload) ->
+            SinkRow(settings.sinks.firstOrNull { it.id == id }?.name ?: id, upload)
+        }.sortedBy { it.name },
         lastError = status.lastError?.let { LastError(it, status.lastErrorAtMs) },
     )
-}
 
 class StatusViewModel(
     status: Flow<SyncStatus>,
@@ -100,24 +111,34 @@ class StatusViewModel(
     private val work: WorkControl,
     private val diagnostics: DiagnosticsExport,
 ) : ViewModel() {
-    // CDM has no change callback, so the screen refreshes this on resume and after pairing.
-    private val device = MutableStateFlow(devices.current())
+    // CDM has no change callback, so the screen refreshes this on resume and after pairing. Null
+    // until the first read, so the screen never flashes "not paired" while it loads.
+    private val paired = MutableStateFlow<List<PairedDevice>?>(null)
     private val export = MutableStateFlow<ExportResult?>(null)
 
     val state: StateFlow<StatusUiState> =
-        combine(status, settings, device, export) { s, cfg, d, e -> statusUiState(s, cfg, d).copy(export = e) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), StatusUiState())
+        combine(status, settings, paired, export) { s, cfg, d, e ->
+            if (d == null) StatusUiState() else statusUiState(s, cfg, d).copy(export = e)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), StatusUiState())
 
-    fun refreshDevice() {
-        device.value = devices.current()
+    init {
+        refreshDevices()
     }
 
-    fun forget() {
-        device.value?.let(devices::forget)
-        refreshDevice()
+    fun refreshDevices() {
+        viewModelScope.launch { paired.value = devices.all() }
     }
 
-    fun syncNow() = work.syncNow()
+    fun forget(device: PairedDevice) {
+        viewModelScope.launch {
+            devices.forget(device)
+            paired.value = devices.all()
+        }
+    }
+
+    fun syncNow(device: PairedDevice) = work.syncNow(device.address)
+
+    fun syncAll() = paired.value.orEmpty().forEach { work.syncNow(it.address) }
 
     /**
      * Replaces any queued upload: one waiting out a back-off would otherwise keep the user

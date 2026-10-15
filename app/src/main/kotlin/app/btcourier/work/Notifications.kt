@@ -19,8 +19,8 @@ import app.btcourier.R
 /** The low-priority notification a worker shows while it runs as a foreground service. */
 object Notifications {
     private const val CHANNEL_TRANSFER = "transfer"
-    private const val ID_SYNC = 1
     private const val ID_UPLOAD = 2
+    private const val ID_SYNC_FIRST = 0x1000
 
     fun createChannels(context: Context) {
         val channel = NotificationChannel(
@@ -32,9 +32,13 @@ object Notifications {
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    fun syncForeground(context: Context) = foregroundInfo(
+    /**
+     * One notification id per device: syncs of different devices run in parallel, and WorkManager
+     * cancels a finished worker's notification id even if another worker is showing it.
+     */
+    fun syncForeground(context: Context, address: String) = foregroundInfo(
         context,
-        ID_SYNC,
+        ID_SYNC_FIRST + (address.uppercase().hashCode() and 0xFFFF),
         R.string.notification_syncing,
         android.R.drawable.stat_sys_data_bluetooth,
         ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,

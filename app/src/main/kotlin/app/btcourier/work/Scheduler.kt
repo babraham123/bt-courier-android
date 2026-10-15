@@ -13,6 +13,7 @@ import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
+import androidx.work.workDataOf
 import app.btcourier.AppGraph
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
@@ -23,10 +24,15 @@ import java.util.concurrent.TimeUnit
  */
 object Scheduler {
     const val SYNC_PERIODIC = "sync-periodic"
-    const val SYNC_NOW = "sync-now"
     const val UPLOAD = "upload"
 
-    /** Every 15 min, WorkManager's minimum; KEEP so re-registering never resets the period. */
+    /** Unique work name of one device's one-time sync. */
+    fun syncNowName(address: String) = "sync-now-" + address.uppercase()
+
+    /**
+     * Every 15 min, WorkManager's minimum; KEEP so re-registering never resets the period. It
+     * carries no address, so each run fans out to every paired device ([SyncWorker]).
+     */
     fun schedulePeriodicSync(context: Context) {
         val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
@@ -44,14 +50,16 @@ object Scheduler {
     }
 
     /**
-     * One sync as soon as possible: device presence and the manual button. KEEP: a sync already
-     * queued or running will pull everything the device has anyway.
+     * One sync of the device at [address] as soon as possible: presence, the car, the periodic
+     * fan-out and the manual button. KEEP: a sync of that device already queued or running will
+     * pull everything it has anyway.
      */
-    fun syncNow(context: Context) {
+    fun syncNow(context: Context, address: String) {
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
+            .setInputData(workDataOf(SyncWorker.KEY_ADDRESS to address.uppercase()))
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(SYNC_NOW, ExistingWorkPolicy.KEEP, request)
+        WorkManager.getInstance(context).enqueueUniqueWork(syncNowName(address), ExistingWorkPolicy.KEEP, request)
     }
 
     /**
@@ -69,6 +77,10 @@ object Scheduler {
         WorkManager.getInstance(context).enqueueUniqueWork(UPLOAD, policy, request)
     }
 
+    fun cancelUpload(context: Context) {
+        WorkManager.getInstance(context).cancelUniqueWork(UPLOAD)
+    }
+
     fun uploadConstraints(allowCellular: Boolean): Constraints =
         Constraints.Builder()
             .setRequiredNetworkType(if (allowCellular) NetworkType.CONNECTED else NetworkType.UNMETERED)
@@ -84,7 +96,7 @@ class BootReceiver : BroadcastReceiver() {
         AppGraph.scope.launch {
             try {
                 Scheduler.setPeriodicSync(app, AppGraph.settings.current().periodicSync)
-                AppGraph.pairedAddress.current()?.let { DevicePresence.startObserving(app, it) }
+                AppGraph.pairedDevices.all().forEach { DevicePresence.startObserving(app, it.address) }
             } finally {
                 pending.finish()
             }

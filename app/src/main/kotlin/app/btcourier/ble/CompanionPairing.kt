@@ -39,7 +39,7 @@ fun DeviceFilterSpec.toAssociationRequest(): AssociationRequest {
         .build()
     return AssociationRequest.Builder()
         .addDeviceFilter(filter)
-        // A list rather than a single-device prompt: a household may have more than one WiCAN.
+        // A list rather than a single-device prompt: a household may have more than one device.
         .setSingleDevice(false)
         .build()
 }
@@ -53,7 +53,7 @@ class PairingException(message: String, cause: Throwable? = null) : IOException(
  */
 suspend fun CompanionDeviceManager.requestAssociation(
     context: Context,
-    spec: DeviceFilterSpec = DeviceFilterSpec.WICAN,
+    spec: DeviceFilterSpec,
 ): IntentSender = suspendCancellableCoroutine { cont ->
     val callback = object : CompanionDeviceManager.Callback() {
         // Deprecated on API 33 for onAssociationPending, but the only callback below it.

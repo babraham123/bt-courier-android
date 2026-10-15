@@ -41,28 +41,33 @@ internal fun State.toLinkState(): LinkState = when (this) {
 }
 
 /**
- * [GattLink] over Kable to the WiCAN Pro's `ble_http` characteristics (FFF3 out, FFF4 in).
+ * [GattLink] over Kable to the characteristics of a [GattProfile]: notifications from
+ * [GattProfile.notify], writes to [GattProfile.write].
  *
  * One instance is one connection: once the link drops or is [closed][close] it stays dead and
- * the caller connects again, which also matches how the tunnel resets all state on reconnect.
+ * the caller connects again, which also matches how the WiCAN tunnel resets all state on
+ * reconnect.
  *
- * The device must already be bonded (pair wizard); an unbonded connect still works but the first
- * encrypted access (the CCCD write) then raises the system pairing dialog.
+ * A device whose profile [wants a bond][GattProfile.wantsBond] must already be bonded (pair
+ * wizard); an unbonded connect still works but the first encrypted access (the CCCD write) then
+ * raises the system pairing dialog.
  */
 @OptIn(ExperimentalUuidApi::class)
 class KableGattLink private constructor(
     private val peripheral: AndroidPeripheral,
+    private val profile: GattProfile,
 ) : GattLink {
     private val closed = AtomicBoolean(false)
 
-    // Unbounded so a slow consumer never loses a PDU here; the device's 16 KB credit window bounds
-    // what can pile up, and the frame counter would catch a loss elsewhere anyway.
+    // Unbounded so a slow consumer never loses a PDU here. The WiCAN's 16 KB credit window bounds
+    // what can pile up, and its frame counter would catch a loss elsewhere anyway; the ring only
+    // sends what it is asked for.
     private val pending = Channel<ByteArray>(Channel.UNLIMITED)
 
     override val notifications: Flow<ByteArray> = pending.receiveAsFlow()
 
     override val mtu: Int
-        get() = peripheral.mtu.value ?: WicanGatt.DEFAULT_MTU
+        get() = peripheral.mtu.value ?: GattProfile.DEFAULT_MTU
 
     /** Live connection state; reads `Disconnected` after a drop or [close]. */
     val state: Flow<LinkState> = peripheral.state.map { it.toLinkState() }
@@ -72,8 +77,8 @@ class KableGattLink private constructor(
 
     private suspend fun open() {
         val connection = peripheral.connect()
-        // Shorter connection interval: more connection events per second for request frames
-        // written with response. Only a hint; the controller may refuse it.
+        // Shorter connection interval: more connection events per second for frames written with
+        // response and for multi-packet answers. Only a hint; the controller may refuse it.
         peripheral.requestConnectionPriority(AndroidPeripheral.Priority.High)
 
         val subscribed = CompletableDeferred<Unit>()
@@ -83,18 +88,18 @@ class KableGattLink private constructor(
         connection.launch {
             var failure: Throwable? = null
             try {
-                peripheral.observe(characteristic(WicanGatt.HTTP_OUT)) { subscribed.complete(Unit) }
+                peripheral.observe(characteristic(profile.notify)) { subscribed.complete(Unit) }
                     .collect { pending.send(it) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                failure = e as? IOException ?: IOException("FFF3 observation failed", e)
+                failure = e as? IOException ?: IOException("notify observation failed", e)
             } finally {
-                subscribed.completeExceptionally(failure ?: IOException("link dropped before FFF3 subscription"))
+                subscribed.completeExceptionally(failure ?: IOException("link dropped before the notify subscription"))
                 pending.close(failure)
             }
         }
-        // The transport sends its first request right after this returns; a response arriving
+        // The source sends its first request right after this returns; a response arriving
         // before the CCCD write would be lost, so wait for the subscription.
         subscribed.await()
     }
@@ -102,7 +107,7 @@ class KableGattLink private constructor(
     override suspend fun write(bytes: ByteArray, withResponse: Boolean) {
         if (closed.get()) throw IOException("link closed")
         require(bytes.size <= mtu - 3) { "PDU of ${bytes.size} bytes exceeds MTU payload ${mtu - 3}" }
-        val route = WicanGatt.routeWrite(withResponse)
+        val route = profile.routeWrite(withResponse)
         // Kable serialises GATT operations behind a FIFO mutex, so concurrent writers (request
         // body vs CREDIT) reach the air in call order, and each write suspends until the stack's
         // onCharacteristicWrite.
@@ -130,33 +135,36 @@ class KableGattLink private constructor(
     }
 
     private fun characteristic(uuid: UUID) =
-        characteristicOf(WicanGatt.SERVICE.toKotlinUuid(), uuid.toKotlinUuid())
+        characteristicOf(profile.service.toKotlinUuid(), uuid.toKotlinUuid())
 
     companion object {
         /**
-         * Connects to the bonded device at [address] (as recorded by the CDM association),
-         * negotiates the MTU and subscribes to FFF3 in notify mode.
+         * Connects to the device at [address] (as recorded by the CDM association), negotiates
+         * the profile's MTU and subscribes to its notify characteristic.
          *
          * @throws IOException if the link cannot be established within [connectTimeout].
          */
-        suspend fun connect(address: String, connectTimeout: Duration = 30.seconds): KableGattLink {
+        suspend fun connect(address: String, profile: GattProfile, connectTimeout: Duration = 30.seconds): KableGattLink {
             val peripheral = Peripheral(address.toIdentifier()) {
                 transport = Transport.Le
-                onServicesDiscovered {
-                    // Before observations start, so the first notification already uses the
-                    // large MTU. A refusal leaves the default 23, which the codec still handles.
-                    try {
-                        requestMtu(WicanGatt.PREFERRED_MTU)
-                    } catch (e: IOException) {
-                        // Keep the default MTU.
-                    } catch (e: IllegalStateException) {
-                        // GattRequestRejectedException: keep the default MTU.
+                if (profile.mtu > GattProfile.DEFAULT_MTU) {
+                    onServicesDiscovered {
+                        // Before observations start, so the first notification already uses the
+                        // large MTU. A refusal leaves the default 23, which the codec still handles.
+                        try {
+                            requestMtu(profile.mtu)
+                        } catch (e: IOException) {
+                            // Keep the default MTU.
+                        } catch (e: IllegalStateException) {
+                            // GattRequestRejectedException: keep the default MTU.
+                        }
                     }
                 }
             } as AndroidPeripheral
             // Kable writes ENABLE_NOTIFICATION_VALUE (0x0001) when a characteristic offers notify,
-            // which FFF3 does: the fast credit-based mode BleHttpTransport implements.
-            val link = KableGattLink(peripheral)
+            // which both profiles' characteristics do; for the WiCAN's FFF3 that is the fast
+            // credit-based mode BleHttpTransport implements.
+            val link = KableGattLink(peripheral, profile)
             try {
                 withTimeout(connectTimeout) { link.open() }
             } catch (e: Throwable) {

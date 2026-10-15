@@ -42,10 +42,10 @@ BLE / Wi-Fi   WiCAN      clock repair   SQLite    HttpPut/HttpPost/Sftp/Mqtt/Loc
 | Source | `pull(cursor: String) → Page(records, nextCursor, more)`, `clockJournal()` | `WicanLogger`: `/api/logger/export?format=jsonl&stream=params&since=&limit=`, journal from `/api/fs/download?path=/sd/logs/clock.jsonl`. Cursor is opaque to core; WiCAN's is `<file epoch>:<byte offset>` |
 | Normalizer | `fix(page, journal, anchor) → records + ts_quality` | Per-`_file` re-basing by journal `delta_ms` (semantics of wican-fw `tools/log_clock.py`), plus a per-sync anchor (phone time vs device `/api/status` time). `ts_quality ∈ {journal, anchor, unknown}` |
 | Store | append page, persist cursor atomically, seal batches, per-sink ack, byte cap | core `FileStoreDb` in app-private storage (index.json + one file per page, temp-then-rename; Room dropped, see tasks A10). Pages keyed by `_cursor` (idempotency). Seal on `_file` boundary, 1 MB, or 30 min. Cap 200 MB, oldest-first eviction with a dropped counter |
-| Sink | `upload(batch) → ack` | `HttpPut` + `Jsonl` + gzip first; `LocalFile` for debugging |
-| Auth | `Basic \| Bearer \| Oidc \| SshKey` per transport | Basic first; OIDC via device authorization grant (RFC 8628) with Keystore-stored refresh token; SFTP uses a Keystore P-256 key |
-| Scheduler | triggers → sync; constraints → upload | CDM device presence, periodic 15 min, manual, car ACL connect/disconnect; upload `UNMETERED` by default with cellular toggle |
-| UI | pair wizard, status, settings, log export | Compose |
+| Sink | `upload(batch) → ack` | Transports `HttpPut`, `HttpPost`, `Sftp` (sshj, pinned host key, Keystore P-256 key), `Mqtt` (HiveMQ, QoS 1), `LocalFolder` (SAF); formats `Jsonl`, `Csv`, `PrometheusText`; any transport × any format, several sinks at once, each with its own ack id |
+| Auth | `None \| Basic \| Bearer \| Oidc` per sink | OIDC via device authorization grant (RFC 8628), tokens and client secret in the Keystore-backed secret store, refreshed in the background; MQTT uses Basic as its username/password; SFTP authenticates with the Keystore key |
+| Scheduler | triggers → sync; constraints → upload | CDM device presence (that device), periodic 15 min (every device), manual, car ACL connect/disconnect (WiCAN devices only); one sync per device with a per-device lock; upload `UNMETERED` by default with cellular toggle |
+| UI | pair wizard (device kind first), status per device, settings with a sink list and per-transport editors, log export | Compose |
 
 ### Sync loop
 
@@ -80,7 +80,7 @@ BLE / Wi-Fi   WiCAN      clock repair   SQLite    HttpPut/HttpPost/Sftp/Mqtt/Loc
 | Stream while connected | none | HR straps, ELM327 live |
 | Broadcast | none | Ruuvi, TPMS, Victron |
 
-Only class 1 is built now; `subscribe()` is the seam for the others.
+Class 1 is built for the WiCAN logger and the Colmi ring (`DeviceKind` picks the GATT profile, source and store source id `wican:`/`colmi:<address>`); `subscribe()` exists on `Source` but nothing collects it yet.
 
 ### Car trigger
 
@@ -92,7 +92,7 @@ CDM presence on the dongle itself remains the primary trigger.
 
 ## Non-goals (v1)
 
-iOS, Play Store, live streaming, ring/broadcast sources, daily cellular cap.
+iOS, Play Store, live streaming, broadcast sources, daily cellular cap.
 
 ## Constraints
 
@@ -103,7 +103,7 @@ iOS, Play Store, live streaming, ring/broadcast sources, daily cellular cap.
 
 ## Status
 
-Core and app are implemented and unit-tested (2026-10-14; see `tasks.md`).
+Core and app are implemented and unit-tested (2026-10-15; see `tasks.md`), including the section 7 features (OIDC, SFTP, MQTT, HTTP POST, CSV/Prometheus, SAF folder, smart ring).
 All protocol facts come from docs and code read 2026-10-14 (firmware commits
 2026-10-13/14). Nothing verified on a device; first-contact tasks are in
 `tasks.md` section 5. Known upstream sleep bug: wican-fw issue #718. Upstream

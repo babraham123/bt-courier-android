@@ -2,20 +2,34 @@ package app.btcourier
 
 import android.annotation.SuppressLint
 import android.content.Context
+import androidx.core.net.toUri
+import app.btcourier.ble.Association
+import app.btcourier.ble.Associations
+import app.btcourier.ble.CompanionPairedDeviceRepository
+import app.btcourier.ble.PairedDeviceRepository
+import app.btcourier.ble.newestAssociation
 import app.btcourier.core.store.DefaultStore
 import app.btcourier.core.store.FileStoreDb
 import app.btcourier.core.store.Store
+import app.btcourier.data.AndroidKeystoreSshKeys
 import app.btcourier.data.DataStoreSettings
 import app.btcourier.data.DataStoreSyncStatus
+import app.btcourier.data.FolderAccess
 import app.btcourier.data.KeystoreSecretStore
 import app.btcourier.data.SecretStore
 import app.btcourier.data.SettingsRepository
+import app.btcourier.data.SinkEnvironment
+import app.btcourier.data.SshKeys
 import app.btcourier.data.SyncStatusRepository
 import app.btcourier.data.buildSinks
+import app.btcourier.data.statusDataStore
 import app.btcourier.data.configuredSinkIds
+import app.btcourier.data.saf.SafDocumentTree
+import app.btcourier.data.settingsDataStore
 import app.btcourier.log.AppLog
 import app.btcourier.work.LinkFactory
-import app.btcourier.work.PairedAddress
+import app.btcourier.work.Scheduler
+import app.btcourier.work.SyncFanOut
 import app.btcourier.work.SyncJob
 import app.btcourier.work.UploadJob
 import kotlinx.coroutines.CoroutineScope
@@ -46,15 +60,25 @@ object AppGraph {
     @Volatile
     var linkFactory: LinkFactory = LinkFactory.Unavailable
 
+    /** The companion-device associations, i.e. which devices are paired. */
     @Volatile
-    var pairedAddress: PairedAddress = PairedAddress { null }
+    var associations: Associations = object : Associations {
+        override fun list(): List<Association> = emptyList()
+
+        override fun remove(association: Association) = Unit
+    }
 
     /** Outlives any screen; for fire-and-forget work such as a receiver's `goAsync`. */
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    val settings: SettingsRepository by lazy { DataStoreSettings(app) }
-    val status: SyncStatusRepository by lazy { DataStoreSyncStatus(app) }
+    val settings: SettingsRepository by lazy { DataStoreSettings(settingsDataStore(app, secrets)) }
+    val status: SyncStatusRepository by lazy {
+        DataStoreSyncStatus(statusDataStore(app) { newestAssociation(associations.list())?.address })
+    }
+    val pairedDevices: PairedDeviceRepository by lazy { CompanionPairedDeviceRepository(associations, settings) }
+    val syncFanOut: SyncFanOut by lazy { SyncFanOut(pairedDevices) { Scheduler.syncNow(app, it) } }
     val secrets: SecretStore by lazy { KeystoreSecretStore(File(app.noBackupFilesDir, "secrets")) }
+    val sshKeys: SshKeys by lazy { AndroidKeystoreSshKeys() }
     val log: AppLog by lazy { AppLog(file = File(app.noBackupFilesDir, "app.log")) }
 
     /** [FileStoreDb]'s directory; also listed by the diagnostics export. */
@@ -72,6 +96,10 @@ object AppGraph {
             .build()
     }
 
+    val sinkEnvironment: SinkEnvironment by lazy {
+        SinkEnvironment(httpClient, FolderAccess { SafDocumentTree(app, it.toUri()) }, sshKeys)
+    }
+
     // DefaultStore asks for sink ids synchronously. Until settings load this is empty, which only
     // postpones deleting acked batches to the next ack or seal, never deletes too early.
     private val sinkIds: StateFlow<Set<String>> by lazy {
@@ -84,8 +112,8 @@ object AppGraph {
 
     val syncJob: SyncJob by lazy {
         SyncJob(
-            pairedAddress = { pairedAddress.current() },
-            links = { linkFactory.open(it) },
+            devices = pairedDevices,
+            links = { address, kind -> linkFactory.open(address, kind) },
             store = store,
             status = status,
             log = log,
@@ -93,13 +121,13 @@ object AppGraph {
     }
 
     val uploadJob: UploadJob by lazy {
-        UploadJob(store, sinks = { buildSinks(settings.current(), secrets, httpClient) }, status = status, log = log)
+        UploadJob(store, sinks = { buildSinks(settings.current(), secrets, sinkEnvironment) }, status = status, log = log)
     }
 
-    fun init(context: Context, links: LinkFactory, paired: PairedAddress) {
+    fun init(context: Context, links: LinkFactory, associations: Associations) {
         app = context.applicationContext
         linkFactory = links
-        pairedAddress = paired
+        this.associations = associations
         // Starts loading sink ids now, so they are known before the first upload acks.
         sinkIds
     }

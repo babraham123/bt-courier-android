@@ -5,9 +5,9 @@ import app.btcourier.core.http.MockServerTest
 import app.btcourier.core.sink.Batch
 import app.btcourier.core.sink.Gzip
 import app.btcourier.core.sink.UploadResult
-import app.btcourier.core.sink.http.HttpPutUploadTransport.Companion.INITIAL_BACKOFF_MS
-import app.btcourier.core.sink.http.HttpPutUploadTransport.Companion.MAX_BACKOFF_MS
-import app.btcourier.core.sink.http.HttpPutUploadTransport.Companion.MAX_RETRY_AFTER_MS
+import app.btcourier.core.sink.RetryBackoff.Companion.INITIAL_BACKOFF_MS
+import app.btcourier.core.sink.RetryBackoff.Companion.MAX_BACKOFF_MS
+import app.btcourier.core.sink.RetryBackoff.Companion.MAX_RETRY_AFTER_MS
 import kotlinx.coroutines.test.runTest
 import mockwebserver3.MockResponse
 import mockwebserver3.SocketEffect

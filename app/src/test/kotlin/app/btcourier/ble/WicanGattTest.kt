@@ -5,7 +5,6 @@ import com.juul.kable.WriteType
 import kotlinx.coroutines.test.TestScope
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.UUID
@@ -21,17 +20,25 @@ class WicanGattTest {
 
     @Test
     fun `request frames are written to FFF4 with response`() {
-        assertEquals(WicanGatt.WriteRoute(WicanGatt.HTTP_IN, WriteType.WithResponse), WicanGatt.routeWrite(true))
+        assertEquals(GattProfile.WriteRoute(WicanGatt.HTTP_IN, WriteType.WithResponse), WicanGatt.PROFILE.routeWrite(true))
     }
 
     @Test
     fun `credit and abort frames are written to FFF4 without response`() {
-        assertEquals(WicanGatt.WriteRoute(WicanGatt.HTTP_IN, WriteType.WithoutResponse), WicanGatt.routeWrite(false))
+        assertEquals(GattProfile.WriteRoute(WicanGatt.HTTP_IN, WriteType.WithoutResponse), WicanGatt.PROFILE.routeWrite(false))
     }
 
     @Test
     fun `nothing is ever written to the notify characteristic`() {
-        listOf(true, false).forEach { assertTrue(WicanGatt.routeWrite(it).characteristic != WicanGatt.HTTP_OUT) }
+        listOf(true, false).forEach { assertTrue(WicanGatt.PROFILE.routeWrite(it).characteristic != WicanGatt.HTTP_OUT) }
+    }
+
+    @Test
+    fun `notifications come from FFF3, the 517 MTU is asked for, and the dongle bonds`() {
+        assertEquals(WicanGatt.SERVICE, WicanGatt.PROFILE.service)
+        assertEquals(WicanGatt.HTTP_OUT, WicanGatt.PROFILE.notify)
+        assertEquals(517, WicanGatt.PROFILE.mtu)
+        assertTrue(WicanGatt.PROFILE.wantsBond)
     }
 
     @Test
@@ -47,7 +54,7 @@ class WicanGattTest {
 
     @Test
     fun `companion filter needs both the FFF0 service and the name`() {
-        val spec = DeviceFilterSpec.WICAN
+        val spec = WicanGatt.FILTER
         assertEquals(WicanGatt.SERVICE, spec.serviceUuid)
         assertTrue(spec.matches("WiC_0123456789ab", listOf(WicanGatt.SERVICE)))
         // FFF0 is common on generic BLE UART modules; the name keeps them out of the chooser.
@@ -68,16 +75,5 @@ class WicanGattTest {
             LinkState.Disconnected("Peripheral Disconnected"),
             State.Disconnected(State.Disconnected.Status.PeripheralDisconnected).toLinkState(),
         )
-    }
-
-    @Test
-    fun `newest association wins`() {
-        val older = PairedDevice("AA:00:00:00:00:01", "WiC_a", 3)
-        val newer = PairedDevice("AA:00:00:00:00:02", "WiC_b", 7)
-        assertEquals(newer, selectPaired(listOf(newer, older)))
-        assertNull(selectPaired(emptyList()))
-        // Pre-API-33 associations have no id; the list is in creation order.
-        val legacy = listOf(PairedDevice("AA:00:00:00:00:01", null, null), PairedDevice("AA:00:00:00:00:02", null, null))
-        assertEquals(legacy.last(), selectPaired(legacy))
     }
 }

@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.btcourier.R
+import app.btcourier.data.DeviceKind
 import app.btcourier.data.SyncResultKind
 import app.btcourier.data.SyncStopKind
 import app.btcourier.data.UploadResultKind
@@ -58,7 +59,7 @@ fun StatusScreen(viewModel: StatusViewModel, onPair: () -> Unit, onSettings: () 
 
     // Pairing, or removing the association in system settings, changes the device behind our back.
     LifecycleResumeEffect(Unit) {
-        viewModel.refreshDevice()
+        viewModel.refreshDevices()
         onPauseOrDispose {}
     }
 
@@ -92,36 +93,21 @@ fun StatusScreen(viewModel: StatusViewModel, onPair: () -> Unit, onSettings: () 
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Section(R.string.status_device) {
-                val device = state.device
-                if (device == null) {
-                    Text(stringResource(R.string.home_not_paired))
+            Section(R.string.status_devices) {
+                if (state.devices.isEmpty()) {
+                    if (!state.loading) Text(stringResource(R.string.home_not_paired))
                     Button(onClick = onPair) { Text(stringResource(R.string.home_pair)) }
                 } else {
-                    device.displayName?.let { InfoRow(R.string.status_device_name, it) }
-                    InfoRow(R.string.status_device_address, device.address)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = viewModel::forget) { Text(stringResource(R.string.home_forget)) }
                         OutlinedButton(onClick = onPair) { Text(stringResource(R.string.status_repair)) }
+                        if (state.devices.size > 1) {
+                            OutlinedButton(onClick = viewModel::syncAll) { Text(stringResource(R.string.status_sync_all)) }
+                        }
                     }
                 }
             }
 
-            Section(R.string.status_sync) {
-                val sync = state.lastSync
-                if (sync == null) {
-                    Text(stringResource(R.string.status_never))
-                } else {
-                    InfoRow(R.string.status_when, formatTime(sync.atMs))
-                    InfoRow(R.string.status_result, stringResource(syncLabel(sync.result)))
-                    if (sync.pages != null && sync.lines != null) {
-                        InfoRow(R.string.status_pages_lines, stringResource(R.string.status_pages_lines_value, sync.pages, sync.lines))
-                    }
-                    sync.stoppedBecause?.let { InfoRow(R.string.status_stopped_because, stringResource(stopLabel(it))) }
-                }
-                InfoRow(R.string.status_cursor, state.cursor ?: stringResource(R.string.status_none))
-                Button(onClick = viewModel::syncNow, enabled = state.device != null) { Text(stringResource(R.string.status_sync_now)) }
-            }
+            state.devices.forEach { row -> DeviceCard(row, onSync = { viewModel.syncNow(row.device) }, onForget = { viewModel.forget(row.device) }) }
 
             Section(R.string.status_cache) {
                 InfoRow(R.string.status_pending_batches, state.pendingBatches.toString())
@@ -148,9 +134,9 @@ fun StatusScreen(viewModel: StatusViewModel, onPair: () -> Unit, onSettings: () 
                     InfoRow(R.string.status_when, formatTime(upload.atMs))
                     InfoRow(R.string.status_result, stringResource(uploadLabel(upload.result)))
                 }
-                state.sinks.forEach { (id, sink) ->
+                state.sinks.forEach { (name, sink) ->
                     InfoRow(
-                        stringResource(R.string.status_sink, id),
+                        stringResource(R.string.status_sink, name),
                         stringResource(R.string.status_two_values, stringResource(uploadLabel(sink.result)), formatTime(sink.atMs)),
                     )
                 }
@@ -187,10 +173,38 @@ fun StatusScreen(viewModel: StatusViewModel, onPair: () -> Unit, onSettings: () 
 }
 
 @Composable
-private fun Section(@StringRes title: Int, content: @Composable ColumnScope.() -> Unit) {
+private fun DeviceCard(row: DeviceRow, onSync: () -> Unit, onForget: () -> Unit) {
+    val kind = stringResource(kindLabel(row.device.kind))
+    Section(row.device.displayName ?: kind) {
+        InfoRow(R.string.status_device_kind, kind)
+        InfoRow(R.string.status_device_address, row.device.address)
+        val sync = row.lastSync
+        if (sync == null) {
+            InfoRow(R.string.status_sync, stringResource(R.string.status_never))
+        } else {
+            InfoRow(R.string.status_sync, formatTime(sync.atMs))
+            InfoRow(R.string.status_result, stringResource(syncLabel(sync.result)))
+            if (sync.pages != null && sync.lines != null) {
+                InfoRow(R.string.status_pages_lines, stringResource(R.string.status_pages_lines_value, sync.pages, sync.lines))
+            }
+            sync.stoppedBecause?.let { InfoRow(R.string.status_stopped_because, stringResource(stopLabel(it))) }
+        }
+        InfoRow(R.string.status_cursor, row.cursor ?: stringResource(R.string.status_none))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onSync) { Text(stringResource(R.string.status_sync_now)) }
+            OutlinedButton(onClick = onForget) { Text(stringResource(R.string.home_forget)) }
+        }
+    }
+}
+
+@Composable
+private fun Section(@StringRes title: Int, content: @Composable ColumnScope.() -> Unit) = Section(stringResource(title), content)
+
+@Composable
+private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(stringResource(title), style = MaterialTheme.typography.titleMedium)
+            Text(title, style = MaterialTheme.typography.titleMedium)
             content()
         }
     }
@@ -225,6 +239,12 @@ private fun formatTime(ms: Long): String {
 
 @Composable
 private fun formatBytes(bytes: Long): String = Formatter.formatShortFileSize(LocalContext.current, bytes)
+
+@StringRes
+fun kindLabel(kind: DeviceKind): Int = when (kind) {
+    DeviceKind.WICAN -> R.string.kind_wican
+    DeviceKind.COLMI_RING -> R.string.kind_colmi_ring
+}
 
 @StringRes
 private fun syncLabel(kind: SyncResultKind): Int = when (kind) {

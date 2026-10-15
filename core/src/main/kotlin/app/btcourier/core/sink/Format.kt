@@ -5,15 +5,22 @@ interface Format {
     /** Extension without compression suffix, e.g. `jsonl`. */
     val extension: String
 
-    /** Must be deterministic: equal input gives byte-identical output. */
-    fun encode(lines: List<String>): ByteArray
+    /**
+     * Must be deterministic: equal input gives byte-identical output.
+     *
+     * @param sourceId the batch's source (e.g. `wican:AA:BB:CC:DD:EE:01`). Formats whose rows
+     *   leave the batch name behind (a metrics store, a merged table) tag each row with it, since
+     *   two devices of one kind write identical `_file` markers and timestamps.
+     */
+    fun encode(lines: List<String>, sourceId: String): ByteArray
 }
 
 /**
- * JSON Lines: each stored line verbatim, each followed by `\n`.
+ * JSON Lines: each stored line verbatim, each followed by `\n`. The source id is not added: a
+ * JSONL batch lands as one object whose name already carries it.
  *
  * This is also the "raw" format: there is no separate `Raw`. A format only sees the lines the
- * store holds, so whether a sink gets device-original or normalised rows is decided before the
+ * store holds (plus their source id), so whether a sink gets device-original or normalised rows is decided before the
  * store (by running a Normalizer or not), and a `Raw` encoder would emit the same bytes under a
  * name that promises something it can't deliver. If raw rows must reach one sink while another
  * gets normalised ones, the store has to keep both, and that is a store change, not a format.
@@ -21,7 +28,7 @@ interface Format {
 object Jsonl : Format {
     override val extension = "jsonl"
 
-    override fun encode(lines: List<String>): ByteArray {
+    override fun encode(lines: List<String>, sourceId: String): ByteArray {
         val sb = StringBuilder(lines.sumOf { it.length + 1 })
         for (line in lines) sb.append(line).append('\n')
         return sb.toString().encodeToByteArray()
