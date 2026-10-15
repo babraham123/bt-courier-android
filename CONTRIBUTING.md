@@ -22,7 +22,7 @@ decisions are recorded as ADRs in `planning/adr/`.
 ## Code style
 
 - ktlint with the `ktlint_official` style, configured in `.editorconfig`; `./gradlew ktlintCheck`
-  must pass.
+  must pass, and `./gradlew ktlintFormat` fixes most of what it reports.
 - Comments explain why, not what, and describe the code as it is now.
 
 ## Tests
@@ -38,6 +38,10 @@ decisions are recorded as ADRs in `planning/adr/`.
 
 FOSS-only dependencies are a hard rule: nothing proprietary and no Google Play Services, so the
 app can ship on F-Droid. Renovate keeps dependencies updated.
+
+Every configuration is locked in strict mode, so a build fails on any dependency version not in
+the committed `*.lockfile`s. After changing a dependency or plugin, run
+`./gradlew resolveAndLockAll --write-locks` and commit the updated lockfiles.
 
 ## No personal data
 
