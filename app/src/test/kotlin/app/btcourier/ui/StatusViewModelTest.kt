@@ -20,6 +20,7 @@ import app.btcourier.ui.status.LastSync
 import app.btcourier.ui.status.LastUpload
 import app.btcourier.ui.status.SinkRow
 import app.btcourier.ui.status.StatusViewModel
+import app.btcourier.work.RecordingWorkControl
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope

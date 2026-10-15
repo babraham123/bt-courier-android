@@ -4,8 +4,9 @@ import android.app.Application
 import app.btcourier.ble.CompanionAssociations
 import app.btcourier.ble.KableGattLink
 import app.btcourier.device.support
+import app.btcourier.work.DevicePresence
 import app.btcourier.work.Notifications
-import app.btcourier.work.Scheduler
+import app.btcourier.work.restoreSchedules
 import kotlinx.coroutines.launch
 
 class BtCourierApp : Application() {
@@ -17,6 +18,8 @@ class BtCourierApp : Application() {
             associations = CompanionAssociations(this),
         )
         Notifications.createChannels(this)
-        AppGraph.scope.launch { Scheduler.setPeriodicSync(this@BtCourierApp, AppGraph.settings.current().periodicSync) }
+        AppGraph.scope.launch {
+            restoreSchedules(AppGraph.settings, AppGraph.pairedDevices, AppGraph.work) { DevicePresence.startObserving(this@BtCourierApp, it) }
+        }
     }
 }

@@ -5,7 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.btcourier.data.AppSettings
 import app.btcourier.data.SettingsRepository
 import app.btcourier.data.SinkConfig
-import app.btcourier.ui.WorkControl
+import app.btcourier.work.WorkControl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

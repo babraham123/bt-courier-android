@@ -22,7 +22,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.btcourier.ui.BackButton
-import app.btcourier.ui.SchedulerWorkControl
 import app.btcourier.ui.VisitStores
 import app.btcourier.ui.VisitStoresHolder
 import app.btcourier.ui.pairing.AndroidPairingPlatform
@@ -98,7 +97,7 @@ class MainActivity : ComponentActivity() {
             status = AppGraph.status.status,
             settings = AppGraph.settings.settings,
             devices = AppGraph.pairedDevices,
-            work = SchedulerWorkControl(applicationContext),
+            work = AppGraph.work,
             diagnostics = AndroidDiagnostics(applicationContext, AppGraph.log, AppGraph.storeDir),
         )
     }
@@ -110,7 +109,7 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun settingsViewModel(): SettingsViewModel = viewModel {
-        SettingsViewModel(AppGraph.settings, SchedulerWorkControl(applicationContext))
+        SettingsViewModel(AppGraph.settings, AppGraph.work)
     }
 
     @Composable
@@ -119,7 +118,7 @@ class MainActivity : ComponentActivity() {
             sinkId = sinkId,
             settings = AppGraph.settings,
             credentials = AppGraph.sinkCredentials,
-            work = SchedulerWorkControl(applicationContext),
+            work = AppGraph.work,
             http = AppGraph.httpClient,
             appScope = AppGraph.scope,
         )

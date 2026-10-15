@@ -1,10 +1,13 @@
-package app.btcourier.ui
+package app.btcourier.work
 
 import android.content.Context
 import app.btcourier.AppGraph
-import app.btcourier.work.Scheduler
 
-/** What the screens may ask of the scheduler; a seam so view models are testable on the JVM. */
+/**
+ * What the app may ask of the scheduler: the one seam every enqueue, replace and cancel goes
+ * through (view models, [SyncFanOut], [SyncWork], [restoreSchedules]), so the rules deciding what
+ * to schedule after which event are testable on the JVM.
+ */
 interface WorkControl {
     /** Syncs the paired device at [address]. */
     fun syncNow(address: String)
@@ -20,6 +23,7 @@ interface WorkControl {
     fun forgetRetries(sinkId: String)
 }
 
+/** The production adapter: WorkManager through [Scheduler]. */
 class SchedulerWorkControl(context: Context) : WorkControl {
     private val app = context.applicationContext
 

@@ -13,7 +13,7 @@ import app.btcourier.data.SyncStatus
 import app.btcourier.data.SyncStopKind
 import app.btcourier.data.UploadResultKind
 import app.btcourier.data.configuredSinkIds
-import app.btcourier.ui.WorkControl
+import app.btcourier.work.WorkControl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
