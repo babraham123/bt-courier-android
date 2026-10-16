@@ -1,15 +1,10 @@
 package app.btcourier.data
 
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import app.btcourier.core.sink.SinkRetryState
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -30,7 +25,7 @@ class DataStoreSyncStatusTest {
     @TempDir
     lateinit var dir: File
 
-    private val scopes = mutableListOf<CoroutineScope>()
+    private val files = DataStoreFiles()
     private val key = stringPreferencesKey("status")
     private val dongle = "AA:BB:CC:DD:EE:01"
 
@@ -40,34 +35,19 @@ class DataStoreSyncStatusTest {
             """"lastSyncStop":"LINK_LOST","cursor":"1700000000:4096","pendingBatches":2,"bytesStored":5000,""" +
             """"lastUploadBySink":{"http":{"atMs":2000,"result":"DELIVERED"}},"lastError":"link lost: timeout","lastErrorAtMs":1000}"""
 
-    private fun open(legacyDevice: String? = null): DataStore<Preferences> {
-        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob()).also { scopes += it }
-        return PreferenceDataStoreFactory.create(
-            migrations =
-                listOf(
-                    LegacySyncStatusMigration {
-                        legacyDevice
-                    },
-                ),
-            scope = scope,
-        ) {
-            File(dir, "status.preferences_pb")
-        }
-    }
+    private val file get() = File(dir, "status.preferences_pb")
 
-    private fun closeAll() = scopes.forEach { it.cancel() }.also { scopes.clear() }
+    private fun open(legacyDevice: String? = null): DataStore<Preferences> =
+        files.open(file, listOf(LegacySyncStatusMigration { legacyDevice }))
 
     @AfterEach
-    fun tearDown() = closeAll()
+    fun tearDown() = files.closeAllBlocking()
 
+    /** Writes what an earlier version stored, then closes that store. */
     private fun writeRaw(json: String) =
         runBlocking {
-            val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-            PreferenceDataStoreFactory.create(scope = scope) { File(dir, "status.preferences_pb") }.edit {
-                it[key] =
-                    json
-            }
-            scope.cancel()
+            files.open(file).edit { it[key] = json }
+            files.closeAll()
         }
 
     @Test
@@ -83,25 +63,22 @@ class DataStoreSyncStatusTest {
                 DataStoreSyncStatus(it).update { status }
                 DataStoreRetryStates(it).save(schedules)
             }
-            closeAll()
+            files.closeAll()
 
             val reopened = open()
             assertEquals(schedules, DataStoreRetryStates(reopened).load())
             assertEquals(status, DataStoreSyncStatus(reopened).status.first(), "the status is untouched")
 
             DataStoreRetryStates(reopened).save(emptyMap())
-            closeAll()
+            files.closeAll()
             assertEquals(emptyMap<String, SinkRetryState>(), DataStoreRetryStates(open()).load())
         }
 
     @Test
     fun `unreadable retry schedules read as none`() =
         runBlocking {
-            val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-            PreferenceDataStoreFactory.create(scope = scope) { File(dir, "status.preferences_pb") }.edit {
-                it[stringPreferencesKey("retries")] = """{"http":{"streak":"two"}}"""
-            }
-            scope.cancel()
+            files.open(file).edit { it[stringPreferencesKey("retries")] = """{"http":{"streak":"two"}}""" }
+            files.closeAll()
 
             assertEquals(emptyMap<String, SinkRetryState>(), DataStoreRetryStates(open()).load())
         }
@@ -122,7 +99,7 @@ class DataStoreSyncStatusTest {
                     lastUploadBySink = mapOf("http" to SinkUpload(5, UploadResultKind.DELIVERED)),
                 )
             DataStoreSyncStatus(open()).update { expected }
-            closeAll()
+            files.closeAll()
 
             assertEquals(expected, DataStoreSyncStatus(open()).status.first())
         }
