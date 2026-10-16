@@ -99,7 +99,7 @@ class ColmiRingBigDataTest {
             mapOf(
                 day1 to mapOf(3 to (95 to 99), 23 to (90 to 97)),
                 day2 to mapOf(0 to (96 to 98)),
-                // Today is never pulled, so this never becomes a row.
+                // Today's big-data rows wait for the day to end, so this is no row here.
                 today to mapOf(1 to (97 to 99)),
             ),
         sleep =
@@ -187,7 +187,7 @@ class ColmiRingBigDataTest {
                 ),
                 second.lines,
             )
-            assertEquals(false, second.more)
+            assertEquals(true, second.more, "today's slice follows")
 
             // One answer holds every day: each type was asked for once, on the first pull.
             assertEquals(listOf(0x2A, 0x27, 0x25), ring.bigDataRequests)

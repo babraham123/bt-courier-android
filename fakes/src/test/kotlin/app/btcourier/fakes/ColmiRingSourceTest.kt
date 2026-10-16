@@ -147,13 +147,14 @@ class ColmiRingSourceTest {
                 second.lines,
             )
             assertEquals("2026-10-14", second.nextCursor)
-            assertEquals(false, second.more)
+            assertEquals(true, second.more, "today's slice follows")
 
-            // Today is never pulled: caught up means an empty page at the same cursor.
-            val caughtUp = source.pull(second.nextCursor)
-            assertEquals(emptyList<String>(), caughtUp.lines)
-            assertEquals("2026-10-14", caughtUp.nextCursor)
-            assertEquals(false, caughtUp.more)
+            // Today has no readings yet: its slice is its marker, cut at 09:30.
+            val today = source.pull(second.nextCursor)
+            assertEquals(Page(listOf("""{"_file":"colmi/2026-10-15"}"""), "2026-10-15@09:30", more = false), today)
+
+            // Caught up: an empty page at the same cursor until the next slot closes.
+            assertEquals(Page(emptyList(), "2026-10-15@09:30", more = false), source.pull(today.nextCursor))
 
             assertEquals(listOf(now), ring.clockSets)
             assertEquals(0, ring.malformedWrites)
@@ -161,27 +162,16 @@ class ColmiRingSourceTest {
             assertEquals(0x01, commands.first()[0].toInt())
             // Heart-rate requests carry the day's wall-clock midnight counted as UTC, little-endian.
             val hrDays = commands.filter { it[0].toInt() == 0x15 }.map(::u32le)
-            assertEquals(listOf(day1, day2).map { it.atStartOfDay().toEpochSecond(ZoneOffset.UTC) }, hrDays)
+            assertEquals(
+                listOf(day1, day2, now.toLocalDate()).map { it.atStartOfDay().toEpochSecond(ZoneOffset.UTC) },
+                hrDays,
+            )
             // Steps requests address days by offset from the ring's today.
-            assertEquals(listOf(2, 1), commands.filter { it[0].toInt() == 0x43 }.map { it[1].toInt() })
+            assertEquals(listOf(2, 1, 0), commands.filter { it[0].toInt() == 0x43 }.map { it[1].toInt() })
             // So do HRV requests, as a 4-byte LE count.
-            assertEquals(listOf(2L, 1L), commands.filter { it[0].toInt() == 0x39 }.map(::u32le))
+            assertEquals(listOf(2L, 1L, 0L), commands.filter { it[0].toInt() == 0x39 }.map(::u32le))
             // The logging setting is read (16 01) once per instance.
             assertEquals(listOf(0x01), commands.filter { it[0].toInt() == 0x16 }.map { it[1].toInt() })
-        }
-
-    @Test
-    fun `a caught-up cursor stays caught up until nextDueAtMs, and from then on the next day is pulled`() =
-        runTest {
-            val due = ColmiRingSource.nextDueAtMs("2026-10-14", zone)
-            assertEquals(ms(LocalDateTime.of(2026, 10, 16, 0, 0)), due)
-
-            val before = ColmiRingSource(ring().link, zone, phoneClock = { due!! - 1 }).pull("2026-10-14")
-            assertEquals(Page(emptyList(), "2026-10-14", more = false), before)
-
-            val at = ColmiRingSource(ring().link, zone, phoneClock = { due!! }).pull("2026-10-14")
-            assertEquals("""{"_file":"colmi/2026-10-15"}""", at.lines.first())
-            assertEquals("2026-10-15", at.nextCursor)
         }
 
     private fun u32le(p: ByteArray) =
@@ -190,7 +180,7 @@ class ColmiRingSourceTest {
     @Test
     fun `a null or too-old cursor starts at the oldest day the ring keeps`() =
         runTest {
-            // Today (10-15) and the 7 days before it are on the ring; today itself is never pulled.
+            // Today (10-15) and the 7 days before it are on the ring.
             val oldest = """{"_file":"colmi/2026-10-08"}"""
             assertEquals(oldest, source(ring()).pull(null).lines.first())
             assertEquals(oldest, source(ring()).pull("2026-09-01").lines.first())
@@ -287,10 +277,11 @@ class ColmiRingSourceTest {
 
             val report = sync(ring, store)
             assertEquals(StopReason.CaughtUp, report.stoppedBecause)
-            assertEquals(2, report.pagesPulled)
-            // Day 1's 8 rows, the battery, the logging setting and the revisions, then day 2's one.
+            assertEquals(3, report.pagesPulled)
+            // Day 1's 8 rows, the battery, the logging setting and the revisions, then day 2's one;
+            // today's slice is its marker alone.
             assertEquals(12L, report.linesStored)
-            assertEquals("2026-10-14", store.cursor("colmi"))
+            assertEquals("2026-10-15@09:30", store.cursor("colmi"))
 
             // The day-1 batch is sealed by day 2's marker; every row keeps its stamp as `device`.
             val day1Batch = store.pending("sink").first()
@@ -336,8 +327,9 @@ class ColmiRingSourceTest {
 
             val recovered = sync(ring, store)
             assertEquals(StopReason.CaughtUp, recovered.stoppedBecause)
-            assertEquals("2026-10-14", store.cursor("colmi"))
-            val day1Batch = store.pending("sink").single()
+            assertEquals("2026-10-15@09:30", store.cursor("colmi"))
+            // Day 1's batch, then day 2's, sealed by today's marker.
+            val day1Batch = store.pending("sink").first()
             assertEquals("""{"_file":"colmi/2026-10-13"}""", day1Batch.lines.first())
             // Stored rows are the source's with ts_raw and ts_quality appended.
             assertEquals(

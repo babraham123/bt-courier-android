@@ -17,30 +17,55 @@ import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import java.time.format.ResolverStyle
 import java.time.temporal.ChronoUnit
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 
 /**
  * [Source] over a Colmi R02-family smart ring's per-day logs, on a [GattLink] bound to
  * [ColmiGatt.RX] (writes) and [ColmiGatt.TX] (notifications). Protocol per [ColmiPacketCodec].
  *
- * Cursor: the last whole day pulled, `YYYY-MM-DD` in [zone]. [pull] fetches the day after it:
- * its heart-rate log (`0x15`), steps log (`0x43`) and HRV log (`0x39`), as
- * `{"_file":"colmi/<day>"}` followed by `colmi.hr` (bpm per 5-minute slot), `colmi.steps` (steps
- * per quarter hour), `colmi.hrv` (ms per 30-minute slot) and the big-data rows below, in time order,
- * so the store seals one batch per day. Only days before today are pulled, because a partial today
- * stored under its cursor could never be topped up; `more` stays true while the day after the one
- * pulled is still before today. Once caught up, [pull] answers an empty page with the same cursor
- * and `more:false`, until local midnight makes another day whole: [nextDueAtMs] says when, from the
- * cursor alone, so a caller can skip connecting before then.
+ * A day's data: its heart-rate log (`0x15`), steps log (`0x43`) and HRV log (`0x39`) as
+ * `colmi.hr` (bpm per 5-minute slot), `colmi.steps` (steps per quarter hour) and `colmi.hrv` (ms
+ * per 30-minute slot), the slot-indexed samples, plus the big-data rows below, all in time order
+ * after a `{"_file":"colmi/<day>"}` marker, so the store keeps each day as one file. Today (the
+ * phone's date in [zone]) is pulled as it fills, a slice of closed slots per page.
+ *
+ * Cursor, days and times in [zone]:
+ * - `YYYY-MM-DD`: that day is complete.
+ * - `YYYY-MM-DD@HH:MM`: that day is pulled up to the cut `HH:MM`: every slot-indexed sample whose
+ *   slot ended by the cut was emitted, and none other of that day.
+ *
+ * [pull] from a cursor:
+ * - None, or a whole day before yesterday: the next whole day, `more:true` (another whole day or
+ *   today's slice follows).
+ * - Yesterday whole, or today with a cut: today's slice. The new cut is the phone's time floored
+ *   to the heart-rate slot, so the slot in progress waits for the next pull; the page holds the
+ *   samples whose slots ended after the previous cut (midnight for a whole-day cursor) and by the
+ *   new one, its cursor is `<today>@<new cut>` and `more:false`. With no slot closed since the
+ *   previous cut it is an empty page with the same cursor and `more:false`.
+ *   No big-data rows: those come once the day is complete.
+ * - An earlier day with a cut: that day's remaining samples (slots ending after the cut) and its
+ *   big-data rows; the cursor becomes the whole day and `more:true`.
+ *
+ * A sample is emitted once its slot has ended (a quarter hour of steps in progress at the cut
+ * waits for the next pull, though the cut is finer), so a slice never stores a slot that later
+ * readings would change. The marker opens only a day's first page (one starting at midnight);
+ * later pages of the day carry none, so they continue that day's file in the store instead of each
+ * starting a batch (a batch the store cuts by age restates the marker). [nextDueAtMs] says, from the cursor alone, when a caller should next connect:
+ * [intradayInterval] after the cut, a whole day's cut being the next midnight.
  *
  * The ring is assumed to keep today and the 7 days before it ([historyDays]). A null cursor
- * starts at the oldest day it holds (`today - (historyDays - 1)`), and an older cursor is clamped
- * to that day: anything in between was overwritten on the ring and is gone.
+ * starts at the oldest day it holds (`today - (historyDays - 1)`), and an older cursor, whole or
+ * cut, is clamped to that day: anything in between, a cut day's rest included, was overwritten on
+ * the ring and is gone.
  *
  * HRV: the log reaches [ColmiPacketCodec.HRV_MAX_DAYS_AGO] days back, so the oldest day gets no
  * HRV request. Older firmware never answers `0x39` (Gadgetbridge ends its sync before the HRV
@@ -71,13 +96,13 @@ import kotlin.time.Duration.Companion.seconds
  * used: each heart-rate log's header carries the interval it was recorded at, which places its
  * readings even when the setting changed since (there is no logger in core to flag a mismatch).
  *
- * Big-data channel ([ColmiBigData], the link's secondary channel): after the cursor day's UART
- * logs, the first page of an instance asks for the ring's SpO2, sleep and temperature history.
+ * Big-data channel ([ColmiBigData], the link's secondary channel): after the UART logs, the first
+ * page of an instance that completes a day asks for the ring's SpO2, sleep and temperature history.
  * Each answer holds every day the ring keeps, so each type is asked for once per instance and
- * every page takes the cursor day's part, by days before the phone's today as for steps:
+ * every page completing a day takes that day's part, by days before the phone's today as for steps:
  * - `colmi.spo2`: one row per hour with a reading, `ts` the hour's start,
  *   `"value":{"min":<percent>,"max":<percent>}`.
- * - `colmi.sleep`: one row per session that ended on the cursor day, `ts` its start,
+ * - `colmi.sleep`: one row per session that ended on the day, `ts` its start,
  *   `"value":{"start_ts":<ms>,"end_ts":<ms>,"stages":[{"stage":<name>,"minutes":<n>},...],
  *   "minutes":{"light":<n>,"deep":<n>,"rem":<n>,"awake":<n>}}`. Stages are in ring order, named
  *   `light`, `deep`, `rem`, `awake`, or `stage_<code>` for an unnamed code; `minutes` totals each
@@ -109,6 +134,9 @@ import kotlin.time.Duration.Companion.seconds
  *   those are skipped, as are notifications that are not whole 16-byte packets or fail the checksum
  *   (a corrupted packet of the answer then surfaces as a timeout).
  * - [historyDays] = 8, as Gadgetbridge and PulseLoopiOS both ask for day offsets 0..7.
+ * - Today's logs (heart rate by its day start, steps and HRV at offset 0) answer with the slots
+ *   so far and zeros, or nothing, for those not yet reached, as a past day's do for slots without a
+ *   reading; and a slot's reading is final once the slot has ended.
  * - Everything on the big-data channel (from PulseLoopiOS and Gadgetbridge): its UUIDs, which
  *   models have it, the request payloads, the write type, answers' `daysAgo` counting
  *   from the phone's today after set-time, sleep start/end as minutes of the day it ended, and
@@ -122,6 +150,7 @@ import kotlin.time.Duration.Companion.seconds
  *   unsupported instead.
  * @param settleDelay wait between the instance's first [pull] (right after connecting) and its
  *   first command.
+ * @param intradayInterval how long after a cursor's cut the next pull is due ([nextDueAtMs]).
  */
 class ColmiRingSource(
     private val link: GattLink,
@@ -130,6 +159,7 @@ class ColmiRingSource(
     private val historyDays: Int = DEFAULT_HISTORY_DAYS,
     private val responseTimeout: Duration = 5.seconds,
     private val settleDelay: Duration = DEFAULT_SETTLE_DELAY,
+    private val intradayInterval: Duration = DEFAULT_INTRADAY_INTERVAL,
 ) : Source {
     init {
         require(historyDays >= 2) { "the ring must hold at least one whole day before today, got $historyDays" }
@@ -144,37 +174,85 @@ class ColmiRingSource(
     private var hrvSupported: Boolean? = null
 
     override suspend fun pull(cursor: String?): Page {
-        val last = cursor?.let(::parseCursor)
+        val last = cursor?.let { parseCursor(it) ?: throw IllegalArgumentException("not a Colmi cursor: $it") }
         setClockOnce()
-        val today = Instant.ofEpochMilli(phoneClock()).atZone(zone).toLocalDate()
+        val now = LocalDateTime.ofInstant(Instant.ofEpochMilli(phoneClock()), zone)
+        val today = now.toLocalDate()
         val oldest = today.minusDays(historyDays - 1L)
-        val day = maxOf(last?.plusDays(1) ?: oldest, oldest)
-        // A null cursor always has a day to pull, since oldest < today.
-        if (!day.isBefore(today)) return Page(emptyList(), checkNotNull(cursor), more = false)
-
-        val rows =
-            (
-                heartRateRows(
-                    day,
-                ) + stepsRows(day, today) + hrvRows(day, today) + bigDataRows(day, today)
-            ).sortedBy { it.ts }
-        val lines =
-            buildList {
-                add(StoredLine.marker("$FILE_PREFIX$day"))
-                rows.forEach { add(it.json()) }
-                if (!deviceRowsReported) {
-                    val battery =
-                        link.colmiRequest(ColmiPacketCodec.batteryRequest(), responseTimeout) {
-                            ColmiPacketCodec.parseBattery(it)
-                        }
-                    add(Row(phoneClock(), PARAM_BATTERY, battery.level).json())
-                    add(hrLoggingRow().json())
-                    add(deviceRow().json())
-                    deviceRowsReported = true
-                }
+        // A cut day still on the ring is resumed; one older than the ring's history is gone.
+        if (cursor != null && last?.cut != null && !last.day.isBefore(oldest)) {
+            return when {
+                last.day.isBefore(today) -> dayPage(last.day, last.cut, today)
+                last.day == today -> todayPage(cursor, last.cut, now)
+                else -> Page(emptyList(), cursor, more = false)
             }
-        return Page(lines, day.toString(), more = day.plusDays(1).isBefore(today))
+        }
+        // A null cursor always has a whole day to pull, since oldest < today.
+        val day = maxOf(last?.day?.plusDays(1) ?: oldest, oldest)
+        return when {
+            day.isBefore(today) -> dayPage(day, LocalTime.MIDNIGHT, today)
+            day == today -> todayPage(checkNotNull(cursor), LocalTime.MIDNIGHT, now)
+            else -> Page(emptyList(), checkNotNull(cursor), more = false)
+        }
     }
+
+    /** The rest of [day], a day before [today], from [from] on, with its big-data rows. */
+    private suspend fun dayPage(
+        day: LocalDate,
+        from: LocalTime,
+        today: LocalDate,
+    ): Page {
+        val window = SlotWindow(day, from, null)
+        val lines = pageLines(day, from, uartRows(day, today, window) + bigDataRows(day, today))
+        return Page(lines, day.toString(), more = true)
+    }
+
+    /** Today's slots that ended after [from] and by [now] floored to a heart-rate slot. */
+    private suspend fun todayPage(
+        cursor: String,
+        from: LocalTime,
+        now: LocalDateTime,
+    ): Page {
+        val slotMinutes = HeartRateLog.DEFAULT_INTERVAL_MINUTES
+        val cut = LocalTime.of(now.hour, now.minute / slotMinutes * slotMinutes)
+        if (!cut.isAfter(from)) return Page(emptyList(), cursor, more = false)
+        val today = now.toLocalDate()
+        val lines = pageLines(today, from, uartRows(today, today, SlotWindow(today, from, cut)))
+        return Page(lines, ColmiCursor(today, cut).toString(), more = false)
+    }
+
+    /**
+     * [rows] in time order, after [day]'s marker when the page starts the day at midnight, then the
+     * per-connection rows on the instance's first page.
+     */
+    private suspend fun pageLines(
+        day: LocalDate,
+        from: LocalTime,
+        rows: List<Row>,
+    ): List<String> =
+        buildList {
+            if (from == LocalTime.MIDNIGHT) add(StoredLine.marker("$FILE_PREFIX$day"))
+            rows.sortedBy { it.ts }.forEach { add(it.json()) }
+            if (!deviceRowsReported) {
+                val battery =
+                    link.colmiRequest(ColmiPacketCodec.batteryRequest(), responseTimeout) {
+                        ColmiPacketCodec.parseBattery(it)
+                    }
+                add(Row(phoneClock(), PARAM_BATTERY, battery.level).json())
+                add(hrLoggingRow().json())
+                add(deviceRow().json())
+                deviceRowsReported = true
+            }
+        }
+
+    private suspend fun uartRows(
+        day: LocalDate,
+        today: LocalDate,
+        window: SlotWindow,
+    ): List<Row> = heartRateRows(day, window) + stepsRows(day, today, window) + hrvRows(day, today, window)
+
+    /** [nextDueAtMs] in this instance's [zone] with its [intradayInterval]. */
+    fun nextDueAtMs(cursor: String?): Long? = nextDueAtMs(cursor, zone, intradayInterval)
 
     override suspend fun clockJournal(): List<ClockEvent> = emptyList()
 
@@ -205,7 +283,10 @@ class ColmiRingSource(
         clockSet = true
     }
 
-    private suspend fun heartRateRows(day: LocalDate): List<Row> {
+    private suspend fun heartRateRows(
+        day: LocalDate,
+        window: SlotWindow,
+    ): List<Row> {
         val start = day.atStartOfDay()
         val log =
             link.colmiRequest(
@@ -213,13 +294,14 @@ class ColmiRingSource(
                 responseTimeout,
                 HeartRateLogAssembler(),
             )
-        return slotRows(start, log.intervalMinutes, log.values, PARAM_HR)
+        return slotRows(start, log.intervalMinutes, log.values, PARAM_HR, window)
     }
 
     /** See the class KDoc for when the ring is not asked and how a silent ring is told apart. */
     private suspend fun hrvRows(
         day: LocalDate,
         today: LocalDate,
+        window: SlotWindow,
     ): List<Row> {
         val daysAgo = ChronoUnit.DAYS.between(day, today).toInt()
         if (hrvSupported == false || daysAgo > ColmiPacketCodec.HRV_MAX_DAYS_AGO) return emptyList()
@@ -233,27 +315,57 @@ class ColmiRingSource(
                 return emptyList()
             }
         hrvSupported = true
-        return slotRows(day.atStartOfDay(), HrvLogAssembler.SLOT_MINUTES, values, PARAM_HRV)
+        return slotRows(day.atStartOfDay(), HrvLogAssembler.SLOT_MINUTES, values, PARAM_HRV, window)
     }
 
-    /** One row per non-zero reading, the reading at index i placed i * [minutes] after [start]. */
+    /**
+     * One row per non-zero reading in [window], the reading at index i placed i * [minutes] after
+     * [start].
+     */
     private fun slotRows(
         start: LocalDateTime,
         minutes: Int,
         values: List<Int>,
         param: String,
+        window: SlotWindow,
     ): List<Row> =
         values.mapIndexedNotNull { slot, value ->
-            if (value == 0) null else Row(epochMs(start.plusMinutes(slot.toLong() * minutes)), param, value)
+            val slotStart = start.plusMinutes(slot.toLong() * minutes)
+            if (value == 0 || !window.holds(slotStart, minutes)) null else Row(epochMs(slotStart), param, value)
         }
 
     private suspend fun stepsRows(
         day: LocalDate,
         today: LocalDate,
+        window: SlotWindow,
     ): List<Row> {
         val offset = ChronoUnit.DAYS.between(day, today).toInt()
-        return link.colmiRequest(ColmiPacketCodec.stepsLogRequest(offset), responseTimeout, StepsLogAssembler()).map {
-            Row(epochMs(it.date.atStartOfDay().plusMinutes(it.quarter * 15L)), PARAM_STEPS, it.steps)
+        val quarters = link.colmiRequest(ColmiPacketCodec.stepsLogRequest(offset), responseTimeout, StepsLogAssembler())
+        return quarters.mapNotNull {
+            val start = it.date.atStartOfDay().plusMinutes(it.quarter * 15L)
+            if (window.holds(start, 15)) Row(epochMs(start), PARAM_STEPS, it.steps) else null
+        }
+    }
+
+    /**
+     * The slots of [day] a page takes: those that ended after [from] and, when [to] is set, by it.
+     * A page from midnight takes every slot the ring files under the day, so a whole day keeps
+     * steps stamped with another date as the ring sends them.
+     */
+    private class SlotWindow(
+        day: LocalDate,
+        from: LocalTime,
+        to: LocalTime?,
+    ) {
+        private val after = day.atTime(from).takeIf { from != LocalTime.MIDNIGHT }
+        private val until = to?.let(day::atTime)
+
+        fun holds(
+            start: LocalDateTime,
+            minutes: Int,
+        ): Boolean {
+            val end = start.plusMinutes(minutes.toLong())
+            return (after == null || end.isAfter(after)) && (until == null || !end.isAfter(until))
         }
     }
 
@@ -262,12 +374,13 @@ class ColmiRingSource(
 
     private fun epochMs(wall: LocalDateTime): Long = wall.atZone(zone).toInstant().toEpochMilli()
 
-    private fun parseCursor(cursor: String): LocalDate =
-        try {
-            LocalDate.parse(cursor)
-        } catch (e: DateTimeParseException) {
-            throw IllegalArgumentException("not a Colmi cursor (YYYY-MM-DD): $cursor", e)
-        }
+    /** A parsed cursor: [day] complete when [cut] is null, else pulled up to [cut]. */
+    private data class ColmiCursor(
+        val day: LocalDate,
+        val cut: LocalTime?,
+    ) {
+        override fun toString() = if (cut == null) day.toString() else "$day$CUT_SEPARATOR${CUT_FORMAT.format(cut)}"
+    }
 
     /** @property valueJson the `value` as JSON text. */
     private class Row(
@@ -338,31 +451,50 @@ class ColmiRingSource(
 
     companion object {
         /**
-         * The earliest phone time, epoch ms, at which [pull] from [cursor] can return a day: the
-         * start, in [zone], of the second day after the cursor day, because the day after it is
-         * pulled only once it is whole. Before then every [pull] answers the empty caught-up page.
-         * Null when any time can: no cursor yet (the ring's history is waiting), or a cursor that
-         * [pull] would reject, which then fails the sync as it always did.
+         * The phone time, epoch ms, from which an automatic sync from [cursor] is due:
+         * [intradayInterval] after the cursor's cut in [zone], the cut of a whole day being the
+         * start of the next day. Earlier, [pull] would find at most a few slots closed since the
+         * last connection, not worth another. Null when any time is: no cursor yet (the ring's
+         * history is waiting), or a cursor that [pull] would reject, which then fails the sync as
+         * it always did.
          *
          * Midnight that a DST change skips counts from the first instant of the day, as [pull]'s
-         * "today" does.
+         * "today" does; a cut in a DST gap counts as shifted later by the gap's length.
          */
         fun nextDueAtMs(
             cursor: String?,
             zone: ZoneId,
+            intradayInterval: Duration = DEFAULT_INTRADAY_INTERVAL,
         ): Long? {
-            val last =
-                try {
-                    LocalDate.parse(cursor ?: return null)
-                } catch (_: DateTimeParseException) {
-                    return null
+            val last = parseCursor(cursor ?: return null) ?: return null
+            val cut =
+                if (last.cut == null) {
+                    last.day.plusDays(1).atStartOfDay(zone)
+                } else {
+                    last.day.atTime(last.cut).atZone(zone)
                 }
-            return last
-                .plusDays(2)
-                .atStartOfDay(zone)
-                .toInstant()
-                .toEpochMilli()
+            return cut.toInstant().toEpochMilli() + intradayInterval.inWholeMilliseconds
         }
+
+        /** `YYYY-MM-DD` or `YYYY-MM-DD@HH:MM` (see the class KDoc); null for anything else. */
+        private fun parseCursor(cursor: String): ColmiCursor? =
+            try {
+                val day = LocalDate.parse(cursor.substringBefore(CUT_SEPARATOR))
+                val cut = cursor.substringAfter(CUT_SEPARATOR, "").takeIf { CUT_SEPARATOR in cursor }
+                ColmiCursor(day, cut?.let { LocalTime.parse(it, CUT_FORMAT) })
+            } catch (_: DateTimeParseException) {
+                null
+            }
+
+        private const val CUT_SEPARATOR = '@'
+        private val CUT_FORMAT = DateTimeFormatter.ofPattern("HH:mm").withResolverStyle(ResolverStyle.STRICT)
+
+        /**
+         * Each pull opens a BLE connection and costs ring battery, while the heart-rate log fills
+         * one 5-minute slot at a time: an hour of latency buys 12 readings per connection. With
+         * the 15-minute periodic trigger the effective cadence is 60 to 75 minutes.
+         */
+        val DEFAULT_INTRADAY_INTERVAL: Duration = 1.hours
 
         const val DEFAULT_HISTORY_DAYS: Int = 8
         const val FILE_PREFIX: String = "colmi/"

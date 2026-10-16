@@ -47,8 +47,8 @@ import java.time.ZoneOffset
  * is what the status records under the device's address, and [SyncRetryPolicy] decides retries:
  * busy calls are retried in the run, interrupted runs are worth another run up to its limit,
  * final ones are not. Aged rows are sealed with or without a link, and each paired device keeps
- * its own cursor under a source id of its kind. An automatic sync of a ring whose cursor is already
- * yesterday skips connecting until local midnight; a manual one always connects.
+ * its own cursor under a source id of its kind. An automatic sync of a ring skips connecting until
+ * an hour after its cursor's cut; a manual one always connects.
  */
 class SyncJobTest {
     @TempDir
@@ -428,8 +428,10 @@ class SyncJobTest {
             assertFalse(locks.of(address).isLocked, "the lock is released after the first sync")
         }
 
-    // The ring, in the job's zone (UTC here): today and the two days before it.
+    // The ring, in the job's zone (UTC here): today and the two days before it. NOW is 14:13:20,
+    // so today's slice is cut at 14:10.
     private val today = Instant.ofEpochMilli(NOW).atZone(ZoneOffset.UTC).toLocalDate()
+    private val todayCut = "$today@14:10"
     private val dayBefore = today.minusDays(2)
     private val yesterday = today.minusDays(1)
     private val ringAddress = "AA:BB:CC:DD:EE:02"
@@ -475,15 +477,16 @@ class SyncJobTest {
             val outcome = job(ringLinks(ring)).run(ringAddress, sealEverything) { foreground++ } as Recorded
 
             assertEquals(SyncStopKind.CAUGHT_UP, outcome.stop)
-            // No cursor yet: the ring's history, today - 7 up to yesterday; today is never pulled.
+            // No cursor yet: the ring's history, today - 7 up to yesterday, then today's slice.
             val days = (7 downTo 1).map { today.minusDays(it.toLong()) }
-            assertEquals(days.size, outcome.pages)
-            assertEquals(yesterday.toString(), store.cursor(ringSource))
+            assertEquals(days.size + 1, outcome.pages)
+            assertEquals(todayCut, store.cursor(ringSource))
             assertNull(store.cursor(wicanSource), "the dongle is untouched")
 
             val batches = store.pending("sink")
             assertEquals(setOf(ringSource), batches.map { it.sourceId }.toSet())
-            // A day with no rows seals no batch; the first page's battery row keeps the oldest day's.
+            // A day with no rows, today's slice included, seals no batch; the first page's battery
+            // row keeps the oldest day's.
             val daysWithRows = listOf(days.first(), dayBefore, yesterday)
             assertEquals(
                 daysWithRows.map { """{"_file":"colmi/$it"}""" },
@@ -511,7 +514,7 @@ class SyncJobTest {
             assertTrue(ring.link.closed)
             assertEquals(1, ring.clockSets.size, "the ring's clock is set once per sync")
             assertEquals(
-                DeviceSync(NOW, SyncResultKind.CAUGHT_UP, 6, days.size, SyncStopKind.CAUGHT_UP, yesterday.toString()),
+                DeviceSync(NOW, SyncResultKind.CAUGHT_UP, 6, days.size + 1, SyncStopKind.CAUGHT_UP, todayCut),
                 status.status.value.syncOf(ringAddress),
             )
             assertNull(status.status.value.syncOf(address))
@@ -531,53 +534,48 @@ class SyncJobTest {
 
             val resumed = job(ringLinks(ring())).run(ringAddress, sealEverything) as Recorded
 
-            assertEquals(1, resumed.pages, "only yesterday is left")
+            assertEquals(2, resumed.pages, "only yesterday is left, then today's slice")
             assertEquals(
                 listOf("""{"_file":"colmi/$yesterday"}"""),
                 store.pending("sink").flatMap { it.lines }.filter(::isMarker),
             )
         }
 
-    /** Midnight (UTC, the job's zone) that ends today: from then on today is a whole day to pull. */
-    private val midnight =
-        today
-            .plusDays(1)
-            .atStartOfDay(ZoneOffset.UTC)
-            .toInstant()
-            .toEpochMilli()
+    /** An hour after [todayCut]: from then on the ring is due again. */
+    private val dueAfterCut = today.atTime(15, 10).toInstant(ZoneOffset.UTC).toEpochMilli()
 
     @Test
-    fun `automatic syncs of a caught-up ring skip connecting until midnight, and the first periodic one after it connects`() =
+    fun `automatic syncs of a caught-up ring skip connecting until an hour after the cut, and the first periodic one after it connects`() =
         runTest {
             paired.devices += PairedDevice(ringAddress, null, 2, DeviceKind.COLMI_RING)
-            store.appendPage(ringSource, yesterday.toString(), emptyList())
+            store.appendPage(ringSource, todayCut, emptyList())
             store.appendPage("other", "1:1", listOf(marker("dl_1.jsonl"), row(1, 1)))
             val locks = DeviceLocks()
             // A sync holding the lock does not turn a skip into AlreadyRunning: the skip needs no link.
             assertTrue(locks.of(ringAddress).tryLock())
 
-            now = midnight - 20 * MINUTE
+            now = dueAfterCut - 20 * MINUTE
             val skipped = job(noLink, locks = locks).run(ringAddress, sealEverything) as Recorded
 
             assertEquals(
                 Recorded(
                     SyncResultKind.NOT_DUE,
-                    cursor = yesterday.toString(),
+                    cursor = todayCut,
                     sealed = sealedIds(),
-                    dueAtMs = midnight,
+                    dueAtMs = dueAfterCut,
                 ),
                 skipped,
                 "sealed like a run without a device",
             )
             assertTrue(skipped.newBatches)
             assertEquals(
-                DeviceSync(now, SyncResultKind.NOT_DUE, cursor = yesterday.toString(), dueAtMs = midnight),
+                DeviceSync(now, SyncResultKind.NOT_DUE, cursor = todayCut, dueAtMs = dueAfterCut),
                 status.status.value.syncOf(ringAddress),
             )
             assertNull(status.status.value.lastError, "nothing went wrong")
             locks.of(ringAddress).unlock()
 
-            // The periodic work's 15-minute cadence: one more skip, then the first run after midnight.
+            // The periodic work's 15-minute cadence: one more skip, then the first run after the due time.
             now += 15 * MINUTE
             assertEquals(SyncResultKind.NOT_DUE, (job(noLink).run(ringAddress, sealEverything) as Recorded).result)
             now += 15 * MINUTE
@@ -585,8 +583,8 @@ class SyncJobTest {
             val pulled = job(ringLinks(ring)).run(ringAddress, sealEverything) as Recorded
 
             assertEquals(SyncResultKind.CAUGHT_UP, pulled.result)
-            assertEquals(1, pulled.pages, "the day that just ended")
-            assertEquals(today.toString(), store.cursor(ringSource))
+            assertEquals(1, pulled.pages, "today's slots closed since the cut")
+            assertEquals("$today@15:20", store.cursor(ringSource))
             assertNull(
                 status.status.value
                     .syncOf(ringAddress)!!
@@ -599,7 +597,7 @@ class SyncJobTest {
     fun `a manual sync of a caught-up ring connects anyway`() =
         runTest {
             paired.devices += PairedDevice(ringAddress, null, 2, DeviceKind.COLMI_RING)
-            store.appendPage(ringSource, yesterday.toString(), emptyList())
+            store.appendPage(ringSource, todayCut, emptyList())
             val ring = ring()
             var foreground = 0
 
@@ -607,7 +605,7 @@ class SyncJobTest {
                 job(ringLinks(ring)).run(ringAddress, sealEverything, manual = true) { foreground++ } as Recorded
 
             assertEquals(
-                Recorded(SyncResultKind.CAUGHT_UP, SyncStopKind.CAUGHT_UP, pages = 1, cursor = yesterday.toString()),
+                Recorded(SyncResultKind.CAUGHT_UP, SyncStopKind.CAUGHT_UP, pages = 1, cursor = todayCut),
                 outcome,
             )
             assertEquals(1, foreground)

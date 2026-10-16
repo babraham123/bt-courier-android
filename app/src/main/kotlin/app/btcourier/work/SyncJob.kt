@@ -33,9 +33,9 @@ import kotlin.time.Duration.Companion.seconds
  * An automatic sync first asks the device's kind when a sync from its stored cursor could next
  * store anything ([DeviceSupport.nextDueAtMs][app.btcourier.device.DeviceSupport.nextDueAtMs]),
  * and before then ends [SyncResultKind.NOT_DUE] without opening a link: the periodic work and
- * presence would otherwise connect to a caught-up ring every 15 minutes only to hear it has
- * nothing. The first automatic sync from the due time on connects, so a new day is pulled within
- * one periodic interval of local midnight. A manual sync always connects.
+ * presence would otherwise connect to a caught-up ring every 15 minutes for a slot or two. The
+ * first automatic sync from the due time on connects, so a ring is pulled within one periodic
+ * interval of its due time. A manual sync always connects.
  *
  * Every run that gets past the lock, and every skipped one, ends through one path, whether or not
  * it reached the device:

@@ -108,7 +108,7 @@ enum class SyncResultKind {
 
     /**
      * An automatic sync skipped connecting: the stored cursor says the device can have nothing
-     * new before [DeviceSync.dueAtMs] (the ring before local midnight).
+     * new before [DeviceSync.dueAtMs] (the ring within an hour of its cursor's cut).
      */
     NOT_DUE,
 }

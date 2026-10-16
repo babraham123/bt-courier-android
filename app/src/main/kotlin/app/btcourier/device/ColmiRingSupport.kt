@@ -47,7 +47,7 @@ object ColmiRingSupport : DeviceSupport {
                 PairingChoiceText(R.string.pairing_auto_hr_choice, R.string.pairing_auto_hr_choice_help),
         )
 
-    // A new page exists only once local midnight makes another day whole.
+    // An hour after the cursor's cut, enough newly closed slots to be worth a connection.
     override fun nextDueAtMs(
         cursor: String?,
         zone: ZoneId,
