@@ -23,6 +23,7 @@ import org.junit.jupiter.api.fail
 import org.junit.jupiter.api.io.TempDir
 import java.io.IOException
 import java.nio.file.Path
+import java.time.Instant
 import java.time.ZoneOffset
 
 /**
@@ -75,7 +76,7 @@ class WorkRulesTest {
             SyncJob(devices, links, store, InMemorySyncStatus(), clock = {
                 NOW
             }, locks = DeviceLocks(), pageLimit = 7, zone = { ZoneOffset.UTC })
-        return SyncWork(job, SyncFanOut(devices, work::syncNow), work)
+        return SyncWork(job, SyncFanOut(devices) { work.syncNow(it, manual = false) }, work)
     }
 
     @Test
@@ -149,6 +150,35 @@ class WorkRulesTest {
                 syncWork(unreachable).run(dongle.address, attempt = 0, sealEverything, uploadOverCellular = false),
             )
             assertEquals(emptyList<Pair<Boolean, Boolean>>(), work.uploads, "nothing stored, so nothing sealed")
+        }
+
+    @Test
+    fun `a caught-up ring is skipped by an automatic sync run and connected to by a manual one`() =
+        runTest {
+            devices.devices = listOf(ring)
+            val yesterday =
+                Instant
+                    .ofEpochMilli(NOW)
+                    .atZone(ZoneOffset.UTC)
+                    .toLocalDate()
+                    .minusDays(1)
+            store.appendPage(
+                SyncJob.sourceIdFor(DeviceKind.COLMI_RING, ring.address),
+                yesterday.toString(),
+                emptyList(),
+            )
+            var opened = 0
+            val asleep =
+                LinkFactory { _, _ ->
+                    opened++
+                    throw IOException("asleep")
+                }
+
+            syncWork(asleep).run(ring.address, attempt = 0, sealEverything, uploadOverCellular = false)
+            assertEquals(0, opened, "automatic: nothing due before midnight")
+
+            syncWork(asleep).run(ring.address, attempt = 0, sealEverything, uploadOverCellular = false, manual = true)
+            assertEquals(1, opened, "manual: the user asked")
         }
 
     @Test

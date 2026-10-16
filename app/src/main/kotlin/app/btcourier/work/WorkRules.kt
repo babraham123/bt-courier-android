@@ -12,8 +12,8 @@ enum class WorkVerdict { SUCCESS, RETRY }
  * a thin adapter that reads its inputs and maps the [WorkVerdict] to a WorkManager result.
  *
  * - Without an address (the periodic work, or a one-time sync queued before syncs were per
- *   device) the run fans out: one sync per paired device ([SyncTrigger.Periodic]). With none
- *   paired it runs [SyncJob] without a device, which only seals.
+ *   device) the run fans out: one automatic sync per paired device ([SyncTrigger.Periodic]). With
+ *   none paired it runs [SyncJob] without a device, which only seals.
  * - Whenever the run sealed new batches, an upload is enqueued, KEEP so an upload already waiting
  *   delivers them: also after an interrupted sync and after one that found no device, since
  *   sealing happens anyway.
@@ -29,6 +29,7 @@ class SyncWork(
      * @param address the device to sync; null fans out.
      * @param attempt WorkManager's `runAttemptCount`, see [SyncJob.run].
      * @param uploadOverCellular whether the upload this run may enqueue may use a metered network.
+     * @param manual see [SyncJob.run].
      * @param onConnected see [SyncJob.run].
      */
     suspend fun run(
@@ -36,10 +37,11 @@ class SyncWork(
         attempt: Int,
         sealPolicy: SealPolicy,
         uploadOverCellular: Boolean,
+        manual: Boolean = false,
         onConnected: suspend () -> Unit = {},
     ): WorkVerdict {
         if (address == null && fanOut.fire(SyncTrigger.Periodic).isNotEmpty()) return WorkVerdict.SUCCESS
-        val outcome = job.run(address, sealPolicy, attempt, onConnected)
+        val outcome = job.run(address, sealPolicy, attempt, manual, onConnected)
         if (outcome.newBatches) work.uploadNow(uploadOverCellular, replace = false)
         return if (outcome.retryWorthwhile) WorkVerdict.RETRY else WorkVerdict.SUCCESS
     }

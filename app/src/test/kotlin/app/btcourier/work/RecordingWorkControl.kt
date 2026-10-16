@@ -2,8 +2,11 @@ package app.btcourier.work
 
 /** Records every scheduling request, for the view model and work rule tests. */
 class RecordingWorkControl : WorkControl {
-    /** Addresses passed to [syncNow], in order. */
+    /** Addresses of automatic [syncNow]s, in order. */
     val syncs = mutableListOf<String>()
+
+    /** Addresses of manual [syncNow]s, in order. */
+    val manualSyncs = mutableListOf<String>()
     val uploads = mutableListOf<Pair<Boolean, Boolean>>()
 
     /** `delayMs to allowCellular` passed to [uploadAt], in order. */
@@ -16,8 +19,11 @@ class RecordingWorkControl : WorkControl {
     /** Runs inside [cancelUpload], to observe state at the moment of cancelling. */
     var onCancelUpload: () -> Unit = {}
 
-    override fun syncNow(address: String) {
-        syncs += address
+    override fun syncNow(
+        address: String,
+        manual: Boolean,
+    ) {
+        if (manual) manualSyncs += address else syncs += address
     }
 
     override fun uploadNow(
@@ -45,7 +51,7 @@ class RecordingWorkControl : WorkControl {
         periodic += enabled
     }
 
-    override fun forgetRetries(sinkId: String) {
+    override suspend fun forgetRetries(sinkId: String) {
         calls += "forget $sinkId"
     }
 }

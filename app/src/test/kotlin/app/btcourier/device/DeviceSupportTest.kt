@@ -11,14 +11,17 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.time.Instant
 import java.time.ZoneOffset
 
 /**
  * The kind → [DeviceSupport] lookup: a WiCAN is a bonded `ble_http` dongle found as `WiC_…`, stored
  * under `wican:` and synced when the car connects; a Colmi ring is an unbonded `R0…` device stored
- * under `colmi:` that the car does not sync. Each opens its own source on a link.
+ * under `colmi:` that the car does not sync. Each opens its own source on a link. A WiCAN is always
+ * due for a sync; a ring is due once the day after its cursor day is whole.
  */
 class DeviceSupportTest {
     private val options = SourceOptions(clock = { 1_790_000_000_000L }, zone = ZoneOffset.UTC, pageLimit = 7)
@@ -45,6 +48,17 @@ class DeviceSupportTest {
         assertFalse(ring.filter.matches("WiC_0123456789ab", emptyList()))
         assertEquals("colmi:", ring.sourcePrefix)
         assertFalse(ring.syncsOnCarTrigger)
+    }
+
+    @Test
+    fun `a WiCAN is always due, a ring from the midnight that ends the day after its cursor`() {
+        assertNull(DeviceKind.WICAN.support.nextDueAtMs("1790000000:42", ZoneOffset.UTC))
+        assertNull(DeviceKind.WICAN.support.nextDueAtMs(null, ZoneOffset.UTC))
+        assertEquals(
+            Instant.parse("2026-10-15T00:00:00Z").toEpochMilli(),
+            DeviceKind.COLMI_RING.support.nextDueAtMs("2026-10-13", ZoneOffset.UTC),
+        )
+        assertNull(DeviceKind.COLMI_RING.support.nextDueAtMs(null, ZoneOffset.UTC), "never synced")
     }
 
     @Test

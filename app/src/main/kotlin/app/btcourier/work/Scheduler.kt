@@ -27,8 +27,11 @@ object Scheduler {
     const val UPLOAD = "upload"
     const val UPLOAD_DEFERRED = "upload-deferred"
 
-    /** Unique work name of one device's one-time sync. */
-    fun syncNowName(address: String) = "sync-now-" + address.uppercase()
+    /** Unique work name of one device's one-time sync, automatic or [manual]. */
+    fun syncNowName(
+        address: String,
+        manual: Boolean,
+    ) = (if (manual) "sync-manual-" else "sync-now-") + address.uppercase()
 
     /**
      * Every 15 min, WorkManager's minimum; KEEP so re-registering never resets the period. It
@@ -58,20 +61,26 @@ object Scheduler {
     }
 
     /**
-     * One sync of the device at [address] as soon as possible: presence, the car, the periodic
-     * fan-out and the manual button. KEEP: a sync of that device already queued or running will
-     * pull everything it has anyway.
+     * One sync of the device at [address] as soon as possible: presence, the car and the periodic
+     * fan-out, or the [manual] button. KEEP: a sync of that device already queued or running will
+     * pull everything it has anyway. Manual syncs are their own unique work, so a queued automatic
+     * one, which may skip connecting, never swallows the user's request; the device lock keeps the
+     * two from opening two links.
      */
     fun syncNow(
         context: Context,
         address: String,
+        manual: Boolean,
     ) {
         val request =
             OneTimeWorkRequestBuilder<SyncWorker>()
-                .setInputData(workDataOf(SyncWorker.KEY_ADDRESS to address.uppercase()))
-                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .setInputData(
+                    workDataOf(SyncWorker.KEY_ADDRESS to address.uppercase(), SyncWorker.KEY_MANUAL to manual),
+                ).setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(syncNowName(address), ExistingWorkPolicy.KEEP, request)
+        WorkManager
+            .getInstance(context)
+            .enqueueUniqueWork(syncNowName(address, manual), ExistingWorkPolicy.KEEP, request)
     }
 
     /**

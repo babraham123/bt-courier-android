@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import app.btcourier.core.sink.SinkRetryState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -23,7 +24,7 @@ import java.io.File
 
 /**
  * [DataStoreSyncStatus] over a real file, including the move of the single-device sync record
- * into the per-device map.
+ * into the per-device map, and [DataStoreRetryStates] beside it in the same file.
  */
 class DataStoreSyncStatusTest {
     @TempDir
@@ -70,6 +71,42 @@ class DataStoreSyncStatusTest {
         }
 
     @Test
+    fun `upload retry schedules survive a restart beside the status, and none saved clears them`() =
+        runBlocking {
+            val schedules =
+                mapOf(
+                    "http" to SinkRetryState(streak = 2, dueAtMs = 1_790_021_600_000, reason = "HTTP 429"),
+                    "sftp" to SinkRetryState(streak = 1, dueAtMs = 1_790_000_030_000, reason = "connection refused"),
+                )
+            val status = SyncStatus(pendingBatches = 3)
+            open().let {
+                DataStoreSyncStatus(it).update { status }
+                DataStoreRetryStates(it).save(schedules)
+            }
+            closeAll()
+
+            val reopened = open()
+            assertEquals(schedules, DataStoreRetryStates(reopened).load())
+            assertEquals(status, DataStoreSyncStatus(reopened).status.first(), "the status is untouched")
+
+            DataStoreRetryStates(reopened).save(emptyMap())
+            closeAll()
+            assertEquals(emptyMap<String, SinkRetryState>(), DataStoreRetryStates(open()).load())
+        }
+
+    @Test
+    fun `unreadable retry schedules read as none`() =
+        runBlocking {
+            val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+            PreferenceDataStoreFactory.create(scope = scope) { File(dir, "status.preferences_pb") }.edit {
+                it[stringPreferencesKey("retries")] = """{"http":{"streak":"two"}}"""
+            }
+            scope.cancel()
+
+            assertEquals(emptyMap<String, SinkRetryState>(), DataStoreRetryStates(open()).load())
+        }
+
+    @Test
     fun `per-device entries and the upload record round trip through the file`() =
         runBlocking {
             val expected =
@@ -78,6 +115,8 @@ class DataStoreSyncStatusTest {
                         mapOf(
                             dongle to DeviceSync(1, SyncResultKind.CAUGHT_UP, 10, 2, SyncStopKind.CAUGHT_UP, "1:2"),
                             "AA:BB:CC:DD:EE:02" to DeviceSync(3, SyncResultKind.UNREACHABLE),
+                            "AA:BB:CC:DD:EE:03" to
+                                DeviceSync(4, SyncResultKind.NOT_DUE, cursor = "2026-10-14", dueAtMs = 86_400_000),
                         ),
                     pendingBatches = 4,
                     lastUploadBySink = mapOf("http" to SinkUpload(5, UploadResultKind.DELIVERED)),
@@ -92,7 +131,7 @@ class DataStoreSyncStatusTest {
     fun `a device record is read back from the names earlier versions stored it under`() =
         runBlocking {
             // Every result and stop a sync records, under its persisted name; renaming one loses records.
-            val results = listOf("CAUGHT_UP", "INTERRUPTED", "DEVICE_ERROR", "UNREACHABLE", "NOT_PAIRED")
+            val results = listOf("CAUGHT_UP", "INTERRUPTED", "DEVICE_ERROR", "UNREACHABLE", "NOT_PAIRED", "NOT_DUE")
             val stops = listOf("CAUGHT_UP", "NO_PROGRESS", "LINK_LOST", "TRUNCATED", "BUSY", "DEVICE_ERROR")
             val records =
                 results.flatMap { r -> stops.map { s -> r to s } }.mapIndexed { i, (r, s) ->

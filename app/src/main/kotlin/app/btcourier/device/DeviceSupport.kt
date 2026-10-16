@@ -41,6 +41,17 @@ interface DeviceSupport {
     val pairingText: PairingText
 
     /**
+     * The earliest phone time, epoch ms, at which a sync from the device's stored [cursor] could
+     * store anything, judged from the cursor and [zone] alone, before any link is opened; null
+     * when it always could. Automatic syncs before then skip connecting, which spares a device
+     * that only grows its history at set times a link it would answer with an empty page.
+     */
+    fun nextDueAtMs(
+        cursor: String?,
+        zone: ZoneId,
+    ): Long?
+
+    /**
      * Opens this kind's [Source] on the connected [link] and runs [block] with it. Whatever the
      * source needs for its lifetime (the WiCAN tunnel's notification reader) lives exactly as
      * long as [block]. Closes nothing: the caller owns [link].

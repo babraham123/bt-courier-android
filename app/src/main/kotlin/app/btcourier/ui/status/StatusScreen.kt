@@ -1,5 +1,6 @@
 package app.btcourier.ui.status
 
+import android.content.Context
 import android.content.Intent
 import android.text.format.DateUtils
 import android.text.format.Formatter
@@ -214,7 +215,10 @@ private fun DeviceCard(
             InfoRow(R.string.status_sync, stringResource(R.string.status_never))
         } else {
             InfoRow(R.string.status_sync, formatTime(sync.atMs))
-            InfoRow(R.string.status_result, stringResource(syncLabel(sync.result)))
+            val result =
+                sync.dueAtMs?.let { stringResource(R.string.sync_not_due, formatTime(it)) }
+                    ?: stringResource(syncLabel(sync.result))
+            InfoRow(R.string.status_result, result)
             if (sync.pages != null && sync.lines != null) {
                 InfoRow(
                     R.string.status_pages_lines,
@@ -282,14 +286,18 @@ private fun InfoRow(
 }
 
 @Composable
-private fun formatTime(ms: Long): String {
-    val context = LocalContext.current
-    return DateUtils.formatDateTime(
+private fun formatTime(ms: Long): String = formatStatusTime(LocalContext.current, ms)
+
+/** How the status screen writes a moment: date and time, abbreviated, in the phone's locale and zone. */
+internal fun formatStatusTime(
+    context: Context,
+    ms: Long,
+): String =
+    DateUtils.formatDateTime(
         context,
         ms,
         DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_ABBREV_ALL,
     )
-}
 
 @Composable
 private fun formatBytes(bytes: Long): String = Formatter.formatShortFileSize(LocalContext.current, bytes)
@@ -302,6 +310,7 @@ private fun syncLabel(kind: SyncResultKind): Int =
         SyncResultKind.DEVICE_ERROR -> R.string.sync_device_error
         SyncResultKind.UNREACHABLE -> R.string.sync_unreachable
         SyncResultKind.NOT_PAIRED -> R.string.sync_not_paired
+        SyncResultKind.NOT_DUE -> R.string.sync_not_due_yet
     }
 
 @StringRes

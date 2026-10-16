@@ -9,8 +9,14 @@ import app.btcourier.AppGraph
  * to schedule after which event are testable on the JVM.
  */
 interface WorkControl {
-    /** Syncs the paired device at [address]. */
-    fun syncNow(address: String)
+    /**
+     * Syncs the paired device at [address]. A [manual] sync (the user asked) connects even when
+     * the device can have nothing new yet; an automatic one then skips connecting ([SyncJob]).
+     */
+    fun syncNow(
+        address: String,
+        manual: Boolean,
+    )
 
     fun uploadNow(
         allowCellular: Boolean,
@@ -32,8 +38,11 @@ interface WorkControl {
 
     fun setPeriodicSync(enabled: Boolean)
 
-    /** Drops [sinkId]'s upload back-off, so a sink just fixed or removed is not skipped meanwhile. */
-    fun forgetRetries(sinkId: String)
+    /**
+     * Drops [sinkId]'s upload back-off, so a sink just fixed or removed is not skipped meanwhile.
+     * Returns once the back-off is gone for good, so an upload enqueued next never sees it.
+     */
+    suspend fun forgetRetries(sinkId: String)
 }
 
 /** The production adapter: WorkManager through [Scheduler]. */
@@ -42,7 +51,10 @@ class SchedulerWorkControl(
 ) : WorkControl {
     private val app = context.applicationContext
 
-    override fun syncNow(address: String) = Scheduler.syncNow(app, address)
+    override fun syncNow(
+        address: String,
+        manual: Boolean,
+    ) = Scheduler.syncNow(app, address, manual)
 
     override fun uploadNow(
         allowCellular: Boolean,
@@ -58,5 +70,5 @@ class SchedulerWorkControl(
 
     override fun setPeriodicSync(enabled: Boolean) = Scheduler.setPeriodicSync(app, enabled)
 
-    override fun forgetRetries(sinkId: String) = AppGraph.uploadJob.forgetRetries(sinkId)
+    override suspend fun forgetRetries(sinkId: String) = AppGraph.uploadJob.forgetRetries(sinkId)
 }

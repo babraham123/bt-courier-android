@@ -1,7 +1,8 @@
 package app.btcourier.core.sink
 
 import app.btcourier.core.store.Store
-import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Delivers [store]'s pending batches to sinks and owns retry policy: transports only classify one
@@ -19,32 +20,31 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Retry state is keyed by [Sink.id] and lives in this instance, not in the sinks, so callers may
  * rebuild sinks every round (fresh transports, fresh credentials) without losing it. Keep one
- * instance for the life of the process. The state is not persisted: after a restart every sink
- * is due.
+ * instance for the life of the process. It is persisted through [retryStates]: loaded on this
+ * instance's first call (a constructor cannot suspend), saved whole on every change, so a
+ * process restarted while a sink waits still waits for it, with its streak and reason.
  *
- * @param clock wall clock for the schedule.
+ * @param clock wall clock for the schedule; persisted due times are on it too.
  */
 class Delivery(
     private val store: Store,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val retryStates: RetryStateStore = MemoryRetryStateStore(),
 ) {
-    private class Backoff(
-        val streak: Int,
-        val nextAttemptAtMs: Long,
-        val reason: String,
-    )
+    // Guards the schedules and orders their saves; never held across an upload.
+    private val lock = Mutex()
 
-    private val backoffs = ConcurrentHashMap<String, Backoff>()
+    // Null until loaded from retryStates.
+    private var schedules: Map<String, SinkRetryState>? = null
 
     /** One round for [sink]; see [DeliveryResult]. */
     suspend fun deliverPending(sink: Sink): DeliveryResult {
         var batch = store.pending(sink.id, limit = 1).firstOrNull() ?: return DeliveryResult.Delivered
-        backoffs[sink.id]?.let { waiting ->
-            if (waiting.nextAttemptAtMs >
-                clock()
-            ) {
-                return DeliveryResult.Deferred(waiting.reason, waiting.nextAttemptAtMs)
-            }
+        val waiting = lock.withLock { loaded()[sink.id] }
+        if (waiting != null &&
+            waiting.dueAtMs > clock()
+        ) {
+            return DeliveryResult.Deferred(waiting.reason, waiting.dueAtMs)
         }
         while (true) {
             val result = sink.upload(batch)
@@ -59,24 +59,34 @@ class Delivery(
      * Drops [sinkId]'s schedule, so its next round tries it at once. For a sink whose configuration
      * changed or which was removed: the old schedule was earned by a target that no longer exists.
      */
-    fun forget(sinkId: String) {
-        backoffs.remove(sinkId)
-    }
+    suspend fun forget(sinkId: String) = update(sinkId) { null }
 
-    private fun record(
+    private suspend fun record(
         sinkId: String,
         result: UploadResult,
-    ) {
-        if (result !is UploadResult.Retry) {
-            backoffs.remove(sinkId)
-            return
-        }
-        backoffs.compute(sinkId) { _, previous ->
-            val streak = (previous?.streak ?: 0) + 1
-            val delay = result.retryAfterMs?.coerceIn(0, MAX_RETRY_AFTER_MS) ?: backoffMs(streak)
-            Backoff(streak, clock() + delay, result.reason)
-        }
+    ) = update(sinkId) { previous ->
+        if (result !is UploadResult.Retry) return@update null
+        val streak = (previous?.streak ?: 0) + 1
+        val delay = result.retryAfterMs?.coerceIn(0, MAX_RETRY_AFTER_MS) ?: backoffMs(streak)
+        SinkRetryState(streak, clock() + delay, result.reason)
     }
+
+    /** Replaces [sinkId]'s schedule with [next] of it (null: none), saving only a change. */
+    private suspend fun update(
+        sinkId: String,
+        next: (SinkRetryState?) -> SinkRetryState?,
+    ) = lock.withLock {
+        val current = loaded()
+        val previous = current[sinkId]
+        val updated = next(previous)
+        if (updated == previous) return@withLock
+        val all = if (updated == null) current - sinkId else current + (sinkId to updated)
+        schedules = all
+        retryStates.save(all)
+    }
+
+    /** The schedules, loading them on first use; call with [lock] held. */
+    private suspend fun loaded(): Map<String, SinkRetryState> = schedules ?: retryStates.load().also { schedules = it }
 
     companion object {
         /**

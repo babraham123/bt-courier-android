@@ -8,15 +8,20 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
+import app.btcourier.core.sink.RetryStateStore
+import app.btcourier.core.sink.SinkRetryState
 import app.btcourier.core.store.StoreCounters
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
@@ -72,6 +77,8 @@ data class SyncStatus(
  * @property stop why the sync stopped; null when it never reached the device.
  * @property cursor the device's store cursor after the sync; kept from the previous sync when
  *   this one did not reach the device.
+ * @property dueAtMs when the device can next have something to sync; set only for
+ *   [SyncResultKind.NOT_DUE].
  */
 @Serializable
 data class DeviceSync(
@@ -81,6 +88,7 @@ data class DeviceSync(
     val pages: Int = 0,
     val stop: SyncStopKind? = null,
     val cursor: String? = null,
+    val dueAtMs: Long? = null,
 )
 
 enum class SyncResultKind {
@@ -97,6 +105,12 @@ enum class SyncResultKind {
     UNREACHABLE,
 
     NOT_PAIRED,
+
+    /**
+     * An automatic sync skipped connecting: the stored cursor says the device can have nothing
+     * new before [DeviceSync.dueAtMs] (the ring before local midnight).
+     */
+    NOT_DUE,
 }
 
 /** Why a sync that reached the device stopped: core's `StopReason` without its causes, so it can be persisted. */
@@ -169,6 +183,37 @@ class DataStoreSyncStatus(
         store.edit {
             it[STATUS_KEY] =
                 statusJson.encodeToString(SyncStatus.serializer(), transform(decodeStatus(it[STATUS_KEY])))
+        }
+    }
+}
+
+private val RETRIES_KEY = stringPreferencesKey("retries")
+private val retriesSerializer = MapSerializer(String.serializer(), SinkRetryState.serializer())
+
+/**
+ * The upload retry schedules ([RetryStateStore]) in the status store, beside [SyncStatus] under
+ * their own key: one JSON object of sink id to [SinkRetryState], e.g.
+ * `{"http":{"streak":1,"dueAtMs":1790021600000,"reason":"HTTP 429"}}`, rewritten whole on each
+ * save. Shares the status store's file because exactly one DataStore may own it.
+ */
+class DataStoreRetryStates(
+    private val store: DataStore<Preferences>,
+) : RetryStateStore {
+    // Unreadable schedules only cost an early retry, not a crashed worker.
+    override suspend fun load(): Map<String, SinkRetryState> =
+        store.data
+            .first()[RETRIES_KEY]
+            ?.let { decodeOrNull(it, retriesSerializer) }
+            .orEmpty()
+
+    override suspend fun save(states: Map<String, SinkRetryState>) {
+        store.edit {
+            if (states.isEmpty()) {
+                it.remove(RETRIES_KEY)
+            } else {
+                it[RETRIES_KEY] =
+                    statusJson.encodeToString(retriesSerializer, states)
+            }
         }
     }
 }
