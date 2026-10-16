@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-10-16
+
 Pre-alpha. Nothing below has been verified on real hardware.
 
 ### Added
