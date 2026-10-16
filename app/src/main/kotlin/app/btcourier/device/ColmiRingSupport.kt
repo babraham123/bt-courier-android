@@ -11,6 +11,7 @@ import app.btcourier.core.source.colmi.readColmiAutoHeartRate
 import app.btcourier.core.source.colmi.writeColmiAutoHeartRate
 import app.btcourier.core.transport.GattLink
 import app.btcourier.core.transport.readDeviceRevisions
+import java.time.ZoneId
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -45,6 +46,12 @@ object ColmiRingSupport : DeviceSupport {
             autoHeartRateChoice =
                 PairingChoiceText(R.string.pairing_auto_hr_choice, R.string.pairing_auto_hr_choice_help),
         )
+
+    // A new page exists only once local midnight makes another day whole.
+    override fun nextDueAtMs(
+        cursor: String?,
+        zone: ZoneId,
+    ): Long? = ColmiRingSource.nextDueAtMs(cursor, zone)
 
     override suspend fun <T> withSource(
         link: GattLink,

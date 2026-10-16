@@ -2,8 +2,10 @@ package app.btcourier.work
 
 import app.btcourier.core.sink.Batch
 import app.btcourier.core.sink.CompositeSink
+import app.btcourier.core.sink.Delivery
 import app.btcourier.core.sink.Jsonl
 import app.btcourier.core.sink.LocalDirectoryUploadTransport
+import app.btcourier.core.sink.MemoryRetryStateStore
 import app.btcourier.core.sink.Sink
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.sink.UploadTransport
@@ -350,6 +352,39 @@ class UploadJobTest {
                     .getValue("refused")
                     .result,
             )
+        }
+
+    @Test
+    fun `a job created after a process restart still defers to the sink's Retry-After, and delivers once it is due`() =
+        runTest {
+            val store = storeWithTwoBatches(setOf("slow"))
+            val upload = ScriptedUpload(UploadResult.Retry("HTTP 503", retryAfterMs = 6 * HOUR), UploadResult.Acked)
+            val retryStates = MemoryRetryStateStore()
+            var now = NOW
+
+            /** The app's job as a new process creates it: on the retry states persisted so far. */
+            fun job() =
+                UploadJob(
+                    store,
+                    { listOf(CompositeSink("slow", upload, Jsonl)) },
+                    status,
+                    clock = { now },
+                    delivery = Delivery(store, clock = { now }, retryStates = retryStates),
+                )
+            assertEquals(UploadOutcome.Retry, job().run(attempt = 0, sealEverything))
+
+            // Restarted, a sync's upload runs a minute later as a fresh work: attempt 0 again.
+            now += MINUTE
+            assertEquals(UploadOutcome.Deferred(6 * HOUR - MINUTE), job().run(attempt = 0, sealEverything))
+            assertEquals(1, upload.uploads, "the waiting sink was not contacted")
+            assertEquals(
+                "slow: HTTP 503 (next attempt in ${(6 * HOUR - MINUTE) / 1000} s)",
+                status.status.value.lastError,
+            )
+
+            now += 6 * HOUR - MINUTE
+            assertEquals(UploadOutcome.Delivered, job().run(attempt = 0, sealEverything))
+            assertEquals(0, store.pending("slow").size)
         }
 
     @Test

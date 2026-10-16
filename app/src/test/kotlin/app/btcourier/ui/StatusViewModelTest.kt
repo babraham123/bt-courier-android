@@ -243,7 +243,7 @@ class StatusViewModelTest {
         }
 
     @Test
-    fun `buttons go through the scheduler, upload with the cellular setting and replacing queued work`() =
+    fun `buttons go through the scheduler as manual syncs, upload with the cellular setting and replacing queued work`() =
         runTest {
             devices.devices = listOf(device, ring)
             val vm = subscribed()
@@ -251,11 +251,12 @@ class StatusViewModelTest {
             vm.syncNow(ring)
             vm.uploadNow()
 
-            assertEquals(listOf(ring.address), work.syncs)
+            assertEquals(listOf(ring.address), work.manualSyncs)
             assertEquals(listOf(true to true), work.uploads)
 
             vm.syncAll()
 
-            assertEquals(listOf(ring.address, device.address, ring.address), work.syncs)
+            assertEquals(listOf(ring.address, device.address, ring.address), work.manualSyncs)
+            assertEquals(emptyList<String>(), work.syncs, "a button is never an automatic sync")
         }
 }

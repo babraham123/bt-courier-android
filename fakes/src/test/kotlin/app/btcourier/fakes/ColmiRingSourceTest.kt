@@ -1,5 +1,6 @@
 package app.btcourier.fakes
 
+import app.btcourier.core.source.Page
 import app.btcourier.core.source.colmi.ColmiRingSource
 import app.btcourier.core.store.DefaultStore
 import app.btcourier.core.store.SealPolicy
@@ -167,6 +168,20 @@ class ColmiRingSourceTest {
             assertEquals(listOf(2L, 1L), commands.filter { it[0].toInt() == 0x39 }.map(::u32le))
             // The logging setting is read (16 01) once per instance.
             assertEquals(listOf(0x01), commands.filter { it[0].toInt() == 0x16 }.map { it[1].toInt() })
+        }
+
+    @Test
+    fun `a caught-up cursor stays caught up until nextDueAtMs, and from then on the next day is pulled`() =
+        runTest {
+            val due = ColmiRingSource.nextDueAtMs("2026-10-14", zone)
+            assertEquals(ms(LocalDateTime.of(2026, 10, 16, 0, 0)), due)
+
+            val before = ColmiRingSource(ring().link, zone, phoneClock = { due!! - 1 }).pull("2026-10-14")
+            assertEquals(Page(emptyList(), "2026-10-14", more = false), before)
+
+            val at = ColmiRingSource(ring().link, zone, phoneClock = { due!! }).pull("2026-10-14")
+            assertEquals("""{"_file":"colmi/2026-10-15"}""", at.lines.first())
+            assertEquals("2026-10-15", at.nextCursor)
         }
 
     private fun u32le(p: ByteArray) =

@@ -86,6 +86,8 @@
     <string name="sync_device_error">Device error</string>
     <string name="sync_unreachable">Device not reachable</string>
     <string name="sync_not_paired">No device paired</string>
+    <string name="sync_not_due">Nothing due until %1$s</string>
+    <string name="sync_not_due_yet">Nothing due yet</string>
     <string name="stop_caught_up">Device had nothing more</string>
     <string name="stop_no_progress">Device cursor stuck</string>
     <string name="stop_link_lost">Bluetooth link lost</string>
