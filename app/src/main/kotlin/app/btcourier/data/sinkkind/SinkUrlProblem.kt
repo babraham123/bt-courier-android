@@ -28,7 +28,7 @@ enum class SinkUrlProblem {
  * password or token and the uploaded data would travel in clear, and a self-hosted server on the
  * user's own network is reachable over https through a VPN anyway, so the app ships without a
  * cleartext exception (the manifest keeps the targetSdk default) rather than with a hole an F-Droid
- * audience would rightly object to. Refusing http here explains the failure at save time instead
+ * audience would rightly object to. Refusing http here explains the failure in the editor instead
  * of at the first upload.
  *
  * @param allowQuery true for a POST endpoint, whose query (e.g. VictoriaMetrics `extra_label=`) is

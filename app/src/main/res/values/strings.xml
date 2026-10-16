@@ -157,6 +157,7 @@
     <string name="sink_base_topic_help">Batches are published to base topic/batch name. No + or #.</string>
     <string name="sink_folder_none">No folder picked.</string>
     <string name="sink_folder_pick">Pick folder</string>
+    <string name="sink_folder">Folder</string>
     <string name="sink_oidc_issuer">Issuer URL</string>
     <string name="sink_oidc_issuer_placeholder">https://auth.example.org</string>
     <string name="sink_oidc_client_id">Client id</string>
@@ -198,6 +199,7 @@
     <string name="settings_cache_cap_range">Enter a value from %1$s to %2$s.</string>
     <string name="settings_save">Save</string>
     <string name="settings_saved">Saved</string>
+    <string name="sink_save_needs">Needed to save: %1$s</string>
 
     <string name="notification_channel_transfer">Transfers</string>
     <string name="notification_syncing">Syncing with device</string>

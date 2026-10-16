@@ -60,6 +60,7 @@ import app.btcourier.data.TransportKind
 import app.btcourier.data.saf.persistGrant
 import app.btcourier.data.sinkkind.FieldKeyboard
 import app.btcourier.data.sinkkind.FieldProblem
+import app.btcourier.data.sinkkind.SinkTransportKind
 import app.btcourier.data.sinkkind.SinkUrlProblem
 import app.btcourier.data.sinkkind.TransportCapability
 import app.btcourier.data.sinkkind.TransportField
@@ -106,9 +107,9 @@ fun SinkEditorScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Field(
-                R.string.sink_name,
+                SinkField.NAME.label,
                 form.name,
-                SinkField.NAME in state.invalid,
+                SinkField.NAME in state.shownInvalid,
             ) { v -> viewModel.edit { it.copy(name = v) } }
             Toggle(
                 R.string.sink_enabled,
@@ -142,12 +143,13 @@ fun SinkEditorScreen(
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(
                     onClick = viewModel::save,
-                    enabled = state.loaded,
+                    enabled = state.canSave,
                 ) { Text(stringResource(R.string.settings_save)) }
                 if (!state.isNew) {
                     OutlinedButton(onClick = { confirmDelete = true }) { Text(stringResource(R.string.sink_delete)) }
                 }
             }
+            if (state.blockedByUntouched) SaveNeeds(state)
         }
     }
 
@@ -185,7 +187,7 @@ private fun TransportFields(
                 TextField(
                     field,
                     values[field.key],
-                    state.transportProblems[field.key],
+                    state.shownTransportProblems[field.key],
                 ) { viewModel.setField(field.key, it) }
             }
 
@@ -210,12 +212,30 @@ private fun TransportFields(
             }
 
             is TransportCapability.FolderPick -> {
-                FolderSection(values.orNull(capability.treeUriKey), capability.treeUriKey in state.transportProblems) {
+                FolderSection(
+                    values.orNull(capability.treeUriKey),
+                    capability.treeUriKey in state.shownTransportProblems,
+                ) {
                     viewModel.setField(capability.treeUriKey, it)
                 }
             }
         }
     }
+}
+
+/** Names the inputs whose problems disable Save, for when none of them is drawn yet. */
+@Composable
+private fun SaveNeeds(state: SinkEditorState) {
+    val fields = state.invalid + listOfNotNull(SinkField.OIDC_ISSUER.takeIf { state.issuerProblem != null })
+    // In screen order: the name, the transport's fields, then the auth fields.
+    val labels =
+        listOfNotNull(SinkField.NAME.label.takeIf { SinkField.NAME in fields }) +
+            state.transportProblems.keys.mapNotNull(state.form.transport::labelOf) +
+            fields.sorted().filter { it != SinkField.NAME }.map { it.label }
+    Text(
+        stringResource(R.string.sink_save_needs, labels.map { stringResource(it) }.joinToString()),
+        style = MaterialTheme.typography.bodySmall,
+    )
 }
 
 @Composable
@@ -354,9 +374,9 @@ private fun AuthFields(
 
         AuthKind.BASIC -> {
             Field(
-                R.string.settings_username,
+                SinkField.BASIC_USER.label,
                 form.basicUser,
-                SinkField.BASIC_USER in state.invalid,
+                SinkField.BASIC_USER in state.shownInvalid,
             ) { v ->
                 viewModel.edit {
                     it.copy(basicUser = v)
@@ -394,18 +414,18 @@ private fun OidcFields(
     OutlinedTextField(
         value = form.oidcIssuer,
         onValueChange = { v -> viewModel.edit { it.copy(oidcIssuer = v) } },
-        label = { Text(stringResource(R.string.sink_oidc_issuer)) },
+        label = { Text(stringResource(SinkField.OIDC_ISSUER.label)) },
         placeholder = { Text(stringResource(R.string.sink_oidc_issuer_placeholder)) },
-        supportingText = { state.issuerProblem?.let { Text(stringResource(urlProblemText(it))) } },
-        isError = state.issuerProblem != null,
+        supportingText = { state.shownIssuerProblem?.let { Text(stringResource(urlProblemText(it))) } },
+        isError = state.shownIssuerProblem != null,
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         modifier = Modifier.fillMaxWidth(),
     )
     Field(
-        R.string.sink_oidc_client_id,
+        SinkField.OIDC_CLIENT_ID.label,
         form.oidcClientId,
-        SinkField.OIDC_CLIENT_ID in state.invalid,
+        SinkField.OIDC_CLIENT_ID in state.shownInvalid,
     ) { v ->
         viewModel.edit {
             it.copy(oidcClientId = v)
@@ -562,6 +582,27 @@ private fun open(
         // No browser; the URL and code are on screen to type elsewhere.
     }
 }
+
+private val SinkField.label: Int
+    @StringRes get() =
+        when (this) {
+            SinkField.NAME -> R.string.sink_name
+            SinkField.BASIC_USER -> R.string.settings_username
+            SinkField.OIDC_ISSUER -> R.string.sink_oidc_issuer
+            SinkField.OIDC_CLIENT_ID -> R.string.sink_oidc_client_id
+        }
+
+/** The label of the field or capability that keeps its value under [key]. */
+@StringRes
+private fun SinkTransportKind.labelOf(key: String): Int? =
+    fields.firstOrNull { it.key == key }?.label
+        ?: capabilities.firstNotNullOfOrNull {
+            when (it) {
+                is TransportCapability.FolderPick -> if (it.treeUriKey == key) R.string.sink_folder else null
+                is TransportCapability.HostKeyPin -> if (it.fingerprintKey == key) R.string.sink_host_key else null
+                TransportCapability.ClientKey -> null
+            }
+        }
 
 @StringRes
 internal fun formatLabel(kind: FormatKind): Int =

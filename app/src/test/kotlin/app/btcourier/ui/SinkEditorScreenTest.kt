@@ -1,10 +1,13 @@
 package app.btcourier.ui
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import app.btcourier.R
@@ -127,6 +130,8 @@ class SinkEditorScreenTest : ScreenTest() {
         onText(R.string.sink_edit_title).assertIsDisplayed()
         field(R.string.settings_token).assertIsPassword()
         assertNoText(STORED_SECRET, substring = true)
+        // The token input is empty, yet the stored token counts as present.
+        onText(R.string.settings_save).assertIsEnabled()
 
         onText(R.string.settings_secret_clear).tap()
 
@@ -135,14 +140,33 @@ class SinkEditorScreenTest : ScreenTest() {
     }
 
     @Test
-    fun `saving with problems marks them and stays open`() {
+    fun `a fresh form marks nothing, and Save is disabled with a line naming what it needs`() {
+        show()
+
+        field(R.string.sink_name).assertIsNotInError()
+        field(R.string.settings_sink_url).assertIsNotInError()
+        onText(R.string.settings_save).assertIsNotEnabled()
+        onText(
+            R.string.sink_save_needs,
+            listOf(string(R.string.sink_name), string(R.string.settings_sink_url)).joinToString(),
+        ).assertExists()
+    }
+
+    @Test
+    fun `validation errors stay on screen and keep Save disabled`() {
         show()
 
         field(R.string.settings_sink_url).performTextInput("http://sink.invalid/up/")
-        onText(R.string.settings_save).tap()
+        onText(R.string.settings_url_cleartext).assertExists()
+        field(R.string.sink_name).assertIsNotInError()
+        compose.onNodeWithText(string(R.string.sink_save_needs, ""), substring = true).assertDoesNotExist()
+
+        field(R.string.sink_name).performTextInput("A")
+        field(R.string.sink_name).performTextClearance()
 
         field(R.string.sink_name).assertIsInError()
         onText(R.string.settings_url_cleartext).assertExists()
+        onText(R.string.settings_save).assertIsNotEnabled()
         assertEquals(listOf(bearer), sinks())
         assertEquals(0, done)
     }
@@ -152,8 +176,9 @@ class SinkEditorScreenTest : ScreenTest() {
         show()
 
         field(R.string.sink_name).performTextInput("Archive")
+        onText(R.string.settings_save).assertIsNotEnabled()
         field(R.string.settings_sink_url).performTextInput("https://sink.invalid/up/")
-        onText(R.string.settings_save).tap()
+        onText(R.string.settings_save).assertIsEnabled().tap()
 
         compose.waitForIdle()
         assertEquals(listOf("Token sink", "Archive"), sinks().map { it.name })

@@ -149,6 +149,7 @@ class SinkEditorViewModelTest {
             assertTrue(loaded.hasStoredSecret)
             assertEquals("", loaded.form.secretInput)
             assertFalse(loaded.toString().contains("hunter22"))
+            assertTrue(loaded.canSave, "the untouched stored secret counts as present")
 
             vm.edit { it.copy(name = "Renamed") }
             vm.setField(HttpPostKind.URL_KEY, "https://b.invalid/import?extra_label=car")
@@ -171,30 +172,89 @@ class SinkEditorViewModelTest {
         }
 
     @Test
-    fun `the kind's problems are reported by field and block saving, together with a blank name`() =
+    fun `problems are validated as the form changes, block saving, and show once their input is edited`() =
+        runTest {
+            val vm = vm()
+            val fresh = vm.state.value
+            assertEquals(setOf(HttpPutKind.URL_KEY), fresh.transportProblems.keys)
+            assertEquals(setOf(SinkField.NAME), fresh.invalid)
+            assertFalse(fresh.canSave)
+            assertEquals(emptyMap<String, FieldProblem>(), fresh.shownTransportProblems, "a fresh form marks nothing")
+            assertEquals(emptySet<SinkField>(), fresh.shownInvalid)
+            assertTrue(fresh.blockedByUntouched, "so the screen names what Save needs")
+
+            vm.setField(HttpPutKind.URL_KEY, "http://sink.invalid/")
+            assertEquals(
+                mapOf(HttpPutKind.URL_KEY to FieldProblem.Url(SinkUrlProblem.CLEARTEXT)),
+                vm.state.value.shownTransportProblems,
+            )
+            assertEquals(emptySet<SinkField>(), vm.state.value.shownInvalid, "the name is not edited yet")
+            assertFalse(vm.state.value.blockedByUntouched, "a drawn problem explains the disabled Save")
+
+            vm.edit { it.copy(name = "Box") }
+            vm.edit { it.copy(name = "") }
+            assertEquals(setOf(SinkField.NAME), vm.state.value.shownInvalid, "emptied after an edit")
+            assertFalse(vm.state.value.canSave)
+
+            vm.setField(HttpPutKind.URL_KEY, "https://sink.invalid/")
+            vm.edit { it.copy(name = "Box") }
+            assertFalse(vm.state.value.hasProblems)
+            assertTrue(vm.state.value.canSave)
+            assertTrue(work.calls.isEmpty(), "nothing is saved before Save")
+        }
+
+    @Test
+    fun `saving with problems saves nothing and shows every problem`() =
+        runTest {
+            val vm = vm()
+            vm.setTransport(TransportKind.SFTP)
+            vm.setField(SftpKind.PORT, "70000")
+            assertEquals(setOf(SftpKind.PORT), vm.state.value.shownTransportProblems.keys)
+
+            vm.save()
+
+            assertEquals(
+                setOf(SftpKind.HOST, SftpKind.PORT, SftpKind.USERNAME),
+                vm.state.value.shownTransportProblems.keys,
+            )
+            assertEquals(setOf(SinkField.NAME), vm.state.value.shownInvalid)
+            assertFalse(vm.state.value.saved)
+            assertEquals(listOf(other), settings.current().sinks, "nothing was saved")
+            assertTrue(work.calls.isEmpty())
+        }
+
+    @Test
+    fun `switching kind or auth forgets the touched inputs the form no longer has`() =
         runTest {
             val vm = vm()
             vm.setField(HttpPutKind.URL_KEY, "http://sink.invalid/")
-            vm.save()
+            vm.setTransport(TransportKind.HTTP_POST)
             assertEquals(
-                mapOf(HttpPutKind.URL_KEY to FieldProblem.Url(SinkUrlProblem.CLEARTEXT)),
-                vm.state.value.transportProblems,
+                setOf(HttpPostKind.URL_KEY),
+                vm.state.value.shownTransportProblems.keys,
+                "both HTTP kinds have it",
             )
-            assertEquals(setOf(SinkField.NAME), vm.state.value.invalid)
 
             vm.setTransport(TransportKind.SFTP)
-            vm.edit { it.copy(name = "Box") }
-            vm.setField(SftpKind.PORT, "70000")
             vm.save()
-            assertEquals(setOf(SftpKind.HOST, SftpKind.PORT, SftpKind.USERNAME), vm.state.value.transportProblems.keys)
-            assertEquals(emptySet<SinkField>(), vm.state.value.invalid)
-
             vm.setTransport(TransportKind.LOCAL_FOLDER)
-            vm.save()
             assertEquals(setOf(LocalFolderKind.TREE_URI), vm.state.value.transportProblems.keys)
+            assertEquals(emptyMap<String, FieldProblem>(), vm.state.value.shownTransportProblems, "the folder is new")
+            assertEquals(setOf(SinkField.NAME), vm.state.value.shownInvalid, "the name stays touched")
+            assertFalse(vm.state.value.blockedByUntouched)
 
-            assertEquals(listOf(other), settings.current().sinks, "nothing was saved")
-            assertTrue(work.calls.isEmpty())
+            vm.setTransport(TransportKind.HTTP_PUT)
+            assertEquals(setOf(HttpPutKind.URL_KEY), vm.state.value.transportProblems.keys)
+            assertEquals(emptyMap<String, FieldProblem>(), vm.state.value.shownTransportProblems, "SFTP had no URL")
+
+            vm.setAuth(AuthKind.BASIC)
+            vm.edit { it.copy(basicUser = "courier") }
+            vm.edit { it.copy(basicUser = "") }
+            assertEquals(setOf(SinkField.NAME, SinkField.BASIC_USER), vm.state.value.shownInvalid)
+            vm.setAuth(AuthKind.NONE)
+            vm.setAuth(AuthKind.BASIC)
+            assertEquals(setOf(SinkField.NAME, SinkField.BASIC_USER), vm.state.value.invalid)
+            assertEquals(setOf(SinkField.NAME), vm.state.value.shownInvalid, "the username starts untouched again")
         }
 
     @Test
@@ -285,8 +345,9 @@ class SinkEditorViewModelTest {
 
             assertEquals(credentials.sftpPublicKey(id), vm.state.value.publicKey)
 
+            assertEquals(emptyMap<String, FieldProblem>(), vm.state.value.shownTransportProblems)
             vm.fetchHostKey()
-            assertEquals(setOf(SftpKind.HOST), vm.state.value.transportProblems.keys, "no fetch without a host")
+            assertEquals(setOf(SftpKind.HOST), vm.state.value.shownTransportProblems.keys, "no fetch without a host")
             assertEquals(emptyList<Pair<String, Int>>(), fetched)
 
             vm.edit { it.copy(name = "Box") }

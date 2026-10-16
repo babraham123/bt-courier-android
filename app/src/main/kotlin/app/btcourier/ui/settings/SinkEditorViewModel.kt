@@ -84,10 +84,11 @@ data class SinkForm(
 }
 
 /**
- * Common and auth fields left empty; drawn as errors. Transport fields report through
- * [SinkEditorState.transportProblems].
+ * The editor's own inputs, beside the transport's. Empty ones report through
+ * [SinkEditorState.invalid], the issuer's URL problems through [SinkEditorState.issuerProblem], and
+ * transport fields through [SinkEditorState.transportProblems].
  */
-enum class SinkField { NAME, BASIC_USER, OIDC_CLIENT_ID }
+enum class SinkField { NAME, BASIC_USER, OIDC_ISSUER, OIDC_CLIENT_ID }
 
 sealed interface SignInState {
     data object SignedOut : SignInState
@@ -139,14 +140,42 @@ data class SinkEditorState(
     val keyError: String? = null,
     val hostKey: HostKeyState = HostKeyState.Idle,
     val signIn: SignInState = SignInState.SignedOut,
-    /** The current kind's [SinkTransportKind.validate] result as of the last save or action. */
+    /** The current kind's [SinkTransportKind.validate] result for the form as it stands. */
     val transportProblems: Map<String, FieldProblem> = emptyMap(),
     val issuerProblem: SinkUrlProblem? = null,
     val invalid: Set<SinkField> = emptySet(),
+    /**
+     * Inputs the user edited, or that an attempt to save (fetch a host key, sign in) needed. Only
+     * their problems are drawn, so a fresh form does not open covered in errors.
+     */
+    val touched: Set<SinkField> = emptySet(),
+    /** The current kind's value keys that are touched, as [touched] is for the editor's own inputs. */
+    val touchedTransport: Set<String> = emptySet(),
     val saved: Boolean = false,
     /** The sink was deleted; the screen closes. */
     val deleted: Boolean = false,
-)
+) {
+    val hasProblems: Boolean get() = transportProblems.isNotEmpty() || issuerProblem != null || invalid.isNotEmpty()
+
+    /** Save is offered only for a form it would accept. */
+    val canSave: Boolean get() = loaded && !hasProblems
+
+    val shownTransportProblems: Map<String, FieldProblem> get() =
+        transportProblems.filterKeys {
+            it in touchedTransport
+        }
+
+    val shownIssuerProblem: SinkUrlProblem? get() = issuerProblem.takeIf { SinkField.OIDC_ISSUER in touched }
+
+    val shownInvalid: Set<SinkField> get() = invalid intersect touched
+
+    /**
+     * Problems block saving but none is drawn, because every one is on an untouched input; the
+     * screen then names those inputs by Save so the disabled button explains itself.
+     */
+    val blockedByUntouched: Boolean
+        get() = hasProblems && shownTransportProblems.isEmpty() && shownIssuerProblem == null && shownInvalid.isEmpty()
+}
 
 /** Fetches an SSH server's host key fingerprint; a seam over [SftpUploadTransport.fetchHostKeyFingerprint]. */
 fun interface HostKeyFetcher {
@@ -207,28 +236,31 @@ class SinkEditorViewModel(
                     loaded = true,
                     id = id,
                     isNew = stored == null,
-                    form = form,
                     hasStoredSecret = held.secret,
                     hasStoredClientSecret = held.clientSecret,
                     signIn = if (signedIn) SignInState.SignedIn else SignInState.SignedOut,
-                )
+                ).withForm(form)
             if (form.transport.capability<TransportCapability.ClientKey>() != null) ensureKey()
         }
     }
 
-    fun edit(transform: (SinkForm) -> SinkForm) {
-        mutableState.update { it.copy(form = transform(it.form), saved = false) }
-    }
+    /** Changes the editor's own inputs; each one whose value changes counts as touched. */
+    fun edit(transform: (SinkForm) -> SinkForm) =
+        mutableState.update {
+            val next = transform(it.form)
+            it.withForm(next, touched = it.touched + editedFields(it.form, next))
+        }
 
     /**
      * Switches transport. Auth falls back to the new kind's first where the old one is not allowed.
      * A text field the new kind shares by key with the old one (URL, host) starts with what was
-     * typed there if it is still empty. A kind with a [TransportCapability.ClientKey] gets its key
-     * now, so its public half can be shown.
+     * typed there if it is still empty, untouched like the rest of the new kind's fields. A kind
+     * with a [TransportCapability.ClientKey] gets its key now, so its public half can be shown.
      */
     fun setTransport(kind: TransportKind) {
         val next = kind.module
-        edit { f ->
+        mutableState.update { state ->
+            val f = state.form
             val carried =
                 next.fields.filterIsInstance<TransportField.Text>().fold(f.transports.getValue(kind)) { values, field ->
                     if (values[field.key].isBlank() &&
@@ -240,16 +272,25 @@ class SinkEditorViewModel(
                     }
                 }
             val auth = if (f.authKind in next.allowedAuth) f.authKind else next.allowedAuth.first()
-            f.copy(kind = kind, authKind = auth).withValues(carried)
+            state.withForm(f.copy(kind = kind, authKind = auth).withValues(carried))
         }
         if (next.capability<TransportCapability.ClientKey>() != null) viewModelScope.launch { ensureKey() }
     }
 
-    /** Sets one of the current kind's values; the kind may adjust others with it ([SinkTransportKind.adjust]). */
+    /**
+     * Sets one of the current kind's values and touches it; the kind may adjust others with it
+     * ([SinkTransportKind.adjust]), which leaves those untouched.
+     */
     fun setField(
         key: String,
         value: String?,
-    ) = edit { f -> f.withValues(f.transport.adjust(f.values, f.values.with(key, value))) }
+    ) = mutableState.update {
+        val f = it.form
+        it.withForm(
+            f.withValues(f.transport.adjust(f.values, f.values.with(key, value))),
+            touchedTransport = it.touchedTransport + key,
+        )
+    }
 
     /** Ignored for kinds the transport does not allow, so the UI can't store an impossible pair. */
     fun setAuth(kind: AuthKind) {
@@ -264,13 +305,16 @@ class SinkEditorViewModel(
         }
     }
 
-    /** For a kind with a [TransportCapability.HostKeyPin]: fetches the key to present, once host and port are valid. */
+    /**
+     * For a kind with a [TransportCapability.HostKeyPin]: fetches the key to present, once host and
+     * port are valid; otherwise touches both, so their problems show.
+     */
     fun fetchHostKey() {
-        val form = mutableState.value.form
+        val state = mutableState.value
+        val form = state.form
         val pin = form.transport.capability<TransportCapability.HostKeyPin>() ?: return
-        val problems = form.transport.validate(form.values).filterKeys { it == pin.hostKey || it == pin.portKey }
-        if (problems.isNotEmpty()) {
-            mutableState.update { it.copy(transportProblems = it.transportProblems + problems) }
+        if (pin.hostKey in state.transportProblems || pin.portKey in state.transportProblems) {
+            mutableState.update { it.copy(touchedTransport = it.touchedTransport + pin.hostKey + pin.portKey) }
             return
         }
         val host = form.values[pin.hostKey].trim()
@@ -300,10 +344,8 @@ class SinkEditorViewModel(
             mutableState.value.form.transport
                 .capability<TransportCapability.HostKeyPin>() ?: return
         mutableState.update {
-            it.copy(
-                form = it.form.withValues(it.form.values.with(pin.fingerprintKey, fingerprint)),
+            it.withForm(it.form.withValues(it.form.values.with(pin.fingerprintKey, fingerprint))).copy(
                 hostKey = HostKeyState.Idle,
-                saved = false,
             )
         }
     }
@@ -311,25 +353,16 @@ class SinkEditorViewModel(
     /**
      * Runs OIDC discovery and the device flow (RFC 8628) for the issuer and client in the form. On
      * success the tokens are staged and the discovered endpoints go into the form; [save] stores
-     * them with the typed client secret and the rest of the sink.
+     * them with the typed client secret and the rest of the sink. With the issuer or client id not
+     * valid, it touches both instead, so their problems show.
      */
     fun signIn() {
-        val form = mutableState.value.form
-        val issuerProblem = validateSinkUrl(form.oidcIssuer, required = true)
-        val clientIdMissing = form.oidcClientId.isBlank()
-        mutableState.update {
-            it.copy(
-                issuerProblem = issuerProblem,
-                invalid =
-                    if (clientIdMissing) {
-                        it.invalid + SinkField.OIDC_CLIENT_ID
-                    } else {
-                        it.invalid -
-                            SinkField.OIDC_CLIENT_ID
-                    },
-            )
+        val state = mutableState.value
+        val form = state.form
+        if (state.issuerProblem != null || SinkField.OIDC_CLIENT_ID in state.invalid) {
+            mutableState.update { it.copy(touched = it.touched + SinkField.OIDC_ISSUER + SinkField.OIDC_CLIENT_ID) }
+            return
         }
-        if (issuerProblem != null || clientIdMissing) return
 
         signInJob?.cancel()
         signInJob =
@@ -392,13 +425,12 @@ class SinkEditorViewModel(
         }
         stagedTokens = withContext(io) { flow.poll(grant) }
         mutableState.update {
-            it.copy(
-                form =
-                    it.form.copy(
-                        oidcTokenEndpoint = provider.tokenEndpoint.toString(),
-                        oidcDeviceEndpoint = provider.deviceAuthorizationEndpoint.toString(),
-                        oidcSignedInAs = issuer to clientId,
-                    ),
+            it.withForm(
+                it.form.copy(
+                    oidcTokenEndpoint = provider.tokenEndpoint.toString(),
+                    oidcDeviceEndpoint = provider.deviceAuthorizationEndpoint.toString(),
+                    oidcSignedInAs = issuer to clientId,
+                ),
             )
         }
     }
@@ -424,29 +456,19 @@ class SinkEditorViewModel(
     }
 
     /**
-     * Validates and saves. The sink's upload back-off is forgotten ([WorkControl.forgetRetries]):
-     * the user just fixed or re-pointed it, so the next upload should try it at once.
+     * Saves a form without problems; with problems it saves nothing and touches every input, so
+     * all of them show. The sink's upload back-off is forgotten ([WorkControl.forgetRetries]): the
+     * user just fixed or re-pointed it, so the next upload should try it at once.
      */
     fun save() {
-        val form = mutableState.value.form
-        val transportProblems = form.transport.validate(form.values)
-        val issuerProblem =
-            if (form.authKind ==
-                AuthKind.OIDC
-            ) {
-                validateSinkUrl(form.oidcIssuer, required = true)
-            } else {
-                null
+        val state = mutableState.value
+        val form = state.form
+        if (state.hasProblems) {
+            mutableState.update {
+                it.copy(touched = it.form.presentFields(), touchedTransport = it.form.transport.valueKeys())
             }
-        val invalid = invalidFields(form)
-        mutableState.update {
-            it.copy(
-                transportProblems = transportProblems,
-                issuerProblem = issuerProblem,
-                invalid = invalid,
-            )
+            return
         }
-        if (transportProblems.isNotEmpty() || issuerProblem != null || invalid.isNotEmpty()) return
 
         val config = form.toConfig()
         val staged = stagedTokens
@@ -459,9 +481,8 @@ class SinkEditorViewModel(
             if (stagedTokens === staged) stagedTokens = null
             val stored = credentials.stored(id)
             mutableState.update {
-                it.copy(
+                it.withForm(it.form.copy(secretInput = "", oidcClientSecretInput = "")).copy(
                     isNew = false,
-                    form = it.form.copy(secretInput = "", oidcClientSecretInput = ""),
                     hasStoredSecret = stored.secret,
                     hasStoredClientSecret = stored.clientSecret,
                     signIn =
@@ -524,13 +545,6 @@ class SinkEditorViewModel(
 
     private suspend fun replaceUpload() = work.uploadNow(settings.current().uploadOverCellular, replace = true)
 
-    private fun invalidFields(f: SinkForm): Set<SinkField> =
-        buildSet {
-            if (f.name.isBlank()) add(SinkField.NAME)
-            if (f.authKind == AuthKind.BASIC && f.basicUser.isBlank()) add(SinkField.BASIC_USER)
-            if (f.authKind == AuthKind.OIDC && f.oidcClientId.isBlank()) add(SinkField.OIDC_CLIENT_ID)
-        }
-
     private fun SinkForm.toConfig() =
         SinkConfig(
             id = id,
@@ -541,6 +555,64 @@ class SinkEditorViewModel(
             auth = toAuth(),
         )
 }
+
+/**
+ * The state holding [next]: its problems revalidated, and touched inputs it no longer has (another
+ * kind's fields, another auth's) forgotten, so they start untouched should they come back.
+ */
+private fun SinkEditorState.withForm(
+    next: SinkForm,
+    touched: Set<SinkField> = this.touched,
+    touchedTransport: Set<String> = this.touchedTransport,
+) = copy(
+    form = next,
+    transportProblems = next.transport.validate(next.values),
+    issuerProblem = if (next.authKind == AuthKind.OIDC) validateSinkUrl(next.oidcIssuer, required = true) else null,
+    invalid = invalidFields(next),
+    touched = touched intersect next.presentFields(),
+    touchedTransport = touchedTransport intersect next.transport.valueKeys(),
+    saved = false,
+)
+
+private fun invalidFields(f: SinkForm): Set<SinkField> =
+    buildSet {
+        if (f.name.isBlank()) add(SinkField.NAME)
+        if (f.authKind == AuthKind.BASIC && f.basicUser.isBlank()) add(SinkField.BASIC_USER)
+        if (f.authKind == AuthKind.OIDC && f.oidcClientId.isBlank()) add(SinkField.OIDC_CLIENT_ID)
+    }
+
+/** The editor's own inputs the form shows for its auth kind. */
+private fun SinkForm.presentFields(): Set<SinkField> =
+    buildSet {
+        add(SinkField.NAME)
+        when (authKind) {
+            AuthKind.BASIC -> add(SinkField.BASIC_USER)
+            AuthKind.OIDC -> addAll(listOf(SinkField.OIDC_ISSUER, SinkField.OIDC_CLIENT_ID))
+            AuthKind.NONE, AuthKind.BEARER -> Unit
+        }
+    }
+
+private fun editedFields(
+    before: SinkForm,
+    after: SinkForm,
+): Set<SinkField> =
+    buildSet {
+        if (before.name != after.name) add(SinkField.NAME)
+        if (before.basicUser != after.basicUser) add(SinkField.BASIC_USER)
+        if (before.oidcIssuer != after.oidcIssuer) add(SinkField.OIDC_ISSUER)
+        if (before.oidcClientId != after.oidcClientId) add(SinkField.OIDC_CLIENT_ID)
+    }
+
+/** Every key the kind's fields and capabilities keep a value under; [SinkTransportKind.validate] reports by these. */
+private fun SinkTransportKind.valueKeys(): Set<String> =
+    fields.map { it.key }.toSet() +
+        capabilities.mapNotNull {
+            when (it) {
+                TransportCapability.ClientKey -> null
+                is TransportCapability.HostKeyPin -> it.fingerprintKey
+                is TransportCapability.FolderPick -> it.treeUriKey
+            }
+        }
 
 /** The form's auth, constrained to what its transport allows. */
 internal fun SinkForm.toAuth(): AuthConfig {
