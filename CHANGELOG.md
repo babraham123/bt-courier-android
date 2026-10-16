@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- ELM327 OBD-II adapters over BLE, core only (no pairing or drive session yet): polls a car's
+  wican-fw vehicle profile (82 cars plus a generic mode-01 set) and writes `autopid.*` rows named
+  as the WiCAN logger names them, plus adapter version and battery voltage.
+
 ## [0.0.1] - 2026-10-16
 
 Pre-alpha. Nothing below has been verified on real hardware.

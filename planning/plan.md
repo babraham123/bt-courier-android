@@ -77,10 +77,10 @@ BLE / Wi-Fi   WiCAN      clock repair   SQLite    HttpPut/HttpPost/Sftp/Mqtt/Loc
 | Class | Cursor | Examples |
 |---|---|---|
 | Pull with history | opaque | WiCAN logger; Colmi/jring smart rings (per-day); Aranet4 |
-| Stream while connected | none | HR straps, ELM327 live |
+| Stream while connected | none | ELM327 over BLE (built in core, `Elm327Source`; collected by the drive session, ticket 0001); HR straps |
 | Broadcast | none | Ruuvi, TPMS, Victron |
 
-Class 1 is built for the WiCAN logger and the Colmi ring (`DeviceKind` picks the GATT profile, source and store source id `wican:`/`colmi:<address>`); `subscribe()` exists on `Source` but nothing collects it yet.
+Class 1 is built for the WiCAN logger and the Colmi ring (`DeviceKind` picks the GATT profile, source and store source id `wican:`/`colmi:<address>`); Class 2 has `Elm327Source` in core (ticket 0002); `Source.subscribe()` has no collector until the drive session lands.
 
 ### Car trigger
 
