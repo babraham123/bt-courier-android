@@ -153,7 +153,7 @@ class WorkRulesTest {
         }
 
     @Test
-    fun `a sync that sealed new batches enqueues the upload at once and schedules no follow-up`() =
+    fun `a sync that sealed new batches enqueues the upload at once, and the follow-up for the lines still open`() =
         runTest {
             logger.append(epoch + 60, listOf(row(ts = (epoch + 60) * 1000, value = 20)))
 
@@ -163,7 +163,11 @@ class WorkRulesTest {
 
             assertEquals(1, store.pending("sink").size, "the first file closed at the second's marker")
             assertEquals(listOf(false to false), work.uploads)
-            assertEquals(emptyList<Pair<Long, Boolean>>(), work.sealUploads)
+            assertEquals(
+                listOf(5 * MINUTE to false),
+                work.sealUploads,
+                "the second file's lines are not left to the next sync",
+            )
         }
 
     @Test

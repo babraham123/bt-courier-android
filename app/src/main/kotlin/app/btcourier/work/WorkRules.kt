@@ -17,9 +17,10 @@ enum class WorkVerdict { SUCCESS, RETRY }
  * - Whenever the run sealed new batches, an upload is enqueued, KEEP so an upload already waiting
  *   delivers them: also after an interrupted sync and after one that found no device, since
  *   sealing happens anyway.
- * - Otherwise, when the run left lines open, an upload is scheduled for when the age rule closes
+ * - Whenever the run left lines open, an upload is also scheduled for when the age rule closes
  *   them ([SyncOutcome.sealDueAtMs], [FollowUp.SEAL]); the upload's own seal then closes them, so
- *   they do not wait for the next sync to come along.
+ *   they do not wait for the next sync to come along. Both can apply to one run: a sync that
+ *   closed one file and left the next half-pulled.
  * - Whether to run again is the outcome's [SyncOutcome.retryWorthwhile] ([SyncRetryPolicy] says
  *   when), which the worker turns into WorkManager's back-off.
  */
@@ -46,12 +47,8 @@ class SyncWork(
     ): WorkVerdict {
         if (address == null && fanOut.fire(SyncTrigger.Periodic).isNotEmpty()) return WorkVerdict.SUCCESS
         val outcome = job.run(address, sealPolicy, attempt, manual, onConnected)
-        val sealDue = outcome.sealDueAtMs
-        if (outcome.newBatches) {
-            work.uploadNow(uploadOverCellular, replace = false)
-        } else if (sealDue != null) {
-            work.uploadAt(sealDue - clock(), uploadOverCellular, FollowUp.SEAL)
-        }
+        if (outcome.newBatches) work.uploadNow(uploadOverCellular, replace = false)
+        outcome.sealDueAtMs?.let { work.uploadAt(it - clock(), uploadOverCellular, FollowUp.SEAL) }
         return if (outcome.retryWorthwhile) WorkVerdict.RETRY else WorkVerdict.SUCCESS
     }
 }
