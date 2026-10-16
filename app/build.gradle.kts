@@ -101,6 +101,9 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui.tooling.preview)
+    // Kotlin's debugImplementation metadata configuration does not inherit implementation, so it
+    // needs the BOM for these versionless artifacts; without it Renovate's lockfile run fails.
+    debugImplementation(platform(libs.androidx.compose.bom))
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     implementation(libs.androidx.work.runtime.ktx)

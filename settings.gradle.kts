@@ -21,8 +21,10 @@ pluginManagement {
     }
 }
 
-// Locks the settings plugin classpath. Its default lockfile name is the one the root project's
-// buildscript writes too, so it gets a name of its own.
+// Locks the settings plugin classpath. Its default lockfile, settings-gradle.lockfile, also holds
+// the lock state Gradle keeps for importing gradle/libs.versions.toml, and Gradle writes that state
+// separately, replacing the classpath entries; so the classpath gets a file of its own. Renovate
+// refreshes every *.lockfile by running `dependencies --write-locks`, which resolves this classpath.
 buildscript {
     dependencyLocking {
         lockAllConfigurations()
