@@ -51,8 +51,6 @@ android {
         abortOnError = true
         // Library code is not ours to fix; lint still analyses what the app calls into it.
         checkDependencies = false
-        // Holds findings that cannot be fixed; absent while there are none.
-        baseline = file("lint-baseline.xml")
         // Path-scoped suppressions that keep each check on for our own code.
         lintConfig = file("lint.xml")
     }
@@ -101,6 +99,9 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui.tooling.preview)
+    // Kotlin's debugImplementation metadata configuration does not inherit implementation, so it
+    // needs the BOM for these versionless artifacts; without it Renovate's lockfile run fails.
+    debugImplementation(platform(libs.androidx.compose.bom))
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     implementation(libs.androidx.work.runtime.ktx)
