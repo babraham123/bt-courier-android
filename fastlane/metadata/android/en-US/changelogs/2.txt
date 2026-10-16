@@ -1,0 +1,1 @@
+Drive sessions (off by default): keep syncing the WiCAN over an open BLE link while the car is in use. ELM327 OBD-II BLE adapters as a live source with wican-fw vehicle profiles, paired through the wizard. Not yet verified on real hardware.
