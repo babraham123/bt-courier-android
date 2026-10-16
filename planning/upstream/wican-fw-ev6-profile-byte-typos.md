@@ -25,6 +25,9 @@ The neighbouring counters are contiguous 4-byte fields (`HV_AH_DISCHARGED` B44-B
 - Expected: each cumulative counter is a 4-byte field decoded from contiguous bytes.
 - Actual: `HV_AH_CHARGED` takes its high byte from B39 (skipping B40) and `KWH_DISCHARGED` its low byte from B57 (skipping B56), so both values are off. <Fill in observed values from hardware.>
 
+## Local state
+The app's copy (`core/src/main/resources/app/btcourier/core/elm327/vehicle_profiles.json`) carries both fixes in all six profiles sharing the layout (Ioniq5/6 ×3, Kona, EV6 ×2); `CAPACITOR` is left as upstream has it.
+
 ## Proposed fix
 - `KWH_DISCHARGED`: use B53-B56.
 - `HV_AH_CHARGED`: use B40-B43.
