@@ -51,8 +51,6 @@ android {
         abortOnError = true
         // Library code is not ours to fix; lint still analyses what the app calls into it.
         checkDependencies = false
-        // Holds findings that cannot be fixed; absent while there are none.
-        baseline = file("lint-baseline.xml")
         // Path-scoped suppressions that keep each check on for our own code.
         lintConfig = file("lint.xml")
     }
