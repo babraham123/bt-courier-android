@@ -65,6 +65,8 @@ Status: `todo` | `doing` | `blocked` | `done`. Deps are task ids.
 
 ## 5. First contact with hardware
 
+Test plans: `planning/testplans/wican-pro.md` (H1–H6, R1) and `planning/testplans/colmi-ring.md` (L6, L9, R1).
+
 | id | task | status | deps |
 |---|---|---|---|
 | H1 | Buy WiCAN Pro; flash `dev-v6`; enable BLE + data logger | blocked (not purchased) | — |
