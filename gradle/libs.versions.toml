@@ -2,7 +2,7 @@
 # AGP 8.13 is the newest line that runs on Gradle 8.14; AGP 9 needs Gradle 9.
 agp = "8.13.2"
 kotlin = "2.2.21"
-coroutines = "1.10.2"
+coroutines = "1.11.0"
 serialization = "1.9.0"
 okhttp = "5.3.2"
 # Newer Kable releases are compiled against Kotlin 2.4 metadata.
