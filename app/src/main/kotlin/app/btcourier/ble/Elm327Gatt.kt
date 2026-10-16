@@ -41,14 +41,21 @@ object Elm327Gatt {
     fun chooseLayout(services: List<DiscoveredService>): GattLayout? = DISCOVERY.choose(services)
 
     /**
-     * Brand or protocol in the advertised name: `vLinker MC+`, `V-LINK`, `OBDII`, `ELM327`. Found
-     * anywhere in the name, as the companion-device scan matches.
+     * Vendor labels in advertised names, found anywhere in the name as the companion-device scan
+     * matches, ignoring case: the protocol itself (`ELM327`, `OBDII`, `OBD2`, `OBDLink`, `OBDCheck`),
+     * Vgate (`vLinker MC+`, `V-LINK`, `IOS-Vlink`, `Android-Vlink`, `iCar`), Veepeak, Carista,
+     * UniCarScan, Konnwei (`KW902`), LELink, PLX Kiwi, Carly, ScanTool, and the WiCAN. Names are
+     * what vendors ship, so the list is only ever a convenience: an adapter with another name is
+     * still offered by its advertised service.
      */
-    val NAME_PATTERN: Regex = Regex("(?i).*(vlinker|v-?link|obd|elm327).*")
+    val NAME_PATTERN: Regex =
+        Regex(
+            "(?i).*(elm327|elm ?327|obd|vlinker|v-?link|icar|veepeak|carista|unicarscan|konnwei|kw ?90\\d|lelink|kiwi|carly|scantool|wican).*",
+        )
 
     /**
-     * Name or any candidate service: many adapters advertise a generic name or none. The WiCAN
-     * matches too (its tunnel service is `FFF0`), which the help text mentions.
+     * Name or any candidate service: many adapters advertise a generic name or none. A WiCAN Pro
+     * matches too (its tunnel service is `FFF0`), which the associate text mentions.
      */
     val FILTER =
         DeviceFilterSpec(

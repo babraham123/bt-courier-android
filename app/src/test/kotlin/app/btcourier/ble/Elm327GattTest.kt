@@ -143,24 +143,42 @@ class Elm327GattTest {
     }
 
     @Test
-    fun `the scan takes vLinker, V-LINK, OBD or ELM327 anywhere in the name, ignoring case, or a known service`() {
+    fun `the scan takes a known vendor or protocol label anywhere in the name, ignoring case, or a known service`() {
         val spec = Elm327Gatt.FILTER
         for (name in listOf(
             "vLinker MC+",
             "VLINKER FS",
             "V-LINK",
             "vlink",
+            "IOS-Vlink",
+            "Android-Vlink",
+            "iCar Pro",
             "OBDII",
+            "OBD2",
             "My OBD",
+            "OBDLink CX",
+            "OBDCheck BLE+",
             "ELM327 v1.5",
-            "iCar elm327",
+            "ELM 327",
+            "VEEPEAK",
+            "Carista",
+            "UniCarScan UCSI-2000",
+            "KONNWEI",
+            "KW902",
+            "LELink2",
+            "Kiwi 3",
+            "Carly Universal",
+            "ScanTool",
+            "WiCAN_a1b2c3",
         )) {
             assertTrue(spec.matches(name, emptyList()), name)
         }
         for (uuid in listOf(short(0xFFF0), short(0xFFE0), short(0x18F0), nus, short(0xFEE0))) {
             assertTrue(spec.matches(null, listOf(uuid)), uuid.toString())
         }
-        assertFalse(spec.matches("R02_0000", emptyList()))
+        for (name in listOf("R02_0000", "JBL Flip", "Galaxy Buds", "Mi Band")) {
+            assertFalse(spec.matches(name, emptyList()), name)
+        }
         assertFalse(spec.matches(null, listOf(short(0x180D))))
     }
 }

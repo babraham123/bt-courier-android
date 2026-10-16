@@ -110,6 +110,8 @@ class PairingScreenTest : ScreenTest() {
         show()
 
         onText(R.string.pairing_explain_elm327).assertIsDisplayed()
+        onText(R.string.pairing_explain_elm327_session).assertIsDisplayed()
+        onText(R.string.pairing_explain_elm327_wican).assertIsDisplayed()
         onText(R.string.pairing_vehicle_profile_choice).assertIsDisplayed()
         onText(R.string.pairing_vehicle_profile_generic).assertIsSelected()
         assertNoText(R.string.pairing_auto_hr_choice)

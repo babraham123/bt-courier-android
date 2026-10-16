@@ -38,7 +38,13 @@ object Elm327Support : DeviceSupport {
     override val pairingText =
         PairingText(
             help = R.string.pairing_kind_elm327_help,
-            explain = listOf(R.string.pairing_explain_elm327, R.string.pairing_explain_elm327_one_app),
+            explain =
+                listOf(
+                    R.string.pairing_explain_elm327,
+                    R.string.pairing_explain_elm327_session,
+                    R.string.pairing_explain_elm327_one_app,
+                    R.string.pairing_explain_elm327_wican,
+                ),
             associate = R.string.pairing_associate_body_elm327,
             test = R.string.pairing_test_body_elm327,
             vehicleProfileChoice =
