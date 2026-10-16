@@ -2417,7 +2417,7 @@
             },
             {
               "name": "HV_AH_CHARGED",
-              "expression": "((B40<<24)+(B41<<16)+(B42<<8)+B43)/10",
+              "expression": "((B39<<24)+(B41<<16)+(B42<<8)+B43)/10",
               "unit": "Ah",
               "class": "none",
               "min": "0",
@@ -2441,7 +2441,7 @@
             },
             {
               "name": "KWH_DISCHARGED",
-              "expression": "((B53<<24)+(B54<<16)+(B55<<8)+B56)/10",
+              "expression": "((B53<<24)+(B54<<16)+(B55<<8)+B57)/10",
               "unit": "kWh",
               "class": "energy",
               "min": "0",
@@ -2936,7 +2936,7 @@
             },
             {
               "name": "HV_AH_CHARGED",
-              "expression": "((B40<<24)+(B41<<16)+(B42<<8)+B43)/10",
+              "expression": "((B39<<24)+(B41<<16)+(B42<<8)+B43)/10",
               "unit": "Ah",
               "class": "none",
               "min": "0",
@@ -2960,7 +2960,7 @@
             },
             {
               "name": "KWH_DISCHARGED",
-              "expression": "((B53<<24)+(B54<<16)+(B55<<8)+B56)/10",
+              "expression": "((B53<<24)+(B54<<16)+(B55<<8)+B57)/10",
               "unit": "kWh",
               "class": "energy",
               "min": "0",
@@ -4931,7 +4931,7 @@
             },
             {
               "name": "HV_AH_CHARGED",
-              "expression": "((B40<<24)+(B41<<16)+(B42<<8)+B43)/10",
+              "expression": "((B39<<24)+(B41<<16)+(B42<<8)+B43)/10",
               "unit": "Ah",
               "class": "none",
               "min": "0",
@@ -4955,7 +4955,7 @@
             },
             {
               "name": "KWH_DISCHARGED",
-              "expression": "((B53<<24)+(B54<<16)+(B55<<8)+B56)/10",
+              "expression": "((B53<<24)+(B54<<16)+(B55<<8)+B57)/10",
               "unit": "kWh",
               "class": "energy",
               "min": "0",
@@ -7103,7 +7103,7 @@
             },
             {
               "name": "HV_AH_CHARGED",
-              "expression": "((B40<<24)+(B41<<16)+(B42<<8)+B43)/10",
+              "expression": "((B39<<24)+(B41<<16)+(B42<<8)+B43)/10",
               "unit": "Ah",
               "class": "none",
               "min": "0",
@@ -7119,7 +7119,7 @@
             },
             {
               "name": "KWH_DISCHARGED",
-              "expression": "((B53<<24)+(B54<<16)+(B55<<8)+B56)/10",
+              "expression": "((B53<<24)+(B54<<16)+(B55<<8)+B57)/10",
               "unit": "kWh",
               "class": "energy",
               "min": "0",
@@ -7849,7 +7849,7 @@
             },
             {
               "name": "HV_AH_CHARGED",
-              "expression": "((B40<<24)+(B41<<16)+(B42<<8)+B43)/10",
+              "expression": "((B39<<24)+(B41<<16)+(B42<<8)+B43)/10",
               "unit": "Ah",
               "class": "none",
               "min": "0",
@@ -7873,7 +7873,7 @@
             },
             {
               "name": "KWH_DISCHARGED",
-              "expression": "((B53<<24)+(B54<<16)+(B55<<8)+B56)/10",
+              "expression": "((B53<<24)+(B54<<16)+(B55<<8)+B57)/10",
               "unit": "kWh",
               "class": "energy",
               "min": "0",
@@ -8368,7 +8368,7 @@
             },
             {
               "name": "HV_AH_CHARGED",
-              "expression": "((B40<<24)+(B41<<16)+(B42<<8)+B43)/10",
+              "expression": "((B39<<24)+(B41<<16)+(B42<<8)+B43)/10",
               "unit": "Ah",
               "class": "none",
               "min": "0",
@@ -8392,7 +8392,7 @@
             },
             {
               "name": "KWH_DISCHARGED",
-              "expression": "((B53<<24)+(B54<<16)+(B55<<8)+B56)/10",
+              "expression": "((B53<<24)+(B54<<16)+(B55<<8)+B57)/10",
               "unit": "kWh",
               "class": "energy",
               "min": "0",

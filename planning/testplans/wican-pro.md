@@ -9,7 +9,6 @@ Never commit captures: they hold VINs, trips and addresses.
 
 - [ ] WiCAN Pro on `dev-v6` (H1); note the build from the web UI.
 - [ ] Device settings: BLE on, `pairing_at_boot`, default passkey; data logger on, params `format` = jsonl, `autopid_log` = changed or all.
-- [ ] Vehicle profile fixed per H6 before the first sync.
 - [ ] Web UI reachable over Wi-Fi for `/api/logger`, `/api/rtc`, `/api/sleep`, `/api/fs` (cross-checks only).
 - [ ] Android 12+ phone (H2 names a Pixel 7); Bluetooth on; car head unit paired to the phone.
 - [ ] Debug APK for cases 1–8, release APK for case 9.

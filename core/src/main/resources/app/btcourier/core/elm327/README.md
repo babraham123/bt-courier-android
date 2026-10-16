@@ -6,11 +6,10 @@ parameters as byte expressions (`B<n>` is the n-th response byte). The ELM327 so
 car's profile over the adapter and names each parameter `autopid.<name>`, so rows match what the
 WiCAN logger writes for the same car.
 
-Local differences from upstream, pending `planning/upstream/wican-fw-ev6-profile-byte-typos.md`:
+The file is upstream's, unchanged. Byte indexes count the PCI byte of every CAN frame (see
+`Elm327Response`), so in a multi-frame answer B0, B8, B16, ... are PCIs, and a multi-byte field
+that crosses a frame skips one: the Ioniq5/6, Kona and EV6 counters `HV_AH_CHARGED`
+(`B39, B41-B43`) and `KWH_DISCHARGED` (`B53-B55, B57`) and `CAPACITOR` (`B63, B65`) are contiguous
+in the UDS payload, not typos.
 
-| Parameter | Upstream | Here | Profiles |
-|---|---|---|---|
-| `HV_AH_CHARGED` | `B39<<24` (skips B40) | `B40<<24` | Ioniq5/6 (three variants), Kona, EV6 (two variants) |
-| `KWH_DISCHARGED` | `+B57` (skips B56) | `+B56` | same |
-
-Refresh by downloading upstream's `vehicle_profiles.json` and re-applying the table.
+Refresh by downloading upstream's `vehicle_profiles.json`.

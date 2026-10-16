@@ -24,7 +24,7 @@ The debug APK outputs to `app/build/outputs/apk/debug/`, the unsigned, R8-shrunk
 ## Attribution
 
 - The WiCAN Pro protocol follows MeatPi's [wican-fw](https://github.com/meatpiHQ/wican-fw) firmware and its HTTP-over-BLE specification.
-- The ELM327 vehicle profiles are wican-fw's `vehicle_profiles.json` (GPL-3.0), shipped in `core/src/main/resources/app/btcourier/core/elm327/` with the corrections listed in its README.
+- The ELM327 vehicle profiles are wican-fw's `vehicle_profiles.json` (GPL-3.0), shipped unchanged in `core/src/main/resources/app/btcourier/core/elm327/`.
 - The Colmi smart ring protocol follows tahnok's [colmi_r02_client](https://github.com/tahnok/colmi_r02_client) and Gadgetbridge's Colmi R0x support.
 - BLE access uses [Kable](https://github.com/JuulLabs/kable); SFTP and MQTT sinks use [sshj](https://github.com/hierynomus/sshj) and the [HiveMQ MQTT client](https://github.com/hivemq/hivemq-mqtt-client).
 
