@@ -1,7 +1,7 @@
 # Tasks
 
-Status 2026-10-15: every software task is done, sections 7 and 8 included (598 unit
-tests across core, fakes and app; lint clean; release build reproducible). Open items need the
+Status 2026-10-15: every software task is done, sections 7 and 8 included (unit
+tests pass in core, fakes and app; lint clean; release build reproducible). Open items need the
 hardware (section 5), a signing key (section 6) or come later (section 7).
 
 Status: `todo` | `doing` | `blocked` | `done`. Deps are task ids.
