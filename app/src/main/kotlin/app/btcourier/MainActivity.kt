@@ -24,6 +24,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.btcourier.ui.BackButton
 import app.btcourier.ui.VisitStores
 import app.btcourier.ui.VisitStoresHolder
+import app.btcourier.ui.about.AboutScreen
 import app.btcourier.ui.pairing.AndroidPairingPlatform
 import app.btcourier.ui.pairing.PairingScreen
 import app.btcourier.ui.pairing.PairingViewModel
@@ -38,11 +39,12 @@ import app.btcourier.ui.theme.BtCourierTheme
 import app.btcourier.work.Notifications
 import java.util.UUID
 
-/** Four screens and a shallow back stack, so plain state replaces a navigation library. */
-private enum class Screen { Status, Pairing, Settings, SinkEditor }
+/** Five screens and a shallow back stack, so plain state replaces a navigation library. */
+private enum class Screen { Status, Pairing, Settings, SinkEditor, About }
 
 class MainActivity : ComponentActivity() {
     private val visitStores: VisitStores by lazy { ViewModelProvider(this)[VisitStoresHolder::class.java].stores }
+    private val versionName by lazy { packageManager.getPackageInfo(packageName, 0).versionName.orEmpty() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,11 +65,12 @@ class MainActivity : ComponentActivity() {
                 val toSettings = { screen = Screen.Settings }
                 // The editor handles back itself, to drop what a never-saved sink stored.
                 if (screen == Screen.Pairing || screen == Screen.Settings) BackHandler(onBack = home)
+                if (screen == Screen.About) BackHandler(onBack = toSettings)
                 val activeVisit =
                     when (screen) {
                         Screen.Pairing -> pairingVisit
                         Screen.SinkEditor -> editorVisit
-                        Screen.Status, Screen.Settings -> null
+                        Screen.Status, Screen.Settings, Screen.About -> null
                     }
                 LaunchedEffect(activeVisit) { visitStores.keepOnly(activeVisit) }
 
@@ -88,15 +91,24 @@ class MainActivity : ComponentActivity() {
                     }
 
                     Screen.Settings -> {
-                        SettingsScreen(viewModel = settingsViewModel(), onBack = home, onEditSink = { id ->
-                            editingSink = id
-                            editorVisit = UUID.randomUUID().toString()
-                            screen = Screen.SinkEditor
-                        })
+                        SettingsScreen(
+                            viewModel = settingsViewModel(),
+                            onBack = home,
+                            onEditSink = { id ->
+                                editingSink = id
+                                editorVisit = UUID.randomUUID().toString()
+                                screen = Screen.SinkEditor
+                            },
+                            onAbout = { screen = Screen.About },
+                        )
                     }
 
                     Screen.SinkEditor -> {
                         SinkEditorScreen(viewModel = sinkEditorViewModel(editingSink, editorVisit), onDone = toSettings)
+                    }
+
+                    Screen.About -> {
+                        AboutScreen(version = versionName, onBack = toSettings)
                     }
                 }
             }

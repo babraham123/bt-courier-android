@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- About screen, opened from Settings: version, source code and bug report links, license and
+  credits.
+
+### Changed
+
+- Clearer wording in Settings and on the status screen: "upload target" replaces "sink", drive
+  sessions "sync every" rather than "pull every", and settings that apply to every device no
+  longer mention the dongle.
+
 ## [0.0.2] - 2026-10-16
 
 ### Added

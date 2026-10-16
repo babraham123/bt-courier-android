@@ -32,10 +32,11 @@ class SettingsScreenTest : ScreenTest() {
     private val settings = FakeSettings(AppSettings(sinks = listOf(sink), cacheCapBytes = 200_000_000))
     private val work = RecordingWorkControl()
     private val edited = mutableListOf<String?>()
+    private var aboutOpened = false
 
     private fun show() {
         val vm = SettingsViewModel(settings, work)
-        setScreen { SettingsScreen(vm, onBack = {}, onEditSink = { edited += it }) }
+        setScreen { SettingsScreen(vm, onBack = {}, onEditSink = { edited += it }, onAbout = { aboutOpened = true }) }
     }
 
     private fun stored() = runBlocking { settings.current() }
@@ -48,6 +49,15 @@ class SettingsScreenTest : ScreenTest() {
                 adapter.getRemoteDevice(address).also { shadowOf(it).setName(name) }
             }
         shadowOf(adapter).setBondedDevices(bonded.toSet())
+    }
+
+    @Test
+    fun `the about button opens the about screen`() {
+        show()
+
+        onText(R.string.settings_about).tap()
+
+        assertTrue(aboutOpened)
     }
 
     @Test

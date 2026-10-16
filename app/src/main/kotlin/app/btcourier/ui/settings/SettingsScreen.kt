@@ -45,6 +45,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onBack: () -> Unit,
     onEditSink: (id: String?) -> Unit,
+    onAbout: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     // Each visit starts from what is stored, not from edits abandoned on a previous visit.
@@ -154,6 +155,9 @@ fun SettingsScreen(
                 ) { Text(stringResource(R.string.settings_save)) }
                 if (state.saved) Text(stringResource(R.string.settings_saved))
             }
+
+            HorizontalDivider()
+            OutlinedButton(onClick = onAbout) { Text(stringResource(R.string.settings_about)) }
         }
     }
 }

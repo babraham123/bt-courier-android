@@ -12,7 +12,7 @@
     <string name="pairing_choose_kind">Which device do you want to pair?</string>
     <string name="pairing_kind_wican_help">OBD dongle; syncs its trip logs.</string>
     <string name="pairing_kind_colmi_ring_help">R02-family ring; syncs heart rate and steps of the past days.</string>
-    <string name="pairing_explain_ring">Charge the ring and keep it close to the phone. Close other apps connected to it (the vendor app, Gadgetbridge): it serves one phone at a time. There is no passkey.</string>
+    <string name="pairing_explain_ring">Charge the ring and keep it close to the phone. Close other apps connected to it (the vendor app, Gadgetbridge): it serves one phone at a time. No passkey is needed.</string>
     <string name="pairing_associate_body_ring">Android will scan for nearby rings and ask you to pick one.</string>
     <string name="pairing_auto_hr_choice">Turn on background heart rate (every 5 min)</string>
     <string name="pairing_auto_hr_choice_help">Uses ring battery. You can change it later in the ring\'s vendor app.</string>
@@ -102,7 +102,7 @@
     <string name="drive_end_busy">device busy</string>
     <string name="drive_end_not_live">not a live device</string>
     <string name="status_upload">Last upload</string>
-    <string name="status_sink">Sink “%1$s”</string>
+    <string name="status_sink">Upload target “%1$s”</string>
     <string name="status_two_values">%1$s, %2$s</string>
     <string name="status_no_sink_hint">No upload target set up. Add one in Settings.</string>
     <string name="status_upload_now">Upload now</string>
@@ -133,7 +133,7 @@
     <string name="upload_retrying">Retrying</string>
     <string name="upload_gave_up">Gave up, will try after the next sync</string>
     <string name="upload_failed">Failed, check settings</string>
-    <string name="upload_no_sink">No sink configured</string>
+    <string name="upload_no_sink">No upload target set up</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_sink">Upload targets</string>
@@ -162,7 +162,7 @@
     <string name="sink_edit_title">Upload target</string>
     <string name="sink_name">Name</string>
     <string name="sink_enabled">Enabled</string>
-    <string name="sink_enabled_help">Off: nothing is sent here, and data is not kept for it.</string>
+    <string name="sink_enabled_help">Off: nothing is sent to this target and no data is kept for it.</string>
     <string name="sink_transport">Send with</string>
     <string name="sink_format">File format</string>
     <string name="sink_delete">Delete</string>
@@ -229,14 +229,14 @@
     <string name="settings_upload_delay_5min">5 minutes</string>
     <string name="settings_upload_delay_30min">30 minutes</string>
     <string name="settings_periodic">Periodic sync</string>
-    <string name="settings_periodic_help">Also try every 15 minutes. Syncs still start when the dongle comes in range.</string>
+    <string name="settings_periodic_help">Also try every 15 minutes. Syncs still start when a device comes in range.</string>
     <string name="settings_car">Car head unit</string>
     <string name="settings_car_none">None</string>
     <string name="settings_car_help">Syncs when the phone connects to or disconnects from this car\'s Bluetooth.</string>
     <string name="settings_drive_session">Keep syncing while driving</string>
-    <string name="settings_drive_session_help">When the car connects or the dongle comes in range, hold the connection and keep collecting new data until the drive ends. Not yet tested on hardware.</string>
-    <string name="settings_drive_interval">Pull every</string>
-    <string name="settings_drive_interval_help">How often a drive session asks the dongle for new data.</string>
+    <string name="settings_drive_session_help">When the car connects or a device comes in range, hold the connection and keep collecting new data until the drive ends. Not yet tested on hardware.</string>
+    <string name="settings_drive_interval">Sync every</string>
+    <string name="settings_drive_interval_help">How often a drive session asks the device for new data.</string>
     <string name="settings_drive_idle">End after no new data for</string>
     <string name="settings_drive_idle_help">A parked car with the engine off stops logging; the session then ends.</string>
     <string name="settings_drive_max">Longest session</string>
@@ -254,6 +254,25 @@
     <string name="settings_save">Save</string>
     <string name="settings_saved">Saved</string>
     <string name="sink_save_needs">Needed to save: %1$s</string>
+    <string name="settings_about">About BT Courier</string>
+
+    <string name="about_title">About</string>
+    <string name="about_version">Version %1$s</string>
+    <string name="about_summary">Pulls logged data from Bluetooth LE devices, caches it on the phone and uploads it in batches to servers you run yourself.</string>
+    <string name="about_prealpha">Pre-alpha: not yet verified on real hardware.</string>
+    <string name="about_privacy">No account, no cloud service, no telemetry and no ads. Data goes only to the upload targets you set up.</string>
+    <string name="about_source">Source code</string>
+    <string name="about_issues">Report a bug</string>
+    <string name="about_license">License</string>
+    <string name="about_license_body">Free software under the GNU General Public License, version 3.</string>
+    <string name="about_license_read">Read the license</string>
+    <string name="about_credits">Built on</string>
+    <string name="about_credit_wican">WiCAN Pro protocol and the ELM327 vehicle profiles</string>
+    <string name="about_credit_colmi">Colmi ring protocol</string>
+    <string name="about_credit_gadgetbridge">Colmi ring protocol</string>
+    <string name="about_credit_kable">Bluetooth LE</string>
+    <string name="about_credit_sshj">SFTP uploads</string>
+    <string name="about_credit_hivemq">MQTT uploads</string>
 
     <string name="notification_channel_transfer">Transfers</string>
     <string name="notification_syncing">Syncing with device</string>
