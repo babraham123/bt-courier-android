@@ -1,14 +1,9 @@
 package app.btcourier.data
 
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import app.btcourier.work.MapSecretStore
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
@@ -24,28 +19,23 @@ class DataStoreSettingsTest {
     @TempDir
     lateinit var dir: File
 
-    private val scopes = mutableListOf<CoroutineScope>()
+    private val files = DataStoreFiles()
     private val secrets = MapSecretStore()
 
     private val file get() = File(dir, "settings.preferences_pb")
 
-    /** A store over [file]; each needs its own scope, cancelled before another opens the file. */
-    private fun open(migrate: Boolean): DataStore<Preferences> {
-        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob()).also { scopes += it }
-        val migrations = if (migrate) listOf(LegacySinkMigration(testCredentials(secrets))) else emptyList()
-        return PreferenceDataStoreFactory.create(migrations = migrations, scope = scope) { file }
-    }
-
-    private fun closeAll() = scopes.forEach { it.cancel() }.also { scopes.clear() }
+    /** A store over [file], with the legacy migration if [migrate]. */
+    private fun open(migrate: Boolean): DataStore<Preferences> =
+        files.open(file, if (migrate) listOf(LegacySinkMigration(testCredentials(secrets))) else emptyList())
 
     @AfterEach
-    fun tearDown() = closeAll()
+    fun tearDown() = files.closeAllBlocking()
 
     /** Writes what an earlier version stored, then closes that store. */
     private fun writeLegacy(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) =
         runBlocking {
             open(migrate = false).edit(block)
-            closeAll()
+            files.closeAll()
         }
 
     @Test
@@ -81,7 +71,7 @@ class DataStoreSettingsTest {
                     devices = devices,
                 )
             DataStoreSettings(open(migrate = true)).update { expected }
-            closeAll()
+            files.closeAll()
 
             assertEquals(expected, DataStoreSettings(open(migrate = true)).current())
         }
@@ -137,7 +127,7 @@ class DataStoreSettingsTest {
                     .single()
                     .auth,
             )
-            closeAll()
+            files.closeAll()
             file.delete()
 
             writeLegacy { it[SettingsKeys.LEGACY_URL] = "https://sink.invalid/" }
@@ -205,7 +195,7 @@ class DataStoreSettingsTest {
         runBlocking {
             writeLegacy { it[SettingsKeys.CELLULAR] = true }
             assertEquals(emptyList<DeviceConfig>(), DataStoreSettings(open(migrate = true)).current().devices)
-            closeAll()
+            files.closeAll()
 
             writeLegacy { it[SettingsKeys.DEVICES] = """[{"address":"AA:BB:CC:DD:EE:01","kind":"TOASTER"}]""" }
             val devices = DataStoreSettings(open(migrate = true)).current().devices
