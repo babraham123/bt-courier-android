@@ -6,6 +6,7 @@
     <string name="home_forget">Forget device</string>
     <string name="kind_wican">WiCAN Pro</string>
     <string name="kind_colmi_ring">Colmi smart ring</string>
+    <string name="kind_elm327">OBD-II scanner (ELM327)</string>
 
     <string name="pairing_title">Pair a device</string>
     <string name="pairing_choose_kind">Which device do you want to pair?</string>
@@ -22,6 +23,17 @@
     <string name="pairing_test_auto_hr_on">Background heart rate: on, every %1$d min</string>
     <string name="pairing_test_auto_hr_off">Background heart rate: off</string>
     <string name="pairing_test_auto_hr_unknown">Background heart rate: could not be confirmed</string>
+    <string name="pairing_kind_elm327_help">Bluetooth LE OBD-II adapter such as the vLinker MC+; reads live values while the car runs.</string>
+    <string name="pairing_explain_elm327">An ELM327 adapter plugs into the car\'s OBD-II port and answers diagnostic requests while something is connected; it stores nothing. The app connects over Bluetooth LE, with no passkey. Adapters that only speak Bluetooth classic (many cheap ELM327 clones) are not supported and will not show up.</string>
+    <string name="pairing_explain_elm327_one_app">Close the adapter\'s vendor app and other OBD apps: only one app can talk to the adapter at a time.</string>
+    <string name="pairing_vehicle_profile_choice">Vehicle profile</string>
+    <string name="pairing_vehicle_profile_choice_help">Which values to poll, from WiCAN\'s vehicle profiles. Generic reads the standard OBD-II values most cars answer. To change it later, forget the adapter and pair it again.</string>
+    <string name="pairing_vehicle_profile_search">Search car models</string>
+    <string name="pairing_vehicle_profile_generic">Generic (standard OBD-II)</string>
+    <string name="pairing_vehicle_profile_none">No car model matches.</string>
+    <string name="pairing_associate_body_elm327">Android will scan for nearby OBD-II adapters and ask you to pick one. A WiCAN dongle may be listed too: pair it as a WiCAN Pro instead, unless you want its ELM327 service.</string>
+    <string name="pairing_test_body_elm327">Paired. Test the connection: the app connects, resets the adapter and reads its version and the car battery voltage.</string>
+    <string name="pairing_test_ok_elm327">%1$s, battery %2$.1f V</string>
     <string name="pairing_test_busy">The device is syncing. Try again when the sync is done.</string>
     <string name="pairing_explain_ble">Enable Bluetooth on the dongle first: it is off by default. In its web interface, turn on BLE (ble_manager → enabled) and reboot it.</string>
     <string name="pairing_explain_passkey">Android will ask for a 6-digit passkey. It is the dongle\'s BLE passkey setting (123456 unless you changed it).</string>

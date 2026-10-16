@@ -30,6 +30,24 @@ class PairedDevicesTest {
     }
 
     @Test
+    fun `an ELM327 comes back with its stored vehicle profile, for its source`() =
+        runTest {
+            val adapter = Association("AA:BB:CC:DD:EE:03", null, 7)
+            val settings =
+                FakeSettings(
+                    AppSettings(
+                        devices = listOf(DeviceConfig(adapter.address, DeviceKind.ELM327, "vLinker MC+", "Kia: EV6")),
+                    ),
+                )
+            val repo = CompanionPairedDeviceRepository(FakeAssociations(adapter), settings)
+
+            assertEquals(
+                listOf(PairedDevice(adapter.address, "vLinker MC+", 7, DeviceKind.ELM327, "Kia: EV6")),
+                repo.all(),
+            )
+        }
+
+    @Test
     fun `associations come back with their kind, a missing entry meaning WiCAN`() =
         runTest {
             val settings =

@@ -5,7 +5,9 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performTextInput
 import app.btcourier.R
 import app.btcourier.core.source.colmi.AutoHeartRate
 import app.btcourier.core.source.colmi.Battery
@@ -62,6 +64,7 @@ class PairingScreenTest : ScreenTest() {
 
         onText(R.string.pairing_choose_kind).assertIsDisplayed()
         onText(R.string.kind_wican).assertIsDisplayed()
+        onText(R.string.kind_elm327).assertIsDisplayed()
         onText(R.string.kind_colmi_ring).tap()
 
         onText(R.string.pairing_explain_ring).assertIsDisplayed()
@@ -88,6 +91,74 @@ class PairingScreenTest : ScreenTest() {
         onText(R.string.pairing_explain_ble).assertIsDisplayed()
         assertNoText(R.string.pairing_auto_hr_choice)
         assertNoText(R.string.pairing_auto_hr_choice_help)
+    }
+
+    @Test
+    fun `the WiCAN and ring explain steps offer no vehicle profile`() {
+        vm.chooseKind(DeviceKind.WICAN)
+        show()
+        assertNoText(R.string.pairing_vehicle_profile_choice)
+
+        vm.chooseKind(DeviceKind.COLMI_RING)
+        compose.waitForIdle()
+        assertNoText(R.string.pairing_vehicle_profile_choice)
+    }
+
+    @Test
+    fun `the ELM327's explain step offers the vehicle profile, generic selected, and the search narrows the list`() {
+        vm.chooseKind(DeviceKind.ELM327)
+        show()
+
+        onText(R.string.pairing_explain_elm327).assertIsDisplayed()
+        onText(R.string.pairing_vehicle_profile_choice).assertIsDisplayed()
+        onText(R.string.pairing_vehicle_profile_generic).assertIsSelected()
+        assertNoText(R.string.pairing_auto_hr_choice)
+
+        field(R.string.pairing_vehicle_profile_search).performTextInput("ev6")
+
+        assertNoText(R.string.pairing_vehicle_profile_generic)
+        compose.onNodeWithText("Kia: EV6").tap().assertIsSelected()
+        assertEquals(PairingChoices(vehicleProfile = "Kia: EV6"), vm.state.value.choices)
+    }
+
+    @Test
+    fun `a search no car model matches says so`() {
+        vm.chooseKind(DeviceKind.ELM327)
+        show()
+
+        field(R.string.pairing_vehicle_profile_search).performTextInput("no such car")
+
+        onText(R.string.pairing_vehicle_profile_none).assertIsDisplayed()
+    }
+
+    @Test
+    fun `the vehicle profile picked on the explain step is stored with the associated adapter`() {
+        grantBluetoothConnect()
+        vm.chooseKind(DeviceKind.ELM327)
+        show()
+
+        field(R.string.pairing_vehicle_profile_search).performTextInput("ev6")
+        compose.onNodeWithText("Kia: EV6").tap()
+        onText(R.string.pairing_start).tap()
+        onText(R.string.pairing_associate_body_elm327).assertIsDisplayed()
+        vm.scanning()
+        vm.associated(ADDRESS, "vLinker MC+")
+        compose.waitForIdle()
+
+        assertEquals(listOf(DeviceConfig(ADDRESS, DeviceKind.ELM327, "vLinker MC+", "Kia: EV6")), devices.remembered)
+        onText(R.string.pairing_test_body_elm327).assertIsDisplayed()
+    }
+
+    @Test
+    fun `an ELM327 test shows the adapter version and battery voltage`() {
+        probeResult = ProbeResult.Elm327("ELM327 v2.2", 12.6)
+        pairedUpToTest(DeviceKind.ELM327)
+        show()
+
+        onText(R.string.pairing_test).tap()
+
+        onText(R.string.pairing_test_ok_elm327, "ELM327 v2.2", 12.6).assertIsDisplayed()
+        compose.onNodeWithText("ELM327 v2.2, battery 12.6 V").assertIsDisplayed()
     }
 
     @Test

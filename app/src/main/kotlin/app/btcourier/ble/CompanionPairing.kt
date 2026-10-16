@@ -32,28 +32,26 @@ import kotlin.coroutines.resumeWithException
 /** Builds the system's companion-device scan filter from the testable [DeviceFilterSpec]. */
 fun DeviceFilterSpec.toAssociationRequest(): AssociationRequest {
     val name = Pattern.compile(namePattern.pattern)
-    val service = ScanFilter.Builder().setServiceUuid(ParcelUuid(serviceUuid)).build()
-    // The chooser offers a device that matches any one filter, so AND is one filter carrying both
-    // conditions and OR one filter per condition. For AND the service UUID sits in the advertising
-    // PDU and the name in the scan response (legacy advertising), which the system's active scan
-    // merges.
+    val services = serviceUuids.map { ScanFilter.Builder().setServiceUuid(ParcelUuid(it)).build() }
+    // The chooser offers a device that matches any one filter, so AND is one filter per service
+    // carrying the name too, and OR one filter per condition. For AND the service UUID sits in the
+    // advertising PDU and the name in the scan response (legacy advertising), which the system's
+    // active scan merges.
     val filters =
         when (match) {
             DeviceFilterSpec.Match.NAME_AND_SERVICE -> {
-                listOf(
+                services.map { service ->
                     BluetoothLeDeviceFilter
                         .Builder()
                         .setNamePattern(name)
                         .setScanFilter(service)
-                        .build(),
-                )
+                        .build()
+                }
             }
 
             DeviceFilterSpec.Match.NAME_OR_SERVICE -> {
-                listOf(
-                    BluetoothLeDeviceFilter.Builder().setNamePattern(name).build(),
-                    BluetoothLeDeviceFilter.Builder().setScanFilter(service).build(),
-                )
+                listOf(BluetoothLeDeviceFilter.Builder().setNamePattern(name).build()) +
+                    services.map { BluetoothLeDeviceFilter.Builder().setScanFilter(it).build() }
             }
         }
     return AssociationRequest

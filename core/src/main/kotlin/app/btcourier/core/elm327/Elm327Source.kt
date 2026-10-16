@@ -62,13 +62,7 @@ class Elm327Source(
 
     override fun subscribe(): Flow<List<String>> =
         flow {
-            val version =
-                transport
-                    .command("ATZ")
-                    .lines()
-                    .lastOrNull { it.isNotBlank() }
-                    ?.trim()
-                    .orEmpty()
+            val version = parseVersion(transport.command("ATZ")).orEmpty()
             val versionTs = clock()
             for (command in SETUP) transport.command(command)
             send(profile.init)
@@ -152,8 +146,14 @@ class Elm327Source(
 
         private val voltageShape = Regex("""(\d+(?:\.\d+)?)\s*V""", RegexOption.IGNORE_CASE)
 
+        /**
+         * The version string from an `ATZ` answer, its last non-blank line (`ELM327 v2.2`, after
+         * the blank lines the reset prints); null when the answer is blank.
+         */
+        fun parseVersion(answer: String): String? = answer.lines().lastOrNull { it.isNotBlank() }?.trim()
+
         /** `12.6V` → 12.6; null for anything else (`?` from an adapter without a voltage pin). */
-        internal fun parseVoltage(answer: String): Double? =
+        fun parseVoltage(answer: String): Double? =
             voltageShape
                 .find(answer)
                 ?.groupValues

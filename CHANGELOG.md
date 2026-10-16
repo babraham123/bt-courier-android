@@ -17,9 +17,12 @@ All notable changes to this project are documented here. The format is based on
   reopened, or Stop is pressed in its notification. A manual sync during a session pulls on the
   open link. The status screen and the notification show the session's rounds, rows and start
   time. Sessions can also collect live-streaming sources, ready for OBD-II (ELM327) adapters.
-- ELM327 OBD-II adapters over BLE, core only (no pairing or drive session yet): polls a car's
-  wican-fw vehicle profile (82 cars plus a generic mode-01 set) and writes `autopid.*` rows named
-  as the WiCAN logger names them, plus adapter version and battery voltage.
+- ELM327 OBD-II adapters over BLE as a live source, collected by the drive session: polls a car's wican-fw vehicle profile
+  (82 cars plus a generic mode-01 set) and writes `autopid.*` rows named as the WiCAN logger names
+  them, plus adapter version and battery voltage.
+- Pairing for ELM327 BLE adapters: "OBD-II scanner (ELM327)" in the pair wizard with a searchable
+  vehicle profile picker; the adapter's serial service is discovered on its first connection and
+  remembered; the connection test shows the adapter version and battery voltage.
 
 ## [0.0.1] - 2026-10-16
 

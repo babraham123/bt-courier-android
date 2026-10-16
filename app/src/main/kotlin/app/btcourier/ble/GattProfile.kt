@@ -150,14 +150,17 @@ object ColmiRingGatt {
 /**
  * What a companion-device scan must match; kept free of Android types so it can be tested.
  *
+ * @property serviceUuids the service condition holds when any one of them is advertised.
  * @property match how the name and service conditions combine. Each kind picks its own: a kind
  *   whose service UUID other devices share (the WiCAN's FFF0) needs both.
  */
 data class DeviceFilterSpec(
-    val serviceUuid: UUID,
+    val serviceUuids: List<UUID>,
     val namePattern: Regex,
     val match: Match,
 ) {
+    constructor(serviceUuid: UUID, namePattern: Regex, match: Match) : this(listOf(serviceUuid), namePattern, match)
+
     enum class Match { NAME_AND_SERVICE, NAME_OR_SERVICE }
 
     fun matches(
@@ -165,7 +168,7 @@ data class DeviceFilterSpec(
         advertisedServices: Collection<UUID>,
     ): Boolean {
         val name = advertisedName != null && namePattern.matches(advertisedName)
-        val service = serviceUuid in advertisedServices
+        val service = serviceUuids.any { it in advertisedServices }
         return when (match) {
             Match.NAME_AND_SERVICE -> name && service
             Match.NAME_OR_SERVICE -> name || service

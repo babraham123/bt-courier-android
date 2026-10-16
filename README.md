@@ -1,6 +1,6 @@
 # BT Courier
 
-BT Courier is a FOSS Android app that extracts logged BLE device data, caches it locally, and batch-uploads to self-hosted backends without Google Play Services. It initially supports the WiCAN Pro OBD-II dongle via HTTP-over-BLE, featuring cursor-based disconnect recovery, early-timestamp repair, and a plugin architecture for transports, sources, sinks, and formats.
+BT Courier is a FOSS Android app that extracts logged BLE device data, caches it locally, and batch-uploads to self-hosted backends without Google Play Services. It initially supports the WiCAN Pro OBD-II dongle via HTTP-over-BLE, featuring cursor-based disconnect recovery, early-timestamp repair, and a plugin architecture for transports, sources, sinks, and formats. Generic ELM327 OBD-II adapters over Bluetooth LE are supported as a live source, polled with WiCAN's vehicle profiles.
 
 ## Status
 

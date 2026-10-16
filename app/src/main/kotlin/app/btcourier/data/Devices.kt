@@ -1,5 +1,10 @@
+@file:OptIn(ExperimentalSerializationApi::class)
+
 package app.btcourier.data
 
+import app.btcourier.ble.GattLayout
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 
@@ -14,6 +19,9 @@ enum class DeviceKind {
 
     /** Colmi R02-family smart ring: unbonded UART-like service, `ColmiRingSource`. */
     COLMI_RING,
+
+    /** ELM327 OBD-II adapter over BLE: discovered serial service, live `Elm327Source`. */
+    ELM327,
 }
 
 /**
@@ -26,12 +34,19 @@ enum class DeviceKind {
  *
  * @property address upper-case MAC, as the association reports it.
  * @property name the advertised name picked in the chooser, if known.
+ * @property vehicleProfile an ELM327's vehicle profile, a `car_model` of
+ *   [VehicleProfiles][app.btcourier.core.elm327.VehicleProfiles]; null for the generic one.
+ * @property gatt the GATT layout found on the device's first link, for a kind whose layout varies
+ *   by model ([app.btcourier.ble.GattDiscovery]); null until then and for other kinds.
  */
 @Serializable
 data class DeviceConfig(
     val address: String,
     val kind: DeviceKind,
     val name: String? = null,
+    // Left out while unset, so entries of kinds that never set them read as they always have.
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val vehicleProfile: String? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val gatt: GattLayout? = null,
 )
 
 /** The kind of the device at [address] (case-insensitive), [DeviceKind.WICAN] when unknown. */

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.btcourier.ble.PairedDeviceRepository
 import app.btcourier.ble.PairingException
 import app.btcourier.ble.pairingStep
+import app.btcourier.core.elm327.VehicleProfiles
 import app.btcourier.data.DeviceConfig
 import app.btcourier.data.DeviceKind
 import app.btcourier.device.PairingChoices
@@ -21,7 +22,8 @@ enum class PairingStep { ChooseKind, Explain, Associate, Bond, Test }
 /**
  * @property address the associated device, upper-case; set from [PairingStep.Bond] on.
  * @property bondAttempt bumped by each retry, so the screen restarts bonding.
- * @property choices what the explain step's checkboxes say; the test applies them.
+ * @property choices what the explain step's checkboxes and picker say; the association stores the
+ *   vehicle profile and the test applies the rest.
  */
 data class PairingUiState(
     val step: PairingStep = PairingStep.ChooseKind,
@@ -76,6 +78,15 @@ class PairingViewModel(
     fun setAutoHeartRate(enabled: Boolean) =
         mutableState.update { it.copy(choices = it.choices.copy(autoHeartRate = enabled)) }
 
+    /**
+     * The explain step's vehicle profile picker; only kinds that offer it show it. The generic
+     * profile is stored as null, the device default.
+     */
+    fun setVehicleProfile(carModel: String) {
+        val stored = carModel.takeUnless { it == VehicleProfiles.GENERIC_MODEL }
+        mutableState.update { it.copy(choices = it.choices.copy(vehicleProfile = stored)) }
+    }
+
     fun permissionGranted() = mutableState.update { it.copy(step = PairingStep.Associate, error = null) }
 
     /** The chooser is being requested. */
@@ -90,11 +101,15 @@ class PairingViewModel(
         name: String?,
     ) {
         val kind = state.value.kind
+        val offersProfile = kind.support.pairingText.vehicleProfileChoice != null
+        val vehicleProfile = if (offersProfile) state.value.choices.vehicleProfile else null
         val upper = address.uppercase()
         mutableState.update { it.copy(address = upper, busy = true, error = null) }
         viewModelScope.launch {
             try {
-                pairingStep("Saving the device") { devices.remember(DeviceConfig(upper, kind, name)) }
+                pairingStep("Saving the device") {
+                    devices.remember(DeviceConfig(upper, kind, name, vehicleProfile = vehicleProfile))
+                }
             } catch (e: PairingException) {
                 failed(e.message)
                 return@launch

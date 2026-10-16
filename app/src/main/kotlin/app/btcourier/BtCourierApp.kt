@@ -2,8 +2,7 @@ package app.btcourier
 
 import android.app.Application
 import app.btcourier.ble.CompanionAssociations
-import app.btcourier.ble.KableGattLink
-import app.btcourier.device.support
+import app.btcourier.ble.KableLinkFactory
 import app.btcourier.work.DevicePresence
 import app.btcourier.work.Notifications
 import app.btcourier.work.restoreSchedules
@@ -14,7 +13,7 @@ class BtCourierApp : Application() {
         super.onCreate()
         AppGraph.init(
             this,
-            links = { address, kind -> KableGattLink.connect(address, kind.support.profile) },
+            links = KableLinkFactory(settings = { AppGraph.settings }, log = { AppGraph.log.info("link", it) }),
             associations = CompanionAssociations(this),
         )
         Notifications.createChannels(this)

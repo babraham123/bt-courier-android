@@ -17,12 +17,16 @@ import app.btcourier.data.without
  * [address] is the address Android saw during the association scan. The WiCAN advertises a
  * rotating resolvable private address; once bonded, Android keeps resolving that first-seen
  * address to the device's identity, so it stays valid for later connects.
+ *
+ * @property vehicleProfile an ELM327's stored vehicle profile ([DeviceConfig.vehicleProfile]),
+ *   which its source needs; null for the generic one and for other kinds.
  */
 data class PairedDevice(
     val address: String,
     val displayName: String?,
     val associationId: Int?,
     val kind: DeviceKind = DeviceKind.WICAN,
+    val vehicleProfile: String? = null,
 )
 
 /** One `CompanionDeviceManager` association, which carries no app metadata. */
@@ -112,10 +116,10 @@ class CompanionAssociations(
 }
 
 /**
- * One [PairedDevice] per address, with its kind and name from [configs] (an address without one
- * is a WiCAN, see [DeviceConfig]). Re-pairing a device (after a factory reset) creates a second
- * association for the same address; the newest wins: association ids increase monotonically, and
- * pre-33 lists are in creation order.
+ * One [PairedDevice] per address, with its kind, name and vehicle profile from [configs] (an
+ * address without one is a WiCAN, see [DeviceConfig]). Re-pairing a device (after a factory
+ * reset) creates a second association for the same address; the newest wins: association ids
+ * increase monotonically, and pre-33 lists are in creation order.
  */
 internal fun pairedDevices(
     associations: List<Association>,
@@ -124,7 +128,13 @@ internal fun pairedDevices(
     val ordered = if (associations.all { it.id != null }) associations.sortedBy { it.id } else associations
     return ordered.associateBy { it.address.uppercase() }.values.map { a ->
         val config = configs.firstOrNull { it.address.equals(a.address, ignoreCase = true) }
-        PairedDevice(a.address.uppercase(), a.displayName ?: config?.name, a.id, configs.kindOf(a.address))
+        PairedDevice(
+            a.address.uppercase(),
+            a.displayName ?: config?.name,
+            a.id,
+            configs.kindOf(a.address),
+            config?.vehicleProfile,
+        )
     }
 }
 

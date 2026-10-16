@@ -11,9 +11,12 @@ import com.juul.kable.Peripheral
 import com.juul.kable.State
 import com.juul.kable.Transport
 import com.juul.kable.characteristicOf
+import com.juul.kable.indicate
+import com.juul.kable.notify
 import com.juul.kable.read
 import com.juul.kable.toIdentifier
 import com.juul.kable.write
+import com.juul.kable.writeWithoutResponse
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.toJavaUuid
 import kotlin.uuid.toKotlinUuid
 
 /** Connection state of a [KableGattLink], without Kable or Android types. */
@@ -69,12 +73,19 @@ internal fun State.toLinkState(): LinkState =
  * A device whose profile [wants a bond][GattProfile.wantsBond] must already be bonded (pair
  * wizard); an unbonded connect still works but the first encrypted access (the CCCD write) then
  * raises the system pairing dialog.
+ *
+ * The profile is picked once services are discovered, so a kind whose layout varies by model
+ * opens whichever one the device turns out to expose.
  */
 @OptIn(ExperimentalUuidApi::class)
 class KableGattLink private constructor(
     private val peripheral: AndroidPeripheral,
-    private val profile: GattProfile,
+    private val resolveProfile: (List<DiscoveredService>) -> GattProfile,
 ) : GattLink {
+    // Set by open() before the link is handed out.
+    @Volatile
+    private lateinit var profile: GattProfile
+
     private val closed = AtomicBoolean(false)
 
     // Whether each channel's write characteristic declares write with response; false until
@@ -96,7 +107,7 @@ class KableGattLink private constructor(
 
     // The profile declares no secondary channel, or the device turned out not to expose it.
     @Volatile
-    private var secondaryMissing = profile.secondary == null
+    private var secondaryMissing = true
 
     override val mtu: Int
         get() = peripheral.mtu.value ?: GattProfile.DEFAULT_MTU
@@ -109,7 +120,10 @@ class KableGattLink private constructor(
 
     private suspend fun open() {
         val connection = peripheral.connect()
-        // connect() returns after service discovery, so the declared properties are known here.
+        // connect() returns after service discovery, so the services and their declared properties
+        // are known here.
+        profile = resolveProfile(discoveredServices())
+        secondaryMissing = profile.secondary == null
         writeWithResponseSupported = declaresWriteWithResponse(profile.service, profile.write)
         profile.secondary?.let { secondaryWriteWithResponseSupported = declaresWriteWithResponse(it.service, it.write) }
         // Shorter connection interval: more connection events per second for frames written with
@@ -190,6 +204,20 @@ class KableGattLink private constructor(
         }
         return settled
     }
+
+    private fun discoveredServices(): List<DiscoveredService> =
+        peripheral.services.value.orEmpty().map { service ->
+            DiscoveredService(
+                service.serviceUuid.toJavaUuid(),
+                service.characteristics.map {
+                    DiscoveredCharacteristic(
+                        it.characteristicUuid.toJavaUuid(),
+                        notify = it.properties.notify || it.properties.indicate,
+                        write = it.properties.write || it.properties.writeWithoutResponse,
+                    )
+                },
+            )
+        }
 
     private fun declaresWriteWithResponse(
         service: UUID,
@@ -320,16 +348,30 @@ class KableGattLink private constructor(
             address: String,
             profile: GattProfile,
             connectTimeout: Duration = 30.seconds,
+        ): KableGattLink = connect(address, profile.mtu, connectTimeout) { profile }
+
+        /**
+         * Connects to the device at [address], asks for [mtu] (none at [GattProfile.DEFAULT_MTU] or
+         * less), and opens the profile [resolveProfile] picks from the discovered services.
+         *
+         * @throws IOException if the link cannot be established within [connectTimeout], or as
+         *   [resolveProfile] throws it when no service fits.
+         */
+        suspend fun connect(
+            address: String,
+            mtu: Int,
+            connectTimeout: Duration = 30.seconds,
+            resolveProfile: (List<DiscoveredService>) -> GattProfile,
         ): KableGattLink {
             val peripheral =
                 Peripheral(address.toIdentifier()) {
                     transport = Transport.Le
-                    if (profile.mtu > GattProfile.DEFAULT_MTU) {
+                    if (mtu > GattProfile.DEFAULT_MTU) {
                         onServicesDiscovered {
                             // Before observations start, so the first notification already uses the
-                            // large MTU. A refusal leaves the default 23, which the codec still handles.
+                            // large MTU. A refusal leaves the default 23, which the codecs still handle.
                             try {
-                                requestMtu(profile.mtu)
+                                requestMtu(mtu)
                             } catch (e: IOException) {
                                 // Keep the default MTU.
                             } catch (e: IllegalStateException) {
@@ -339,9 +381,9 @@ class KableGattLink private constructor(
                     }
                 } as AndroidPeripheral
             // Kable writes ENABLE_NOTIFICATION_VALUE (0x0001) when a characteristic offers notify,
-            // which both profiles' characteristics do; for the WiCAN's FFF3 that is the fast
+            // which every profile's characteristics do; for the WiCAN's FFF3 that is the fast
             // credit-based mode BleHttpTransport implements.
-            val link = KableGattLink(peripheral, profile)
+            val link = KableGattLink(peripheral, resolveProfile)
             try {
                 withTimeout(connectTimeout) { link.open() }
             } catch (e: Throwable) {

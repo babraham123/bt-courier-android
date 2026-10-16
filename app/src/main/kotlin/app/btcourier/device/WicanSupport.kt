@@ -6,9 +6,6 @@ import app.btcourier.core.source.Source
 import app.btcourier.core.transport.GattLink
 import app.btcourier.core.transport.blehttp.BleHttpTransport
 import app.btcourier.core.wican.WicanLoggerSource
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -68,23 +65,11 @@ object WicanSupport : DeviceSupport {
             ProbeResult.Wican(version, link.mtu)
         }
 
-    /**
-     * Runs [block] with a tunnel transport on [link]. The transport's notification reader must
-     * outlive single requests but not [block]. A plain child job rather than a supervisor: an
-     * unexpected failure in the reader then surfaces from here instead of crashing the process.
-     */
+    /** Runs [block] with a tunnel transport on [link], its reader living as long as [block]. */
     private suspend fun <T> withTransport(
         link: GattLink,
         block: suspend (BleHttpTransport) -> T,
-    ): T =
-        coroutineScope {
-            val reader = Job(coroutineContext[Job])
-            try {
-                block(BleHttpTransport(link, CoroutineScope(coroutineContext + reader)))
-            } finally {
-                reader.cancel()
-            }
-        }
+    ): T = withReaderScope { block(BleHttpTransport(link, it)) }
 }
 
 /** `version` from a `GET /api/status` body (dev_status_manager `HTTP_API.md`), or null. */

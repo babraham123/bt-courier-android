@@ -148,6 +148,9 @@ fun PairingScreen(
                         onChange = viewModel::setAutoHeartRate,
                     )
                 }
+                text.vehicleProfileChoice?.let { choice ->
+                    VehicleProfilePicker(choice, state.choices.vehicleProfile, viewModel::setVehicleProfile)
+                }
                 Button(onClick = {
                     if (hasBluetoothConnectPermission(context)) {
                         viewModel.permissionGranted()
@@ -199,6 +202,10 @@ fun PairingScreen(
                         probe.firmware?.let { Text(stringResource(R.string.pairing_test_firmware_ring, it)) }
                         probe.hardware?.let { Text(stringResource(R.string.pairing_test_hardware_ring, it)) }
                         Text(autoHeartRateText(probe))
+                    }
+
+                    is ProbeResult.Elm327 -> {
+                        Text(stringResource(R.string.pairing_test_ok_elm327, probe.version, probe.voltageV))
                     }
 
                     ProbeResult.Busy -> {
