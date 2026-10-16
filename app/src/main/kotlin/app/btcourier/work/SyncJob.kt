@@ -18,6 +18,7 @@ import app.btcourier.device.SourceOptions
 import app.btcourier.device.support
 import app.btcourier.log.AppLog
 import java.io.IOException
+import java.time.Instant
 import java.time.ZoneId
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -29,7 +30,15 @@ import kotlin.time.Duration.Companion.seconds
  * Each paired device has its own store source id ([sourceIdFor]), so a replacement device starts
  * from its own oldest data instead of the previous device's cursor.
  *
- * Every run that gets past the lock ends through one path, whether or not it reached the device:
+ * An automatic sync first asks the device's kind when a sync from its stored cursor could next
+ * store anything ([DeviceSupport.nextDueAtMs][app.btcourier.device.DeviceSupport.nextDueAtMs]),
+ * and before then ends [SyncResultKind.NOT_DUE] without opening a link: the periodic work and
+ * presence would otherwise connect to a caught-up ring every 15 minutes only to hear it has
+ * nothing. The first automatic sync from the due time on connects, so a new day is pulled within
+ * one periodic interval of local midnight. A manual sync always connects.
+ *
+ * Every run that gets past the lock, and every skipped one, ends through one path, whether or not
+ * it reached the device:
  * seal what [SealPolicy] closes, record the [SyncOutcome] in [status] (under the device's address
  * when it is paired), log it and return it. So rows from a short trip reach the sinks once the
  * policy's age rule closes them, even if the device stays asleep until the next drive.
@@ -58,6 +67,7 @@ class SyncJob(
      * @param address the device to sync; null when nothing is paired, which only seals.
      * @param attempt how many runs of this sync came before this one in a row (WorkManager's
      *   `runAttemptCount`); [SyncOutcome.retryWorthwhile] weighs it against [SyncRetryPolicy.maxRuns].
+     * @param manual the user asked for this sync, so it connects even when nothing is due.
      * @param onConnected runs once the link is up, before any transfer; the worker promotes itself
      *   to a foreground service there, so the service never runs while the device is merely being
      *   looked for.
@@ -66,11 +76,18 @@ class SyncJob(
         address: String?,
         sealPolicy: SealPolicy,
         attempt: Int = 0,
+        manual: Boolean = false,
         onConnected: suspend () -> Unit = {},
     ): SyncOutcome {
         val device =
             address?.let { a -> devices.all().firstOrNull { it.address.equals(a, ignoreCase = true) } }
                 ?: return finish(End.NotPaired(address), null, sealPolicy, attempt)
+        // Before the lock, so a skip never makes a manual sync of the same device AlreadyRunning.
+        if (!manual) {
+            val cursor = store.cursor(sourceIdFor(device.kind, device.address))
+            val due = device.kind.support.nextDueAtMs(cursor, zone())
+            if (due != null && clock() < due) return finish(End.NotDue(due), device, sealPolicy, attempt)
+        }
         val lock = locks.of(device.address)
         if (!lock.tryLock()) return SyncOutcome.AlreadyRunning
         try {
@@ -114,6 +131,10 @@ class SyncJob(
         data class NotPaired(
             val address: String?,
         ) : End
+
+        data class NotDue(
+            val dueAtMs: Long,
+        ) : End
     }
 
     private suspend fun finish(
@@ -139,10 +160,11 @@ class SyncJob(
                     append(" (${outcome.stop}): ${report.pagesPulled} pages, ${report.linesStored} lines, ")
                     append("${report.duplicates} duplicates, cursor $cursor")
                 }
+                outcome.dueAtMs?.let { append(" until ${Instant.ofEpochMilli(it)}") }
                 append("; sealed ${sealed.size}, ${counters.pendingBatches} batches pending")
                 outcome.error?.let { append(": $it") }
             }
-        if (report != null) log.info(TAG, line) else log.warn(TAG, line)
+        if (report != null || end is End.NotDue) log.info(TAG, line) else log.warn(TAG, line)
         return outcome
     }
 
@@ -187,6 +209,10 @@ class SyncJob(
                     cursor = cursor,
                     sealed = sealed,
                 )
+            }
+
+            is End.NotDue -> {
+                SyncOutcome.Recorded(SyncResultKind.NOT_DUE, cursor = cursor, sealed = sealed, dueAtMs = end.dueAtMs)
             }
 
             is End.Reached -> {
@@ -306,6 +332,8 @@ sealed interface SyncOutcome {
      * @property pages export responses received; 0 when the run never reached the device.
      * @property cursor the device's store cursor after the run; null when no paired device was
      *   found or nothing was ever stored for it.
+     * @property dueAtMs for [SyncResultKind.NOT_DUE], when the device can next have something to
+     *   sync; null otherwise.
      */
     data class Recorded(
         val result: SyncResultKind,
@@ -316,9 +344,10 @@ sealed interface SyncOutcome {
         val cursor: String? = null,
         override val sealed: List<String> = emptyList(),
         override val retryWorthwhile: Boolean = false,
+        val dueAtMs: Long? = null,
     ) : SyncOutcome {
         /** What [app.btcourier.data.SyncStatus] keeps of this run under the device's address. */
-        fun deviceSync(atMs: Long) = DeviceSync(atMs, result, linesStored, pages, stop, cursor)
+        fun deviceSync(atMs: Long) = DeviceSync(atMs, result, linesStored, pages, stop, cursor, dueAtMs)
     }
 
     /** Another run holds the device's lock; nothing was sealed or recorded. */

@@ -25,5 +25,6 @@ Pre-alpha. Nothing below has been verified on real hardware.
 - Auth: Basic, Bearer and OIDC device authorization flow; credentials and the SFTP key are held
   in the Android Keystore.
 - Triggers: device presence (CompanionDeviceManager), periodic sync, car head unit Bluetooth
-  connect/disconnect, and manual sync/upload.
+  connect/disconnect, and manual sync/upload. Automatic syncs leave a caught-up ring alone until
+  local midnight gives it a new day; a manual sync always connects.
 - Pair wizard, status screen, settings with a sink editor, and a redacted log export.

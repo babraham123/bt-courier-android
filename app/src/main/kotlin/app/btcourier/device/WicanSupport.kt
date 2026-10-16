@@ -14,6 +14,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.IOException
+import java.time.ZoneId
 
 /**
  * MeatPi WiCAN Pro: bonded `ble_http` tunnel ([WicanGatt]), trip logs through [WicanLoggerSource].
@@ -40,6 +41,12 @@ object WicanSupport : DeviceSupport {
             associate = R.string.pairing_associate_body,
             test = R.string.pairing_test_body,
         )
+
+    // The logger appends while the car runs, so no cursor says when the next rows will exist.
+    override fun nextDueAtMs(
+        cursor: String?,
+        zone: ZoneId,
+    ): Long? = null
 
     override suspend fun <T> withSource(
         link: GattLink,

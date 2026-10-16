@@ -32,6 +32,8 @@ data class LastSync(
     val pages: Int?,
     val lines: Long?,
     val stoppedBecause: SyncStopKind?,
+    /** When the device can next have something to sync; only for [SyncResultKind.NOT_DUE]. */
+    val dueAtMs: Long? = null,
 )
 
 data class LastUpload(
@@ -96,6 +98,7 @@ private fun DeviceSync.toLastSync(): LastSync {
         pages = pages.takeIf { reachedDevice },
         lines = linesStored.takeIf { reachedDevice },
         stoppedBecause = stop.takeIf { reachedDevice },
+        dueAtMs = dueAtMs.takeIf { result == SyncResultKind.NOT_DUE },
     )
 }
 
@@ -159,9 +162,9 @@ class StatusViewModel(
         }
     }
 
-    fun syncNow(device: PairedDevice) = work.syncNow(device.address)
+    fun syncNow(device: PairedDevice) = work.syncNow(device.address, manual = true)
 
-    fun syncAll() = paired.value.orEmpty().forEach { work.syncNow(it.address) }
+    fun syncAll() = paired.value.orEmpty().forEach { work.syncNow(it.address, manual = true) }
 
     /**
      * Replaces any queued upload: one waiting out a back-off would otherwise keep the user
