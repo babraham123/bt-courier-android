@@ -223,14 +223,22 @@ class SyncJobTest {
 
             assertEquals(20, stored.linesStored)
             assertFalse(stored.newBatches, "one small open file is not sealed yet")
+            assertEquals(
+                NOW + policy.maxBatchAgeMs,
+                stored.sealDueAtMs,
+                "the age rule closes it 30 min after it arrived",
+            )
 
             now += 29 * MINUTE
-            assertFalse(job(unreachable).run(policy).newBatches)
+            val waiting = job(unreachable).run(policy)
+            assertFalse(waiting.newBatches)
+            assertEquals(NOW + policy.maxBatchAgeMs, waiting.sealDueAtMs, "a later run does not push the deadline back")
             now += 1 * MINUTE
             val aged = job(unreachable).run(policy)
             assertEquals(SyncResultKind.UNREACHABLE, aged.result)
             assertEquals(sealedIds(), aged.sealed)
             assertTrue(aged.newBatches)
+            assertNull(aged.sealDueAtMs, "nothing left open")
             assertEquals(1, status.status.value.pendingBatches)
 
             val upload = ScriptedUpload(UploadResult.Acked)

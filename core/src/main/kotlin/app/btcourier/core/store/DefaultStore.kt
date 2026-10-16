@@ -179,6 +179,7 @@ class DefaultStore internal constructor(
                 pendingBatches = s.batches.size,
                 droppedLines = s.dropped.lines,
                 droppedBytes = s.dropped.bytes,
+                oldestUnsealedAtMs = s.pages.filter { it.batchId == null }.minOfOrNull { it.receivedAtMs },
             )
         }
 

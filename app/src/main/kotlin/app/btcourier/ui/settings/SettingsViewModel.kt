@@ -17,6 +17,8 @@ data class SettingsForm(
     val uploadOverCellular: Boolean = false,
     val cacheCapMb: String = "",
     val periodicSync: Boolean = true,
+    /** [AppSettings.maxBatchAgeMs]; applies from the next sync or upload, so nothing is rescheduled. */
+    val maxBatchAgeMs: Long = 0,
     /** MAC of the car head unit picked from the bonded devices; null means no car trigger. */
     val carDeviceAddress: String? = null,
 )
@@ -104,6 +106,7 @@ class SettingsViewModel(
                         uploadOverCellular = form.uploadOverCellular,
                         cacheCapBytes = form.cacheCapMb.trim().toLong() * MB,
                         periodicSync = form.periodicSync,
+                        maxBatchAgeMs = form.maxBatchAgeMs,
                         carDeviceAddress = form.carDeviceAddress,
                     ).also { after = it }
             }
@@ -123,6 +126,7 @@ class SettingsViewModel(
             uploadOverCellular = uploadOverCellular,
             cacheCapMb = (cacheCapBytes / MB).toString(),
             periodicSync = periodicSync,
+            maxBatchAgeMs = maxBatchAgeMs,
             carDeviceAddress = carDeviceAddress,
         )
 }

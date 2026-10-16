@@ -9,8 +9,11 @@ class RecordingWorkControl : WorkControl {
     val manualSyncs = mutableListOf<String>()
     val uploads = mutableListOf<Pair<Boolean, Boolean>>()
 
-    /** `delayMs to allowCellular` passed to [uploadAt], in order. */
+    /** `delayMs to allowCellular` passed to [uploadAt] for [FollowUp.SINK_RETRY], in order. */
     val deferredUploads = mutableListOf<Pair<Long, Boolean>>()
+
+    /** `delayMs to allowCellular` passed to [uploadAt] for [FollowUp.SEAL], in order. */
+    val sealUploads = mutableListOf<Pair<Long, Boolean>>()
     val periodic = mutableListOf<Boolean>()
 
     /** `cancel`, `upload` and `forget <sink id>` in call order, to check what precedes what. */
@@ -37,8 +40,14 @@ class RecordingWorkControl : WorkControl {
     override fun uploadAt(
         delayMs: Long,
         allowCellular: Boolean,
+        slot: FollowUp,
     ) {
-        deferredUploads += delayMs to allowCellular
+        val slotUploads =
+            when (slot) {
+                FollowUp.SINK_RETRY -> deferredUploads
+                FollowUp.SEAL -> sealUploads
+            }
+        slotUploads += delayMs to allowCellular
         calls += "upload-at"
     }
 

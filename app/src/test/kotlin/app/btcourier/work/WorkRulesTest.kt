@@ -37,7 +37,9 @@ class WorkRulesTest {
     @TempDir
     lateinit var dir: Path
 
-    private val store by lazy { openStore(dir, setOf("sink")) }
+    /** Wall clock of store, jobs and workers; tests advance it to move a sealing deadline closer. */
+    private var now = NOW
+    private val store by lazy { openStore(dir, setOf("sink")) { now } }
     private val epoch = NOW / 1000 - 3600
     private val logger =
         FakeWicanLogger().apply {
@@ -74,9 +76,9 @@ class WorkRulesTest {
     private fun syncWork(links: LinkFactory): SyncWork {
         val job =
             SyncJob(devices, links, store, InMemorySyncStatus(), clock = {
-                NOW
+                now
             }, locks = DeviceLocks(), pageLimit = 7, zone = { ZoneOffset.UTC })
-        return SyncWork(job, SyncFanOut(devices) { work.syncNow(it, manual = false) }, work)
+        return SyncWork(job, SyncFanOut(devices) { work.syncNow(it, manual = false) }, work, clock = { now })
     }
 
     @Test
@@ -122,6 +124,46 @@ class WorkRulesTest {
             )
             assertEquals(1, work.uploads.size, "caught up: nothing new sealed")
             assertEquals(emptyList<String>(), work.syncs)
+            assertEquals(emptyList<Pair<Long, Boolean>>(), work.sealUploads, "age 0 leaves nothing open to seal later")
+        }
+
+    @Test
+    fun `a sync that leaves lines open schedules an upload for when the oldest of them reaches the batch age`() =
+        runTest {
+            val fiveMinutes = sealEverything.copy(maxBatchAgeMs = 5 * MINUTE)
+            val sync = syncWork(loggerLinks())
+
+            sync.run(dongle.address, attempt = 0, fiveMinutes, uploadOverCellular = false)
+            assertEquals(0, store.pending("sink").size, "one small open file is not sealed yet")
+            assertEquals(emptyList<Pair<Boolean, Boolean>>(), work.uploads)
+            assertEquals(listOf(5 * MINUTE to false), work.sealUploads)
+
+            now += 2 * MINUTE
+            sync.run(dongle.address, attempt = 0, fiveMinutes, uploadOverCellular = true)
+            assertEquals(
+                listOf(5 * MINUTE to false, 3 * MINUTE to true),
+                work.sealUploads,
+                "still due 5 min after the oldest open line arrived, under the current network policy",
+            )
+            assertEquals(
+                emptyList<Pair<Long, Boolean>>(),
+                work.deferredUploads,
+                "a sink's Retry-After slot is left alone",
+            )
+        }
+
+    @Test
+    fun `a sync that sealed new batches enqueues the upload at once and schedules no follow-up`() =
+        runTest {
+            logger.append(epoch + 60, listOf(row(ts = (epoch + 60) * 1000, value = 20)))
+
+            syncWork(
+                loggerLinks(),
+            ).run(dongle.address, attempt = 0, sealEverything.copy(maxBatchAgeMs = 5 * MINUTE), false)
+
+            assertEquals(1, store.pending("sink").size, "the first file closed at the second's marker")
+            assertEquals(listOf(false to false), work.uploads)
+            assertEquals(emptyList<Pair<Long, Boolean>>(), work.sealUploads)
         }
 
     @Test

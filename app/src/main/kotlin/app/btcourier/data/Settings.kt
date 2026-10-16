@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.map
  * @property sinks every configured upload target, enabled or not; empty keeps data on the phone.
  * @property uploadOverCellular false restricts uploads to unmetered networks.
  * @property cacheCapBytes [SealPolicy.maxStoreBytes].
+ * @property maxBatchAgeMs [SealPolicy.maxBatchAgeMs]. 0 seals whatever is open at every seal, so
+ *   each sync that stored lines ends with an upload; longer groups more rows per upload.
  * @property periodicSync whether the 15-minute periodic sync is registered; presence and manual
  *   syncs run either way.
  * @property carDeviceAddress MAC of the car head unit whose ACL connect/disconnect triggers a sync
@@ -33,11 +35,12 @@ data class AppSettings(
     val sinks: List<SinkConfig> = emptyList(),
     val uploadOverCellular: Boolean = false,
     val cacheCapBytes: Long = SealPolicy().maxStoreBytes,
+    val maxBatchAgeMs: Long = 0,
     val periodicSync: Boolean = true,
     val carDeviceAddress: String? = null,
     val devices: List<DeviceConfig> = emptyList(),
 ) {
-    val sealPolicy: SealPolicy get() = SealPolicy(maxStoreBytes = cacheCapBytes)
+    val sealPolicy: SealPolicy get() = SealPolicy(maxBatchAgeMs = maxBatchAgeMs, maxStoreBytes = cacheCapBytes)
 }
 
 interface SettingsRepository {
@@ -75,6 +78,7 @@ class DataStoreSettings(
             prefs[SettingsKeys.SINKS] = encodeSinks(next.sinks)
             prefs[SettingsKeys.CELLULAR] = next.uploadOverCellular
             prefs[SettingsKeys.CACHE_CAP] = next.cacheCapBytes
+            prefs[SettingsKeys.MAX_BATCH_AGE] = next.maxBatchAgeMs
             prefs[SettingsKeys.PERIODIC_SYNC] = next.periodicSync
             next.carDeviceAddress?.let { prefs[SettingsKeys.CAR_DEVICE] = it } ?: prefs.remove(SettingsKeys.CAR_DEVICE)
             prefs[SettingsKeys.DEVICES] = encodeDevices(next.devices)
@@ -87,6 +91,7 @@ class DataStoreSettings(
             sinks = prefs[SettingsKeys.SINKS]?.let(::decodeSinksOrEmpty) ?: defaults.sinks,
             uploadOverCellular = prefs[SettingsKeys.CELLULAR] ?: defaults.uploadOverCellular,
             cacheCapBytes = prefs[SettingsKeys.CACHE_CAP] ?: defaults.cacheCapBytes,
+            maxBatchAgeMs = prefs[SettingsKeys.MAX_BATCH_AGE] ?: defaults.maxBatchAgeMs,
             periodicSync = prefs[SettingsKeys.PERIODIC_SYNC] ?: defaults.periodicSync,
             carDeviceAddress = prefs[SettingsKeys.CAR_DEVICE],
             devices = prefs[SettingsKeys.DEVICES]?.let(::decodeDevicesOrEmpty) ?: defaults.devices,
@@ -117,6 +122,7 @@ internal object SettingsKeys {
     val SINKS = stringPreferencesKey("sinks")
     val CELLULAR = booleanPreferencesKey("upload_over_cellular")
     val CACHE_CAP = longPreferencesKey("cache_cap_bytes")
+    val MAX_BATCH_AGE = longPreferencesKey("max_batch_age_ms")
     val PERIODIC_SYNC = booleanPreferencesKey("periodic_sync")
     val CAR_DEVICE = stringPreferencesKey("car_device_address")
     val DEVICES = stringPreferencesKey("devices")

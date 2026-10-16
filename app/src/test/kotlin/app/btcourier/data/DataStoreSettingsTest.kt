@@ -66,6 +66,7 @@ class DataStoreSettingsTest {
                     sinks,
                     uploadOverCellular = true,
                     cacheCapBytes = 50_000_000,
+                    maxBatchAgeMs = 300_000,
                     periodicSync = false,
                     carDeviceAddress = "AA:BB:CC:DD:EE:0A",
                     devices = devices,
@@ -201,6 +202,18 @@ class DataStoreSettingsTest {
             val devices = DataStoreSettings(open(migrate = true)).current().devices
             assertEquals(emptyList<DeviceConfig>(), devices)
             assertEquals(DeviceKind.WICAN, devices.kindOf("AA:BB:CC:DD:EE:01"))
+        }
+
+    @Test
+    fun `settings stored before the upload delay existed seal at every sync`() =
+        runBlocking {
+            writeLegacy { it[SettingsKeys.CELLULAR] = true }
+
+            val settings = DataStoreSettings(open(migrate = true)).current()
+
+            assertEquals(0L, settings.maxBatchAgeMs)
+            assertEquals(0L, settings.sealPolicy.maxBatchAgeMs)
+            assertEquals(settings.cacheCapBytes, settings.sealPolicy.maxStoreBytes)
         }
 
     @Test

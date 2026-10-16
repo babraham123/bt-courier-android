@@ -206,6 +206,50 @@ class DefaultStoreTest {
 
     @ParameterizedTest
     @EnumSource(DbKind::class)
+    fun `with age 0 every seal closes whatever is open`(kind: DbKind) =
+        runTest {
+            val h = harness(kind)
+            val s = h.store
+            s.appendPage("dev", "c1", listOf(marker("f1")) + rows(1..2))
+
+            assertEquals(
+                1,
+                s.seal(neverByAgeOrSize.copy(maxBatchAgeMs = 0), h.now).size,
+                "sealed the moment it is stored",
+            )
+            assertEquals(listOf(rows(1..2)), s.pendingRows("a"))
+            assertEquals(
+                emptyList<String>(),
+                s.seal(neverByAgeOrSize.copy(maxBatchAgeMs = 0), h.now),
+                "nothing left open",
+            )
+        }
+
+    @ParameterizedTest
+    @EnumSource(DbKind::class)
+    fun `the oldest unsealed line's arrival is counted until it is sealed`(kind: DbKind) =
+        runTest {
+            val h = harness(kind)
+            val s = h.store
+            assertNull(s.counters().oldestUnsealedAtMs, "empty store")
+
+            val t0 = h.now
+            s.appendPage("dev", "c1", listOf(marker("f1")) + rows(1..2))
+            h.now = t0 + 60_000
+            s.appendPage("ring", "r1", rows(3..4))
+            assertEquals(t0, s.counters().oldestUnsealedAtMs, "the oldest across sources")
+
+            h.now = t0 + 120_000
+            s.appendPage("dev", "c2", listOf(marker("f2")) + rows(5..6))
+            s.seal(neverByAgeOrSize, h.now)
+            assertEquals(t0 + 60_000, s.counters().oldestUnsealedAtMs, "f1 sealed at the f2 boundary")
+
+            s.seal(neverByAgeOrSize.copy(maxBatchAgeMs = 0), h.now)
+            assertNull(s.counters().oldestUnsealedAtMs, "everything sealed")
+        }
+
+    @ParameterizedTest
+    @EnumSource(DbKind::class)
     fun `a batch stays until every configured sink acked it`(kind: DbKind) =
         runTest {
             val h = harness(kind, sinks = setOf("http", "local"))
@@ -219,7 +263,7 @@ class DefaultStoreTest {
             assertEquals(1, s.counters().pendingBatches)
 
             s.ack(id, "local")
-            assertEquals(StoreCounters(0, 0, 0, 0), s.counters())
+            assertEquals(StoreCounters(0, 0, 0, 0, null), s.counters())
         }
 
     @ParameterizedTest
@@ -276,7 +320,7 @@ class DefaultStoreTest {
 
             val evicted = f1 + f2 + f3
             assertEquals(
-                StoreCounters(total - sizeOf(evicted), 0, evicted.size.toLong(), sizeOf(evicted)),
+                StoreCounters(total - sizeOf(evicted), 0, evicted.size.toLong(), sizeOf(evicted), h.now),
                 s.counters(),
             )
             assertEquals(emptyList<SealedBatch>(), s.pending("local"))
@@ -345,7 +389,7 @@ class DefaultStoreTest {
             h.store.ack(b1, "http")
             h.store.seal(neverByAgeOrSize.copy(maxStoreBytes = sizeOf(f1 + f2)), h.now)
             val before = h.store.counters()
-            assertEquals(StoreCounters(sizeOf(f1 + f2), 1, f0.size.toLong(), sizeOf(f0)), before)
+            assertEquals(StoreCounters(sizeOf(f1 + f2), 1, f0.size.toLong(), sizeOf(f0), h.now), before)
 
             val s = h.reopen()
 

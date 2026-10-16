@@ -45,6 +45,7 @@ class SettingsViewModelTest {
                     uploadOverCellular = true,
                     cacheCapMb = " 50 ",
                     periodicSync = false,
+                    maxBatchAgeMs = 5 * 60_000L,
                     carDeviceAddress = CAR,
                 )
             }
@@ -56,6 +57,7 @@ class SettingsViewModelTest {
                     sinks = listOf(sink),
                     uploadOverCellular = true,
                     cacheCapBytes = 50_000_000,
+                    maxBatchAgeMs = 5 * 60_000L,
                     periodicSync = false,
                     carDeviceAddress = CAR,
                 ),
@@ -92,6 +94,22 @@ class SettingsViewModelTest {
 
             assertEquals(null, settings.current().carDeviceAddress)
             assertTrue(work.uploads.isEmpty())
+            assertTrue(work.periodic.isEmpty())
+        }
+
+    @Test
+    fun `the upload delay starts from the stored one and a new one is saved without rescheduling work`() =
+        runTest {
+            settings.update { it.copy(maxBatchAgeMs = 30 * 60_000L) }
+            val vm = vm()
+            assertEquals(30 * 60_000L, vm.state.value.form.maxBatchAgeMs)
+
+            vm.edit { it.copy(maxBatchAgeMs = 0) }
+            vm.save()
+
+            assertEquals(0L, settings.current().maxBatchAgeMs)
+            assertEquals(0L, settings.current().sealPolicy.maxBatchAgeMs)
+            assertTrue(work.calls.isEmpty())
             assertTrue(work.periodic.isEmpty())
         }
 
