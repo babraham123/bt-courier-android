@@ -51,12 +51,17 @@ class DeviceSupportTest {
     }
 
     @Test
-    fun `a WiCAN is always due, a ring from the midnight that ends the day after its cursor`() {
+    fun `a WiCAN is always due, a ring an hour after its cursor's cut`() {
         assertNull(DeviceKind.WICAN.support.nextDueAtMs("1790000000:42", ZoneOffset.UTC))
         assertNull(DeviceKind.WICAN.support.nextDueAtMs(null, ZoneOffset.UTC))
         assertEquals(
-            Instant.parse("2026-10-15T00:00:00Z").toEpochMilli(),
+            Instant.parse("2026-10-15T10:30:00Z").toEpochMilli(),
+            DeviceKind.COLMI_RING.support.nextDueAtMs("2026-10-15@09:30", ZoneOffset.UTC),
+        )
+        assertEquals(
+            Instant.parse("2026-10-14T01:00:00Z").toEpochMilli(),
             DeviceKind.COLMI_RING.support.nextDueAtMs("2026-10-13", ZoneOffset.UTC),
+            "a whole day's cut is the midnight that ends it",
         )
         assertNull(DeviceKind.COLMI_RING.support.nextDueAtMs(null, ZoneOffset.UTC), "never synced")
     }

@@ -17,7 +17,8 @@ Pre-alpha. Nothing below has been verified on real hardware.
   journal and a per-sync anchor; each row carries a `ts_quality`.
 - Colmi smart ring source, experimental: per-day heart rate, HRV, steps, sleep, SpO2 and
   temperature logs, battery, firmware revision and the background heart-rate setting, which the
-  pair wizard offers to turn on.
+  pair wizard offers to turn on. The current day is pulled hourly during the day and completed
+  after midnight.
 - Local cache with batch sealing, gzip and a byte cap with oldest-first eviction.
 - Upload delay setting (after each sync by default, or 5 or 30 minutes); data a sync leaves in
   an open batch gets an upload scheduled for when that batch's delay ends, not the next sync.
@@ -27,6 +28,6 @@ Pre-alpha. Nothing below has been verified on real hardware.
 - Auth: Basic, Bearer and OIDC device authorization flow; credentials and the SFTP key are held
   in the Android Keystore.
 - Triggers: device presence (CompanionDeviceManager), periodic sync, car head unit Bluetooth
-  connect/disconnect, and manual sync/upload. Automatic syncs leave a caught-up ring alone until
-  local midnight gives it a new day; a manual sync always connects.
+  connect/disconnect, and manual sync/upload. Automatic syncs leave a ring alone for an hour
+  after its last pull; a manual sync always connects.
 - Pair wizard, status screen, settings with a sink editor, and a redacted log export.

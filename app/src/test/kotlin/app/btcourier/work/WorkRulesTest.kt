@@ -202,15 +202,15 @@ class WorkRulesTest {
     fun `a caught-up ring is skipped by an automatic sync run and connected to by a manual one`() =
         runTest {
             devices.devices = listOf(ring)
-            val yesterday =
+            // NOW is 14:13:20 UTC: today pulled up to the 14:10 cut, due again an hour after it.
+            val today =
                 Instant
                     .ofEpochMilli(NOW)
                     .atZone(ZoneOffset.UTC)
                     .toLocalDate()
-                    .minusDays(1)
             store.appendPage(
                 SyncJob.sourceIdFor(DeviceKind.COLMI_RING, ring.address),
-                yesterday.toString(),
+                "$today@14:10",
                 emptyList(),
             )
             var opened = 0
@@ -221,7 +221,7 @@ class WorkRulesTest {
                 }
 
             syncWork(asleep).run(ring.address, attempt = 0, sealEverything, uploadOverCellular = false)
-            assertEquals(0, opened, "automatic: nothing due before midnight")
+            assertEquals(0, opened, "automatic: nothing due within the hour after the cut")
 
             syncWork(asleep).run(ring.address, attempt = 0, sealEverything, uploadOverCellular = false, manual = true)
             assertEquals(1, opened, "manual: the user asked")

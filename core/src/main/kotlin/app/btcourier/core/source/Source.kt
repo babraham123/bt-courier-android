@@ -94,7 +94,7 @@ sealed class SourceException(
  * @property lines raw JSONL rows exactly as the device sent them, including `{"_file":...}`
  *   markers and excluding the trailing cursor line.
  * @property nextCursor opaque to core; WiCAN's is `<file epoch>:<byte offset>`, Colmi's the last
- *   day pulled (`YYYY-MM-DD`).
+ *   day pulled whole (`YYYY-MM-DD`) or up to a cut (`YYYY-MM-DD@HH:MM`).
  */
 data class Page(
     val lines: List<String>,
