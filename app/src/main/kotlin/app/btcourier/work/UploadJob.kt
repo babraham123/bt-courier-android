@@ -30,7 +30,8 @@ import java.io.Closeable
  * @param sinks builds the configured sinks; may throw [IllegalArgumentException] for a bad URL.
  *   Transports that are [Closeable] are closed when the round ends.
  * @param foregroundThresholdBytes stored bytes from which [run] calls its `onLargeBacklog`.
- * @param delivery holds per-sink retry state across rounds, so one job must serve every round.
+ * @param delivery holds per-sink retry state across rounds, so one job must serve every round; the
+ *   app's persists it, so it also holds across process restarts.
  */
 class UploadJob(
     private val store: Store,
@@ -69,7 +70,7 @@ class UploadJob(
     }
 
     /** Lets [sinkId]'s next round try it at once, after it was edited or deleted ([Delivery.forget]). */
-    fun forgetRetries(sinkId: String) = delivery.forget(sinkId)
+    suspend fun forgetRetries(sinkId: String) = delivery.forget(sinkId)
 
     private suspend fun deliver(
         configured: List<Sink>,

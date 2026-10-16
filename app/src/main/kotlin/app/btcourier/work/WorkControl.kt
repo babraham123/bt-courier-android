@@ -38,8 +38,11 @@ interface WorkControl {
 
     fun setPeriodicSync(enabled: Boolean)
 
-    /** Drops [sinkId]'s upload back-off, so a sink just fixed or removed is not skipped meanwhile. */
-    fun forgetRetries(sinkId: String)
+    /**
+     * Drops [sinkId]'s upload back-off, so a sink just fixed or removed is not skipped meanwhile.
+     * Returns once the back-off is gone for good, so an upload enqueued next never sees it.
+     */
+    suspend fun forgetRetries(sinkId: String)
 }
 
 /** The production adapter: WorkManager through [Scheduler]. */
@@ -67,5 +70,5 @@ class SchedulerWorkControl(
 
     override fun setPeriodicSync(enabled: Boolean) = Scheduler.setPeriodicSync(app, enabled)
 
-    override fun forgetRetries(sinkId: String) = AppGraph.uploadJob.forgetRetries(sinkId)
+    override suspend fun forgetRetries(sinkId: String) = AppGraph.uploadJob.forgetRetries(sinkId)
 }

@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import app.btcourier.core.sink.SinkRetryState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -23,7 +24,7 @@ import java.io.File
 
 /**
  * [DataStoreSyncStatus] over a real file, including the move of the single-device sync record
- * into the per-device map.
+ * into the per-device map, and [DataStoreRetryStates] beside it in the same file.
  */
 class DataStoreSyncStatusTest {
     @TempDir
@@ -67,6 +68,42 @@ class DataStoreSyncStatusTest {
                     json
             }
             scope.cancel()
+        }
+
+    @Test
+    fun `upload retry schedules survive a restart beside the status, and none saved clears them`() =
+        runBlocking {
+            val schedules =
+                mapOf(
+                    "http" to SinkRetryState(streak = 2, dueAtMs = 1_790_021_600_000, reason = "HTTP 429"),
+                    "sftp" to SinkRetryState(streak = 1, dueAtMs = 1_790_000_030_000, reason = "connection refused"),
+                )
+            val status = SyncStatus(pendingBatches = 3)
+            open().let {
+                DataStoreSyncStatus(it).update { status }
+                DataStoreRetryStates(it).save(schedules)
+            }
+            closeAll()
+
+            val reopened = open()
+            assertEquals(schedules, DataStoreRetryStates(reopened).load())
+            assertEquals(status, DataStoreSyncStatus(reopened).status.first(), "the status is untouched")
+
+            DataStoreRetryStates(reopened).save(emptyMap())
+            closeAll()
+            assertEquals(emptyMap<String, SinkRetryState>(), DataStoreRetryStates(open()).load())
+        }
+
+    @Test
+    fun `unreadable retry schedules read as none`() =
+        runBlocking {
+            val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+            PreferenceDataStoreFactory.create(scope = scope) { File(dir, "status.preferences_pb") }.edit {
+                it[stringPreferencesKey("retries")] = """{"http":{"streak":"two"}}"""
+            }
+            scope.cancel()
+
+            assertEquals(emptyMap<String, SinkRetryState>(), DataStoreRetryStates(open()).load())
         }
 
     @Test
