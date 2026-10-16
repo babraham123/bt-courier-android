@@ -6,6 +6,7 @@ import io.moquette.broker.security.IAuthenticator
 import kotlinx.coroutines.CompletableDeferred
 import java.io.DataInputStream
 import java.io.IOException
+import java.net.BindException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -18,13 +19,45 @@ import kotlin.concurrent.thread
 class EmbeddedBroker(
     authenticator: IAuthenticator? = null,
 ) : AutoCloseable {
-    private val server = Server()
-
-    // Moquette doesn't report the port it bound for "0", so take a free one first.
-    val port: Int = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
+    private val server: Server
+    val port: Int
 
     init {
-        val props =
+        val (server, port) = startOnFreePort(authenticator)
+        this.server = server
+        this.port = port
+    }
+
+    val connectedClients: Int get() = server.listConnectedClients().size
+
+    override fun close() = server.stopServer()
+
+    private companion object {
+        const val BIND_ATTEMPTS = 5
+
+        // Moquette records the port it bound for "0" from a Netty listener that can run after
+        // startServer returns, so the broker gets a port probed free beforehand instead. Another
+        // test fork can take that port in between, which fails the bind; a fresh port is tried then.
+        fun startOnFreePort(authenticator: IAuthenticator?): Pair<Server, Int> {
+            for (attempt in 1..BIND_ATTEMPTS) {
+                val port = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
+                val server = Server()
+                try {
+                    server.startServer(config(port, authenticator), emptyList(), null, authenticator, null)
+                    return server to port
+                } catch (e: RuntimeException) {
+                    if (e.cause !is BindException || attempt == BIND_ATTEMPTS) throw e
+                    // A failed bind leaves the broker's event loops running.
+                    runCatching { server.stopServer() }
+                }
+            }
+            error("unreachable: the last attempt returns or throws")
+        }
+
+        fun config(
+            port: Int,
+            authenticator: IAuthenticator?,
+        ) = MemoryConfig(
             Properties().apply {
                 setProperty("host", "127.0.0.1")
                 setProperty("port", port.toString())
@@ -34,13 +67,9 @@ class EmbeddedBroker(
                 setProperty("allow_anonymous", (authenticator == null).toString())
                 // Moquette's default limit is 8 KB; real batches go up to 1 MB.
                 setProperty("netty.mqtt.message_size", (2 * 1024 * 1024).toString())
-            }
-        server.startServer(MemoryConfig(props), emptyList(), null, authenticator, null)
+            },
+        )
     }
-
-    val connectedClients: Int get() = server.listConnectedClients().size
-
-    override fun close() = server.stopServer()
 }
 
 /**
