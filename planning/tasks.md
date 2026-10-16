@@ -65,7 +65,7 @@ Status: `todo` | `doing` | `blocked` | `done`. Deps are task ids.
 
 ## 5. First contact with hardware
 
-Test plans: `planning/testplans/wican-pro.md` (H1–H6, R1), `planning/testplans/colmi-ring.md` (L6, L9, R1) and `planning/testplans/elm327.md` (L11, L12).
+Test plans: `planning/testplans/wican-pro.md` (H1–H6, R1), `planning/testplans/colmi-ring.md` (L6, L9, R1), `planning/testplans/elm327.md` (L11, L12) and `planning/testplans/distribution.md` (Obtainium install and update).
 
 | id | task | status | deps |
 |---|---|---|---|
