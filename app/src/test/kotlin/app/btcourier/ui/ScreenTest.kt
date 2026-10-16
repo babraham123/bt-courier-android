@@ -132,4 +132,7 @@ abstract class ScreenTest {
 
     protected fun SemanticsNodeInteraction.assertIsInError() =
         assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Error))
+
+    protected fun SemanticsNodeInteraction.assertIsNotInError() =
+        assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Error))
 }
