@@ -6,4 +6,8 @@
     <issue id="TrustAllX509TrustManager">
         <ignore path="**/bcpkix-*.jar" />
     </issue>
+    <!-- Whether the target SDK is "old" depends on which platforms the running machine has
+         installed, so the check passes locally and fails on a runner with a newer SDK. The
+         target is raised deliberately, together with AGP and compileSdk, not by lint. -->
+    <issue id="OldTargetApi" severity="ignore" />
 </lint>
