@@ -29,8 +29,10 @@ object Elm327Support : DeviceSupport {
     override val filter = Elm327Gatt.FILTER
     override val sourcePrefix = "elm327:"
 
-    // A sync has nothing to pull; the drive session collects the adapter while the car runs.
-    override val syncsOnCarTrigger = false
+    // The adapter keeps nothing, so the car connecting starts a drive session that streams it
+    // (never a sync: the trigger plan skips syncs for streaming kinds).
+    override val syncsOnCarTrigger = true
+    override val liveMode = LiveMode.STREAM
 
     override val label = R.string.kind_elm327
     override val pairingText =

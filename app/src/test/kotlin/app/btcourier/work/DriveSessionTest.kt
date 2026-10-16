@@ -15,6 +15,8 @@ import app.btcourier.device.DeviceSupport
 import app.btcourier.device.LiveMode
 import app.btcourier.device.SourceOptions
 import app.btcourier.device.WicanSupport
+import app.btcourier.fakes.Ev6Fixture
+import app.btcourier.fakes.FakeElm327Adapter
 import app.btcourier.fakes.FakeGattLink
 import app.btcourier.fakes.FakeWicanLogger
 import app.btcourier.fakes.ScriptedPeripheral
@@ -32,6 +34,9 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -72,7 +77,8 @@ class DriveSessionTest {
 
     private val dongle = PairedDevice("AA:BB:CC:DD:EE:01", null, 1, DeviceKind.WICAN)
     private val ring = PairedDevice("AA:BB:CC:DD:EE:02", null, 2, DeviceKind.COLMI_RING)
-    private val devices = FakePairedDevices(dongle, ring)
+    private val scanner = PairedDevice("AA:BB:CC:DD:EE:04", null, 4, DeviceKind.ELM327, vehicleProfile = "Kia: EV6")
+    private val devices = FakePairedDevices(dongle, ring, scanner)
     private val wicanSource = SyncJob.sourceIdFor(DeviceKind.WICAN, dongle.address)
 
     private val epoch = NOW / 1000 - 3600
@@ -310,6 +316,46 @@ class DriveSessionTest {
 
             assertEquals(DriveSessionEnd.CAR_DISCONNECTED, outcome.end)
             assertEquals(3, outcome.rounds)
+        }
+
+    @Test
+    fun `an ELM327 session polls the stored vehicle profile over the adapter and keeps each round as a page`() =
+        runTest {
+            val adapter = FakeElm327Adapter(mapOf(Ev6Fixture.COMMAND to Ev6Fixture.RESPONSE))
+            val session = start(session(LinkFactory { _, _ -> adapter.link }), scanner.address)
+            advanceTimeBy(2_500)
+
+            val elm = SyncJob.sourceIdFor(DeviceKind.ELM327, scanner.address)
+            assertEquals("session:$NOW:2", store.cursor(elm), "a round at once, a second after the poll interval")
+            assertEquals(
+                marker("elm327/$NOW"),
+                store
+                    .pending("sink")
+                    .first()
+                    .lines
+                    .first(),
+            )
+            val values =
+                storedRows()
+                    .map { Json.parseToJsonElement(it).jsonObject }
+                    .filter { it["param"]?.jsonPrimitive?.content?.startsWith("autopid.") == true }
+                    .associate {
+                        it.getValue("param").jsonPrimitive.content to
+                            it
+                                .getValue("value")
+                                .jsonPrimitive.content
+                                .toDouble()
+                    }
+            assertEquals(Ev6Fixture.SOC, values["autopid.SOC"], "the EV6 profile, not the generic one, was polled")
+            assertEquals(Ev6Fixture.KWH_DISCHARGED, values["autopid.KWH_DISCHARGED"])
+            assertTrue(
+                adapter.commands.first() == "ATZ" && "ATSH7E4" in adapter.commands,
+                "reset, then the profile's init",
+            )
+
+            sessions.stop(scanner.address, DriveStop.CAR_DISCONNECTED)
+            assertEquals(DriveSessionEnd.CAR_DISCONNECTED, session.await().end)
+            assertEquals(2, recorded.rounds)
         }
 
     @Test

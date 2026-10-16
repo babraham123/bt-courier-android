@@ -312,7 +312,10 @@ class DriveSession(
             while (true) {
                 val segment =
                     try {
-                        support.withSource(link, SourceOptions(clock, zone(), pageLimit)) { live(it) }
+                        support.withSource(
+                            link,
+                            SourceOptions(clock, zone(), pageLimit, device.vehicleProfile),
+                        ) { live(it) }
                     } catch (e: IOException) {
                         Segment.LinkDown(e)
                     } finally {

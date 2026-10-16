@@ -127,7 +127,7 @@ class SyncJob(
         link: GattLink,
         device: PairedDevice,
     ): SyncReport =
-        device.kind.support.withSource(link, SourceOptions(clock, zone(), pageLimit)) { source ->
+        device.kind.support.withSource(link, SourceOptions(clock, zone(), pageLimit, device.vehicleProfile)) { source ->
             SyncRunner(sourceIdFor(device.kind, device.address), source, store, busyBackoff = retry.busyBackoff).run()
         }
 

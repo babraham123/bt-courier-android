@@ -25,7 +25,7 @@ import java.util.UUID
  * The kind → [DeviceSupport] lookup: a WiCAN is a bonded `ble_http` dongle found as `WiC_…`, stored
  * under `wican:` and synced when the car connects; a Colmi ring is an unbonded `R0…` device stored
  * under `colmi:` that the car does not sync; an ELM327 is an unbonded adapter whose layout is
- * discovered, found by name or service, stored under `elm327:` and not synced by the car. A drive session streams an ELM327 and pulls a WiCAN on its open
+ * discovered, found by name or service, stored under `elm327:` and streamed in a drive session the car starts. A drive session streams an ELM327 and pulls a WiCAN on its open
  * link, and never holds a ring's. Each opens its own source on a link. A WiCAN and an ELM327 are always due for a sync; a ring is due
  * once the day after its cursor day is whole.
  */
@@ -59,7 +59,7 @@ class DeviceSupportTest {
     }
 
     @Test
-    fun `an ELM327 connects unbonded to a discovered layout, scans by name or service, stores under elm327 and ignores the car`() {
+    fun `an ELM327 connects unbonded to a discovered layout, scans by name or service, stores under elm327 and streams in a car-started session`() {
         val elm327 = DeviceKind.ELM327.support
 
         assertEquals(Elm327Gatt.DISCOVERY, elm327.gattDiscovery)
@@ -68,7 +68,8 @@ class DeviceSupportTest {
         assertTrue(elm327.filter.matches(null, listOf(UUID.fromString("0000fff0-0000-1000-8000-00805f9b34fb"))))
         assertFalse(elm327.filter.matches("R02_0000", listOf(ColmiGatt.SERVICE)))
         assertEquals("elm327:", elm327.sourcePrefix)
-        assertFalse(elm327.syncsOnCarTrigger)
+        assertTrue(elm327.syncsOnCarTrigger)
+        assertEquals(LiveMode.STREAM, elm327.liveMode)
         assertNull(DeviceKind.WICAN.support.gattDiscovery)
         assertNull(DeviceKind.COLMI_RING.support.gattDiscovery)
     }

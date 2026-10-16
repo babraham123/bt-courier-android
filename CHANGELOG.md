@@ -16,7 +16,7 @@ All notable changes to this project are documented here. The format is based on
   session reaches its maximum length (3 hours by default), the link is lost and cannot be
   reopened, or Stop is pressed in its notification. A manual sync during a session pulls on the
   open link. The status screen and the notification show the session's rounds, rows and start
-  time. Sessions can also collect live-streaming sources, ready for OBD-II (ELM327) adapters.
+  time. Sessions also collect live-streaming sources such as OBD-II (ELM327) adapters.
 - ELM327 OBD-II adapters over BLE as a live source, collected by the drive session: polls a car's wican-fw vehicle profile
   (82 cars plus a generic mode-01 set) and writes `autopid.*` rows named as the WiCAN logger names
   them, plus adapter version and battery voltage.

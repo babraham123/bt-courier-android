@@ -44,7 +44,10 @@ interface DeviceSupport {
      */
     val sourcePrefix: String
 
-    /** Whether the car head unit connecting or disconnecting syncs devices of this kind. */
+    /**
+     * Whether the car head unit connecting or disconnecting concerns devices of this kind: a sync
+     * for a pulled kind, a drive session start or stop for a streaming one.
+     */
     val syncsOnCarTrigger: Boolean
 
     /** How a drive session (`DriveSession`) keeps a link to a device of this kind; see [LiveMode]. */

@@ -144,31 +144,23 @@ class SyncTriggersTest {
     }
 
     @Test
-    fun `a streaming device is never synced, and starts a session on presence or the car`() {
-        val scanner = PairedDevice("AA:BB:CC:DD:EE:04", null, 4, DeviceKind.WICAN)
-        val liveModeOf = { d: PairedDevice -> if (d == scanner) LiveMode.STREAM else d.kind.support.liveMode }
+    fun `an ELM327 is never synced, and starts a session on presence or the car`() {
+        val scanner = PairedDevice("AA:BB:CC:DD:EE:04", null, 4, DeviceKind.ELM327)
 
         assertEquals(
             TriggerPlan(syncs = listOf(dongle.address)),
-            plan(SyncTrigger.Periodic, list = listOf(dongle, scanner), liveModeOf = liveModeOf),
+            plan(SyncTrigger.Periodic, list = listOf(dongle, scanner)),
         )
         assertEquals(
             TriggerPlan(),
-            plan(
-                SyncTrigger.Presence(scanner.address),
-                driveSession = false,
-                list = listOf(scanner),
-                liveModeOf = liveModeOf,
-            ),
+            plan(SyncTrigger.Presence(scanner.address), driveSession = false, list = listOf(scanner)),
         )
+        assertEquals(TriggerPlan(sessionStarts = listOf(scanner.address)), plan(connected, list = listOf(scanner)))
         assertEquals(
             TriggerPlan(sessionStarts = listOf(scanner.address)),
-            plan(connected, list = listOf(scanner), liveModeOf = liveModeOf),
+            plan(SyncTrigger.Presence(scanner.address), list = listOf(scanner)),
         )
-        assertEquals(
-            TriggerPlan(),
-            plan(disconnected, list = listOf(scanner), liveModeOf = liveModeOf),
-        )
+        assertEquals(TriggerPlan(), plan(disconnected, list = listOf(scanner)))
     }
 
     @Test
