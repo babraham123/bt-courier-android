@@ -40,8 +40,9 @@ import kotlin.time.Duration.Companion.seconds
  * Every run that gets past the lock, and every skipped one, ends through one path, whether or not
  * it reached the device:
  * seal what [SealPolicy] closes, record the [SyncOutcome] in [status] (under the device's address
- * when it is paired), log it and return it. So rows from a short trip reach the sinks once the
- * policy's age rule closes them, even if the device stays asleep until the next drive.
+ * when it is paired), log it and return it. Rows the seal leaves open come with the time the
+ * policy's age rule closes them ([SyncOutcome.sealDueAtMs]), for which [SyncWork] schedules an
+ * upload, so they reach the sinks then even if the device stays asleep until the next drive.
  *
  * At most one sync runs per device: periodic fan-out, presence and manual syncs can enqueue
  * overlapping works for one device, so [locks] is what keeps them from opening two links to it;
@@ -146,7 +147,9 @@ class SyncJob(
         val sealed = store.seal(sealPolicy, clock())
         val counters = store.counters()
         val cursor = device?.let { store.cursor(sourceIdFor(it.kind, it.address)) }
-        val outcome = outcomeOf(end, cursor, sealed, attempt)
+        val outcome =
+            outcomeOf(end, cursor, sealed, attempt)
+                .copy(sealDueAtMs = counters.oldestUnsealedAtMs?.let { it + sealPolicy.maxBatchAgeMs })
         val now = clock()
         status.update {
             val recorded = device?.let { d -> it.withSync(d.address, outcome.deviceSync(now)) } ?: it
@@ -162,6 +165,7 @@ class SyncJob(
                 }
                 outcome.dueAtMs?.let { append(" until ${Instant.ofEpochMilli(it)}") }
                 append("; sealed ${sealed.size}, ${counters.pendingBatches} batches pending")
+                outcome.sealDueAtMs?.let { append(", next seal ${Instant.ofEpochMilli(it)}") }
                 outcome.error?.let { append(": $it") }
             }
         if (report != null || end is End.NotDue) log.info(TAG, line) else log.warn(TAG, line)
@@ -323,6 +327,12 @@ sealed interface SyncOutcome {
     val newBatches: Boolean get() = sealed.isNotEmpty()
 
     /**
+     * When the age rule of the run's [SealPolicy] closes the lines the run's seal left open; null
+     * when it left none, which is always the case with an age of 0.
+     */
+    val sealDueAtMs: Long?
+
+    /**
      * A run that was sealed and recorded, whether or not it reached the device.
      *
      * @property result the status screen's headline for the run.
@@ -345,6 +355,7 @@ sealed interface SyncOutcome {
         override val sealed: List<String> = emptyList(),
         override val retryWorthwhile: Boolean = false,
         val dueAtMs: Long? = null,
+        override val sealDueAtMs: Long? = null,
     ) : SyncOutcome {
         /** What [app.btcourier.data.SyncStatus] keeps of this run under the device's address. */
         fun deviceSync(atMs: Long) = DeviceSync(atMs, result, linesStored, pages, stop, cursor, dueAtMs)
@@ -354,5 +365,6 @@ sealed interface SyncOutcome {
     data object AlreadyRunning : SyncOutcome {
         override val sealed get() = emptyList<String>()
         override val retryWorthwhile get() = false
+        override val sealDueAtMs: Long? get() = null
     }
 }

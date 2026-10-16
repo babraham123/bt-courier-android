@@ -19,6 +19,8 @@ Pre-alpha. Nothing below has been verified on real hardware.
   temperature logs, battery, firmware revision and the background heart-rate setting, which the
   pair wizard offers to turn on.
 - Local cache with batch sealing, gzip and a byte cap with oldest-first eviction.
+- Upload delay setting (after each sync by default, or 5 or 30 minutes); data a sync leaves in
+  an open batch gets an upload scheduled for when that batch's delay ends, not the next sync.
 - Sinks: HTTP PUT, HTTP POST, SFTP, MQTT and a local folder (Storage Access Framework); several
   sinks at once, each acknowledged independently.
 - Formats: JSONL, CSV, Prometheus text and raw.

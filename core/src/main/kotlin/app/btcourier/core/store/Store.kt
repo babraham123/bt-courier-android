@@ -94,4 +94,9 @@ data class StoreCounters(
     /** Lines discarded by the byte cap before every sink acked them. */
     val droppedLines: Long,
     val droppedBytes: Long,
+    /**
+     * When the oldest line not yet in a batch was stored; null when every line is sealed. Plus
+     * [SealPolicy.maxBatchAgeMs], it is when the age rule closes the open batches at the latest.
+     */
+    val oldestUnsealedAtMs: Long?,
 )

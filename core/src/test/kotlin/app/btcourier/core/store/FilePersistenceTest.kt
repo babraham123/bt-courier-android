@@ -135,7 +135,13 @@ class FilePersistenceTest {
             assertEquals("f3", s.openFile("dev"))
             assertEquals("colmi/2024-01-01", s.openFile("ring"))
             assertEquals(
-                StoreCounters(bytesStored = 185, pendingBatches = 1, droppedLines = 5, droppedBytes = 203),
+                StoreCounters(
+                    bytesStored = 185,
+                    pendingBatches = 1,
+                    droppedLines = 5,
+                    droppedBytes = 203,
+                    oldestUnsealedAtMs = 2_000,
+                ),
                 s.counters(),
             )
             assertEquals(emptyList<SealedBatch>(), s.pending("local"))

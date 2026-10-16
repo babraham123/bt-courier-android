@@ -23,6 +23,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.robolectric.Shadows.shadowOf
 
@@ -61,6 +62,24 @@ class SettingsScreenTest : ScreenTest() {
         assertEquals(true, stored().uploadOverCellular)
         assertEquals(false, stored().periodicSync)
         assertEquals(listOf(false), work.periodic)
+    }
+
+    @Test
+    fun `the upload delay starts after each sync and saving stores the one picked`() {
+        show()
+
+        field(R.string.settings_upload_delay).assertTextContains(string(R.string.settings_upload_delay_none))
+        pick(R.string.settings_upload_delay, R.string.settings_upload_delay_5min)
+        onText(R.string.settings_save).tap()
+
+        field(R.string.settings_upload_delay).assertTextContains(string(R.string.settings_upload_delay_5min))
+        assertEquals(5 * 60_000L, stored().maxBatchAgeMs)
+        assertTrue(work.calls.isEmpty())
+
+        pick(R.string.settings_upload_delay, R.string.settings_upload_delay_30min)
+        onText(R.string.settings_save).tap()
+
+        assertEquals(30 * 60_000L, stored().maxBatchAgeMs)
     }
 
     @Test

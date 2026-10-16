@@ -35,6 +35,7 @@ import app.btcourier.data.SinkConfig
 import app.btcourier.data.sinkkind.module
 import app.btcourier.ui.BackButton
 import app.btcourier.ui.Toggle
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,6 +77,13 @@ fun SettingsScreen(
             Toggle(R.string.settings_cellular, R.string.settings_cellular_help, form.uploadOverCellular) { v ->
                 viewModel.edit { it.copy(uploadOverCellular = v) }
             }
+            Picker(
+                R.string.settings_upload_delay,
+                UploadDelay.entries,
+                UploadDelay.nearest(form.maxBatchAgeMs),
+                { it.label },
+                help = R.string.settings_upload_delay_help,
+            ) { v -> viewModel.edit { it.copy(maxBatchAgeMs = v.ms) } }
             Toggle(R.string.settings_periodic, R.string.settings_periodic_help, form.periodicSync) { v ->
                 viewModel.edit { it.copy(periodicSync = v) }
             }
@@ -122,6 +130,22 @@ fun SettingsScreen(
                 if (state.saved) Text(stringResource(R.string.settings_saved))
             }
         }
+    }
+}
+
+/** The upload delays offered, as [SettingsForm.maxBatchAgeMs]. */
+private enum class UploadDelay(
+    val ms: Long,
+    @StringRes val label: Int,
+) {
+    AFTER_SYNC(0, R.string.settings_upload_delay_none),
+    FIVE_MINUTES(5 * 60_000L, R.string.settings_upload_delay_5min),
+    THIRTY_MINUTES(30 * 60_000L, R.string.settings_upload_delay_30min),
+    ;
+
+    companion object {
+        /** The offered delay closest to a stored one, which only these choices ever write. */
+        fun nearest(ms: Long) = entries.minBy { abs(it.ms - ms) }
     }
 }
 

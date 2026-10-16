@@ -188,6 +188,11 @@
     <string name="settings_network">Network and sync</string>
     <string name="settings_cellular">Upload over mobile data</string>
     <string name="settings_cellular_help">Off: uploads wait for Wi-Fi or another unmetered network.</string>
+    <string name="settings_upload_delay">Upload delay</string>
+    <string name="settings_upload_delay_help">How long new data may wait to be grouped into fewer, larger uploads.</string>
+    <string name="settings_upload_delay_none">After each sync</string>
+    <string name="settings_upload_delay_5min">5 minutes</string>
+    <string name="settings_upload_delay_30min">30 minutes</string>
     <string name="settings_periodic">Periodic sync</string>
     <string name="settings_periodic_help">Also try every 15 minutes. Syncs still start when the dongle comes in range.</string>
     <string name="settings_car">Car head unit</string>

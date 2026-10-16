@@ -95,7 +95,7 @@ class DeliveryTest {
                 assertEquals(order, local.sent)
             }
 
-            assertEquals(StoreCounters(0, 0, 0, 0), store.counters())
+            assertEquals(StoreCounters(0, 0, 0, 0, null), store.counters())
             for (id in listOf("one", "two")) {
                 val written = dir.resolve(id).listDirectoryEntries().associate { it.name to it.readBytes() }
                 assertEquals(expected.map { it.name }.toSet(), written.keys)

@@ -21,11 +21,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -121,7 +117,7 @@ fun SinkEditorScreen(
                 TransportKind.entries,
                 form.kind,
                 { it.module.label },
-                viewModel::setTransport,
+                onSelect = viewModel::setTransport,
             )
 
             TransportFields(state, viewModel)
@@ -135,7 +131,13 @@ fun SinkEditorScreen(
             if (form.allowedAuth.size > 1) {
                 HorizontalDivider()
                 Heading(R.string.settings_auth)
-                Picker(R.string.settings_auth, form.allowedAuth, form.authKind, ::authLabel, viewModel::setAuth)
+                Picker(
+                    R.string.settings_auth,
+                    form.allowedAuth,
+                    form.authKind,
+                    ::authLabel,
+                    onSelect = viewModel::setAuth,
+                )
                 AuthFields(state, viewModel)
             }
 
@@ -519,43 +521,6 @@ private fun SecretField(
         onClear != null
     ) {
         TextButton(onClick = onClear) { Text(stringResource(R.string.settings_secret_clear)) }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun <T> Picker(
-    @StringRes label: Int,
-    options: List<T>,
-    selected: T,
-    labelOf: (T) -> Int,
-    onSelect: (T) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        OutlinedTextField(
-            value = stringResource(labelOf(selected)),
-            onValueChange = {},
-            readOnly = true,
-            label = { Text(stringResource(label)) },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            singleLine = true,
-            modifier =
-                Modifier
-                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                    .fillMaxWidth(),
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(stringResource(labelOf(option))) },
-                    onClick = {
-                        onSelect(option)
-                        expanded = false
-                    },
-                )
-            }
-        }
     }
 }
 

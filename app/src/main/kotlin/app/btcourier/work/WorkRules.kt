@@ -17,6 +17,9 @@ enum class WorkVerdict { SUCCESS, RETRY }
  * - Whenever the run sealed new batches, an upload is enqueued, KEEP so an upload already waiting
  *   delivers them: also after an interrupted sync and after one that found no device, since
  *   sealing happens anyway.
+ * - Otherwise, when the run left lines open, an upload is scheduled for when the age rule closes
+ *   them ([SyncOutcome.sealDueAtMs], [FollowUp.SEAL]); the upload's own seal then closes them, so
+ *   they do not wait for the next sync to come along.
  * - Whether to run again is the outcome's [SyncOutcome.retryWorthwhile] ([SyncRetryPolicy] says
  *   when), which the worker turns into WorkManager's back-off.
  */
@@ -24,6 +27,7 @@ class SyncWork(
     private val job: SyncJob,
     private val fanOut: SyncFanOut,
     private val work: WorkControl,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     /**
      * @param address the device to sync; null fans out.
@@ -42,7 +46,12 @@ class SyncWork(
     ): WorkVerdict {
         if (address == null && fanOut.fire(SyncTrigger.Periodic).isNotEmpty()) return WorkVerdict.SUCCESS
         val outcome = job.run(address, sealPolicy, attempt, manual, onConnected)
-        if (outcome.newBatches) work.uploadNow(uploadOverCellular, replace = false)
+        val sealDue = outcome.sealDueAtMs
+        if (outcome.newBatches) {
+            work.uploadNow(uploadOverCellular, replace = false)
+        } else if (sealDue != null) {
+            work.uploadAt(sealDue - clock(), uploadOverCellular, FollowUp.SEAL)
+        }
         return if (outcome.retryWorthwhile) WorkVerdict.RETRY else WorkVerdict.SUCCESS
     }
 }
@@ -51,7 +60,7 @@ class SyncWork(
  * The rules of one [UploadWorker] run, kept out of the worker like [SyncWork]: a round that
  * ended [UploadOutcome.Retry] runs again on WorkManager's back-off; one that ended
  * [UploadOutcome.Deferred] enqueues the follow-up for when the waiting sink is due
- * ([WorkControl.uploadAt]) and ends this work, so the attempt budget is spent on attempts only.
+ * ([FollowUp.SINK_RETRY]) and ends this work, so the attempt budget is spent on attempts only.
  */
 class UploadWork(
     private val job: UploadJob,
@@ -70,7 +79,7 @@ class UploadWork(
             }
 
             is UploadOutcome.Deferred -> {
-                work.uploadAt(outcome.delayMs, uploadOverCellular)
+                work.uploadAt(outcome.delayMs, uploadOverCellular, FollowUp.SINK_RETRY)
                 WorkVerdict.SUCCESS
             }
 
