@@ -9,8 +9,14 @@ import app.btcourier.AppGraph
  * to schedule after which event are testable on the JVM.
  */
 interface WorkControl {
-    /** Syncs the paired device at [address]. */
-    fun syncNow(address: String)
+    /**
+     * Syncs the paired device at [address]. A [manual] sync (the user asked) connects even when
+     * the device can have nothing new yet; an automatic one then skips connecting ([SyncJob]).
+     */
+    fun syncNow(
+        address: String,
+        manual: Boolean,
+    )
 
     fun uploadNow(
         allowCellular: Boolean,
@@ -42,7 +48,10 @@ class SchedulerWorkControl(
 ) : WorkControl {
     private val app = context.applicationContext
 
-    override fun syncNow(address: String) = Scheduler.syncNow(app, address)
+    override fun syncNow(
+        address: String,
+        manual: Boolean,
+    ) = Scheduler.syncNow(app, address, manual)
 
     override fun uploadNow(
         allowCellular: Boolean,

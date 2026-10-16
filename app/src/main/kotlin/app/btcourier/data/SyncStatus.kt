@@ -72,6 +72,8 @@ data class SyncStatus(
  * @property stop why the sync stopped; null when it never reached the device.
  * @property cursor the device's store cursor after the sync; kept from the previous sync when
  *   this one did not reach the device.
+ * @property dueAtMs when the device can next have something to sync; set only for
+ *   [SyncResultKind.NOT_DUE].
  */
 @Serializable
 data class DeviceSync(
@@ -81,6 +83,7 @@ data class DeviceSync(
     val pages: Int = 0,
     val stop: SyncStopKind? = null,
     val cursor: String? = null,
+    val dueAtMs: Long? = null,
 )
 
 enum class SyncResultKind {
@@ -97,6 +100,12 @@ enum class SyncResultKind {
     UNREACHABLE,
 
     NOT_PAIRED,
+
+    /**
+     * An automatic sync skipped connecting: the stored cursor says the device can have nothing
+     * new before [DeviceSync.dueAtMs] (the ring before local midnight).
+     */
+    NOT_DUE,
 }
 
 /** Why a sync that reached the device stopped: core's `StopReason` without its causes, so it can be persisted. */

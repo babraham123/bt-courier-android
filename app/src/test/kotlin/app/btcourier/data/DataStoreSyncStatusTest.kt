@@ -78,6 +78,8 @@ class DataStoreSyncStatusTest {
                         mapOf(
                             dongle to DeviceSync(1, SyncResultKind.CAUGHT_UP, 10, 2, SyncStopKind.CAUGHT_UP, "1:2"),
                             "AA:BB:CC:DD:EE:02" to DeviceSync(3, SyncResultKind.UNREACHABLE),
+                            "AA:BB:CC:DD:EE:03" to
+                                DeviceSync(4, SyncResultKind.NOT_DUE, cursor = "2026-10-14", dueAtMs = 86_400_000),
                         ),
                     pendingBatches = 4,
                     lastUploadBySink = mapOf("http" to SinkUpload(5, UploadResultKind.DELIVERED)),
@@ -92,7 +94,7 @@ class DataStoreSyncStatusTest {
     fun `a device record is read back from the names earlier versions stored it under`() =
         runBlocking {
             // Every result and stop a sync records, under its persisted name; renaming one loses records.
-            val results = listOf("CAUGHT_UP", "INTERRUPTED", "DEVICE_ERROR", "UNREACHABLE", "NOT_PAIRED")
+            val results = listOf("CAUGHT_UP", "INTERRUPTED", "DEVICE_ERROR", "UNREACHABLE", "NOT_PAIRED", "NOT_DUE")
             val stops = listOf("CAUGHT_UP", "NO_PROGRESS", "LINK_LOST", "TRUNCATED", "BUSY", "DEVICE_ERROR")
             val records =
                 results.flatMap { r -> stops.map { s -> r to s } }.mapIndexed { i, (r, s) ->

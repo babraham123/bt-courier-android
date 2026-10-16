@@ -35,7 +35,8 @@ import kotlin.time.Duration.Companion.seconds
  * so the store seals one batch per day. Only days before today are pulled, because a partial today
  * stored under its cursor could never be topped up; `more` stays true while the day after the one
  * pulled is still before today. Once caught up, [pull] answers an empty page with the same cursor
- * and `more:false`.
+ * and `more:false`, until local midnight makes another day whole: [nextDueAtMs] says when, from the
+ * cursor alone, so a caller can skip connecting before then.
  *
  * The ring is assumed to keep today and the 7 days before it ([historyDays]). A null cursor
  * starts at the oldest day it holds (`today - (historyDays - 1)`), and an older cursor is clamped
@@ -336,6 +337,33 @@ class ColmiRingSource(
     }
 
     companion object {
+        /**
+         * The earliest phone time, epoch ms, at which [pull] from [cursor] can return a day: the
+         * start, in [zone], of the second day after the cursor day, because the day after it is
+         * pulled only once it is whole. Before then every [pull] answers the empty caught-up page.
+         * Null when any time can: no cursor yet (the ring's history is waiting), or a cursor that
+         * [pull] would reject, which then fails the sync as it always did.
+         *
+         * Midnight that a DST change skips counts from the first instant of the day, as [pull]'s
+         * "today" does.
+         */
+        fun nextDueAtMs(
+            cursor: String?,
+            zone: ZoneId,
+        ): Long? {
+            val last =
+                try {
+                    LocalDate.parse(cursor ?: return null)
+                } catch (_: DateTimeParseException) {
+                    return null
+                }
+            return last
+                .plusDays(2)
+                .atStartOfDay(zone)
+                .toInstant()
+                .toEpochMilli()
+        }
+
         const val DEFAULT_HISTORY_DAYS: Int = 8
         const val FILE_PREFIX: String = "colmi/"
         const val PARAM_HR: String = "colmi.hr"

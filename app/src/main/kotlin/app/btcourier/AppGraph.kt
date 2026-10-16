@@ -87,7 +87,7 @@ object AppGraph {
 
     /** Every scheduling request goes through it: screens, triggers and workers. */
     val work: WorkControl by lazy { SchedulerWorkControl(app) }
-    val syncFanOut: SyncFanOut by lazy { SyncFanOut(pairedDevices, work::syncNow) }
+    val syncFanOut: SyncFanOut by lazy { SyncFanOut(pairedDevices) { work.syncNow(it, manual = false) } }
     val secrets: SecretStore by lazy { KeystoreSecretStore(File(app.noBackupFilesDir, "secrets")) }
     val sshKeys: SshKeys by lazy { AndroidKeystoreSshKeys() }
     val sinkCredentials: SinkCredentials by lazy {

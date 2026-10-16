@@ -18,6 +18,7 @@ import app.btcourier.data.TransportConfig
 import app.btcourier.data.UploadResultKind
 import app.btcourier.ui.status.StatusScreen
 import app.btcourier.ui.status.StatusViewModel
+import app.btcourier.ui.status.formatStatusTime
 import app.btcourier.work.RecordingWorkControl
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -57,6 +58,24 @@ class StatusScreenTest : ScreenTest() {
     }
 
     @Test
+    fun `a skipped sync says until when nothing is due, and keeps the cursor`() {
+        val due = 1_790_000_000_000L
+        show(
+            SyncStatus(
+                lastSyncByDevice =
+                    mapOf(
+                        device.address to
+                            DeviceSync(1_000, SyncResultKind.NOT_DUE, cursor = CURSOR, dueAtMs = due),
+                    ),
+            ),
+        )
+
+        infoRow(R.string.status_result, string(R.string.sync_not_due, formatStatusTime(app, due))).assertIsDisplayed()
+        assertNoText(R.string.status_pages_lines)
+        infoRow(R.string.status_cursor, CURSOR).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
     fun `the cache and the last upload show pending batches, drops and each sink's outcome`() {
         show(
             SyncStatus(
@@ -86,7 +105,7 @@ class StatusScreenTest : ScreenTest() {
         onText(R.string.status_upload_now).tap()
 
         compose.runOnIdle {
-            assertEquals(listOf(device.address), work.syncs)
+            assertEquals(listOf(device.address), work.manualSyncs)
             assertEquals(listOf(false to true), work.uploads)
         }
     }

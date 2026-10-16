@@ -18,7 +18,13 @@ class SyncWorker(
         val settings = AppGraph.settings.current()
         val address = inputData.getString(KEY_ADDRESS)
         val verdict =
-            AppGraph.syncWork.run(address, runAttemptCount, settings.sealPolicy, settings.uploadOverCellular) {
+            AppGraph.syncWork.run(
+                address,
+                runAttemptCount,
+                settings.sealPolicy,
+                settings.uploadOverCellular,
+                manual = inputData.getBoolean(KEY_MANUAL, false),
+            ) {
                 tryForeground(Notifications.syncForeground(applicationContext, checkNotNull(address)))
             }
         return if (verdict == WorkVerdict.RETRY) Result.retry() else Result.success()
@@ -27,6 +33,9 @@ class SyncWorker(
     companion object {
         /** Input: upper-case address of the device to sync. */
         const val KEY_ADDRESS = "address"
+
+        /** Input: whether the user asked for the sync; absent (false) in work queued before it existed. */
+        const val KEY_MANUAL = "manual"
     }
 }
 

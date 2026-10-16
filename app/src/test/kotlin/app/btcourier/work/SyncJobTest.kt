@@ -47,7 +47,8 @@ import java.time.ZoneOffset
  * is what the status records under the device's address, and [SyncRetryPolicy] decides retries:
  * busy calls are retried in the run, interrupted runs are worth another run up to its limit,
  * final ones are not. Aged rows are sealed with or without a link, and each paired device keeps
- * its own cursor under a source id of its kind.
+ * its own cursor under a source id of its kind. An automatic sync of a ring whose cursor is already
+ * yesterday skips connecting until local midnight; a manual one always connects.
  */
 class SyncJobTest {
     @TempDir
@@ -111,7 +112,7 @@ class SyncJobTest {
         policy: SealPolicy,
         attempt: Int = 0,
         onConnected: suspend () -> Unit = {},
-    ) = run(address, policy, attempt, onConnected) as Recorded
+    ) = run(address, policy, attempt, onConnected = onConnected) as Recorded
 
     private val sync get() = status.status.value.syncOf(address)!!
 
@@ -535,5 +536,96 @@ class SyncJobTest {
                 listOf("""{"_file":"colmi/$yesterday"}"""),
                 store.pending("sink").flatMap { it.lines }.filter(::isMarker),
             )
+        }
+
+    /** Midnight (UTC, the job's zone) that ends today: from then on today is a whole day to pull. */
+    private val midnight =
+        today
+            .plusDays(1)
+            .atStartOfDay(ZoneOffset.UTC)
+            .toInstant()
+            .toEpochMilli()
+
+    @Test
+    fun `automatic syncs of a caught-up ring skip connecting until midnight, and the first periodic one after it connects`() =
+        runTest {
+            paired.devices += PairedDevice(ringAddress, null, 2, DeviceKind.COLMI_RING)
+            store.appendPage(ringSource, yesterday.toString(), emptyList())
+            store.appendPage("other", "1:1", listOf(marker("dl_1.jsonl"), row(1, 1)))
+            val locks = DeviceLocks()
+            // A sync holding the lock does not turn a skip into AlreadyRunning: the skip needs no link.
+            assertTrue(locks.of(ringAddress).tryLock())
+
+            now = midnight - 20 * MINUTE
+            val skipped = job(noLink, locks = locks).run(ringAddress, sealEverything) as Recorded
+
+            assertEquals(
+                Recorded(
+                    SyncResultKind.NOT_DUE,
+                    cursor = yesterday.toString(),
+                    sealed = sealedIds(),
+                    dueAtMs = midnight,
+                ),
+                skipped,
+                "sealed like a run without a device",
+            )
+            assertTrue(skipped.newBatches)
+            assertEquals(
+                DeviceSync(now, SyncResultKind.NOT_DUE, cursor = yesterday.toString(), dueAtMs = midnight),
+                status.status.value.syncOf(ringAddress),
+            )
+            assertNull(status.status.value.lastError, "nothing went wrong")
+            locks.of(ringAddress).unlock()
+
+            // The periodic work's 15-minute cadence: one more skip, then the first run after midnight.
+            now += 15 * MINUTE
+            assertEquals(SyncResultKind.NOT_DUE, (job(noLink).run(ringAddress, sealEverything) as Recorded).result)
+            now += 15 * MINUTE
+            val ring = ring()
+            val pulled = job(ringLinks(ring)).run(ringAddress, sealEverything) as Recorded
+
+            assertEquals(SyncResultKind.CAUGHT_UP, pulled.result)
+            assertEquals(1, pulled.pages, "the day that just ended")
+            assertEquals(today.toString(), store.cursor(ringSource))
+            assertNull(
+                status.status.value
+                    .syncOf(ringAddress)!!
+                    .dueAtMs,
+            )
+            assertTrue(ring.link.closed)
+        }
+
+    @Test
+    fun `a manual sync of a caught-up ring connects anyway`() =
+        runTest {
+            paired.devices += PairedDevice(ringAddress, null, 2, DeviceKind.COLMI_RING)
+            store.appendPage(ringSource, yesterday.toString(), emptyList())
+            val ring = ring()
+            var foreground = 0
+
+            val outcome =
+                job(ringLinks(ring)).run(ringAddress, sealEverything, manual = true) { foreground++ } as Recorded
+
+            assertEquals(
+                Recorded(SyncResultKind.CAUGHT_UP, SyncStopKind.CAUGHT_UP, pages = 1, cursor = yesterday.toString()),
+                outcome,
+            )
+            assertEquals(1, foreground)
+            assertEquals(1, ring.clockSets.size, "the ring was reached")
+            assertTrue(ring.link.closed)
+        }
+
+    @Test
+    fun `a ring never synced, and a WiCAN whatever its cursor, are always due`() =
+        runTest {
+            paired.devices += PairedDevice(ringAddress, null, 2, DeviceKind.COLMI_RING)
+
+            val ring = job(ringLinks(ring())).run(ringAddress, sealEverything) as Recorded
+            assertEquals(SyncResultKind.CAUGHT_UP, ring.result)
+
+            val links = Links(this)
+            job(links).run(sealEverything)
+            job(links).run(sealEverything)
+            assertEquals(2, links.opened.size, "a caught-up WiCAN is connected to again")
         }
 }

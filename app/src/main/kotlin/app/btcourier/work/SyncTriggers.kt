@@ -29,7 +29,10 @@ fun syncTargets(
         SyncTrigger.Car -> devices.filter { it.kind.support.syncsOnCarTrigger }
     }.map { it.address }
 
-/** Enqueues one sync per device a trigger targets; [enqueue] is [WorkControl.syncNow] in the app. */
+/**
+ * Enqueues one sync per device a trigger targets; [enqueue] is an automatic (not manual)
+ * [WorkControl.syncNow] in the app, since no trigger is the user asking.
+ */
 class SyncFanOut(
     private val devices: PairedDevices,
     private val enqueue: (address: String) -> Unit,
