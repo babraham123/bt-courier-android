@@ -21,6 +21,11 @@ data class SettingsForm(
     val maxBatchAgeMs: Long = 0,
     /** MAC of the car head unit picked from the bonded devices; null means no car trigger. */
     val carDeviceAddress: String? = null,
+    /** The drive session settings apply from the next session on, so nothing is rescheduled. */
+    val driveSession: Boolean = false,
+    val drivePullIntervalMinutes: Int = AppSettings().drivePullIntervalMinutes,
+    val driveIdleMinutes: Int = AppSettings().driveIdleMinutes,
+    val driveMaxSessionMinutes: Int = AppSettings().driveMaxSessionMinutes,
 )
 
 enum class CacheCapProblem { NOT_A_NUMBER, OUT_OF_RANGE }
@@ -108,6 +113,10 @@ class SettingsViewModel(
                         periodicSync = form.periodicSync,
                         maxBatchAgeMs = form.maxBatchAgeMs,
                         carDeviceAddress = form.carDeviceAddress,
+                        driveSession = form.driveSession,
+                        drivePullIntervalMinutes = form.drivePullIntervalMinutes,
+                        driveIdleMinutes = form.driveIdleMinutes,
+                        driveMaxSessionMinutes = form.driveMaxSessionMinutes,
                     ).also { after = it }
             }
             // Re-enqueue so a waiting upload picks up the new network constraint at once.
@@ -128,5 +137,9 @@ class SettingsViewModel(
             periodicSync = periodicSync,
             maxBatchAgeMs = maxBatchAgeMs,
             carDeviceAddress = carDeviceAddress,
+            driveSession = driveSession,
+            drivePullIntervalMinutes = drivePullIntervalMinutes,
+            driveIdleMinutes = driveIdleMinutes,
+            driveMaxSessionMinutes = driveMaxSessionMinutes,
         )
 }

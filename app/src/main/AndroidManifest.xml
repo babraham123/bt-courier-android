@@ -23,7 +23,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE" />
-    <!-- Lets a presence-triggered sync promote itself to a foreground service from the background. -->
+    <!-- Lets a presence-triggered sync promote itself to a foreground service from the background,
+         and presence or the car trigger start a drive session. -->
     <uses-permission android:name="android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND" />
 
     <!--
@@ -56,6 +57,13 @@
                 <action android:name="android.companion.CompanionDeviceService" />
             </intent-filter>
         </service>
+
+        <!-- Holds the link to a dongle for a whole drive (DriveSession); started by the car trigger
+             or presence, from the background thanks to the companion association. -->
+        <service
+            android:name=".work.DriveSessionService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <!-- WorkManager's own service; the types cover SyncWorker and UploadWorker. -->
         <service

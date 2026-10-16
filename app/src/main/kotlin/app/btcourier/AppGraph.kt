@@ -31,8 +31,12 @@ import app.btcourier.data.saf.releaseGrant
 import app.btcourier.data.settingsDataStore
 import app.btcourier.data.statusDataStore
 import app.btcourier.log.AppLog
+import app.btcourier.work.DeviceLocks
+import app.btcourier.work.DriveSession
+import app.btcourier.work.DriveSessions
 import app.btcourier.work.LinkFactory
 import app.btcourier.work.SchedulerWorkControl
+import app.btcourier.work.ServiceDriveSessionStarter
 import app.btcourier.work.SyncFanOut
 import app.btcourier.work.SyncJob
 import app.btcourier.work.SyncWork
@@ -90,7 +94,15 @@ object AppGraph {
 
     /** Every scheduling request goes through it: screens, triggers and workers. */
     val work: WorkControl by lazy { SchedulerWorkControl(app) }
-    val syncFanOut: SyncFanOut by lazy { SyncFanOut(pairedDevices) { work.syncNow(it, manual = false) } }
+
+    /** The drive sessions running in this process; syncs and triggers reach them through it. */
+    val driveSessions: DriveSessions get() = DriveSessions.process
+
+    val syncFanOut: SyncFanOut by lazy {
+        SyncFanOut(pairedDevices, ServiceDriveSessionStarter(app, settings, driveSessions)) {
+            work.syncNow(it, manual = false)
+        }
+    }
     val secrets: SecretStore by lazy { KeystoreSecretStore(File(app.noBackupFilesDir, "secrets")) }
     val sshKeys: SshKeys by lazy { AndroidKeystoreSshKeys() }
     val sinkCredentials: SinkCredentials by lazy {
@@ -135,8 +147,24 @@ object AppGraph {
             store = store,
             status = status,
             log = log,
+            sessions = driveSessions,
         )
     }
+
+    /** A new session for `DriveSessionService`, one per device it holds a link to. */
+    fun driveSession(): DriveSession =
+        DriveSession(
+            devices = pairedDevices,
+            links = { address, kind -> linkFactory.open(address, kind) },
+            store = store,
+            status = status,
+            work = work,
+            locks = DeviceLocks.process,
+            clock = System::currentTimeMillis,
+            settings = settings,
+            sessions = driveSessions,
+            log = log,
+        )
 
     val syncWork: SyncWork by lazy { SyncWork(syncJob, syncFanOut, work) }
 

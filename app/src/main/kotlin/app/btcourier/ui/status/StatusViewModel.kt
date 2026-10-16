@@ -7,6 +7,7 @@ import app.btcourier.ble.PairedDevice
 import app.btcourier.ble.PairedDeviceRepository
 import app.btcourier.data.AppSettings
 import app.btcourier.data.DeviceSync
+import app.btcourier.data.DriveSessionStatus
 import app.btcourier.data.SinkUpload
 import app.btcourier.data.SyncResultKind
 import app.btcourier.data.SyncStatus
@@ -63,6 +64,8 @@ data class StatusUiState(
     val loading: Boolean = true,
     /** Every paired device, in pairing order. */
     val devices: List<DeviceRow> = emptyList(),
+    /** The drive session running now, or the last one; null before the first. */
+    val driveSession: DriveSessionStatus? = null,
     val pendingBatches: Int = 0,
     val bytesStored: Long = 0,
     val cacheCapBytes: Long = AppSettings().cacheCapBytes,
@@ -115,6 +118,7 @@ fun statusUiState(
                 val sync = status.syncOf(device.address)
                 DeviceRow(device, sync?.toLastSync(), sync?.cursor)
             },
+        driveSession = status.driveSession,
         pendingBatches = status.pendingBatches,
         bytesStored = status.bytesStored,
         cacheCapBytes = settings.cacheCapBytes,

@@ -11,7 +11,7 @@ Never commit captures: they hold VINs, trips and addresses.
 - [ ] Device settings: BLE on, `pairing_at_boot`, default passkey; data logger on, params `format` = jsonl, `autopid_log` = changed or all.
 - [ ] Web UI reachable over Wi-Fi for `/api/logger`, `/api/rtc`, `/api/sleep`, `/api/fs` (cross-checks only).
 - [ ] Android 12+ phone (H2 names a Pixel 7); Bluetooth on; car head unit paired to the phone.
-- [ ] Debug APK for cases 1–8, release APK for case 9.
+- [ ] Debug APK for cases 1–8 and 10, release APK for case 9.
 - [ ] An HTTPS PUT sink you control: logs method, path, status, size; supports HEAD; objects downloadable.
 - [ ] `adb logcat` for `CarTrigger`, `PresenceService`, `Worker` lines.
 
@@ -110,3 +110,25 @@ screen text or log line. App log lines look like `<instant> I sync: sync WICAN �
 - Capture: upload lines, logcat matches.
 - Settles: R1 "shrunk APK's MQTT and SFTP paths", the `BC` provider risk.
 - If it fails: `proguard-rules.pro`, `SftpUploadTransport.kt`, `ProviderNeutralEcdsa.kt`, `MqttUploadTransport.kt`.
+
+## 10. Drive session
+
+Needs case 3 to show that `/api/logger/export` serves rows from the file the logger is still
+writing (ticket 0001's prerequisite); otherwise rounds store nothing until the dongle rotates the
+file, and the lever is the rotation setting, not this feature.
+
+- [ ] Settings → Keep syncing while driving on, pull every 2 min, idle 10 min, longest 3 h; car head unit set.
+- [ ] App closed, screen off: get in, connect the head unit. Within a minute a "Drive session" notification with Stop; log `drive session WICAN <address> started (PULL)`.
+- [ ] Drive 30 min. Status screen: "Drive session: N rounds, M rows, since HH:MM" with N ≈ 15; the sink receives at least 10 batches, each within 2 min + upload delay + upload time of its rows being logged.
+- [ ] Sync now during the session: no second connection (no `sync WICAN` line with a link), one extra round at once (`handed to the running drive session`).
+- [ ] Periodic syncs during the session end at once (the session holds the lock) and presence enqueues nothing: no second link (logcat `PresenceService`, no extra connection in the device's `blehttp` counters).
+- [ ] Walk out of range for a minute and back: `link lost …; reopening`, then rounds continue; out of range for longer: session ends `LINK_LOST`.
+- [ ] Park, engine off, head unit disconnects: one last round within a minute of the disconnect, then `ended CAR_DISCONNECTED`; the notification disappears.
+- [ ] Engine on, parked, nothing logged (car off with the head unit connected, if possible): `ended IDLE` 10 min after the last stored row.
+- [ ] Notification Stop: `ended USER_STOPPED` at once (after a round in progress).
+- [ ] Toggle off: car connect enqueues one sync, as in case 7.
+- [ ] Battery: Battery Historian over a 1-hour session; compare with a 1-hour A2DP connection.
+- [ ] Kill the app process mid-session (`adb shell am kill`): the service restarts and resumes the session (new start time), or note that it did not.
+- Capture: `drive session` log lines with times, status screen text, sink access log, Battery Historian summary.
+- Settles: ticket 0001 acceptance; background FGS start from the car trigger and presence on this phone.
+- If it fails: `DriveSession.kt`, `DriveSessionService.kt`, `SyncTriggers.kt` (`planTrigger`), `CarTrigger.kt`, `DevicePresence.kt`.

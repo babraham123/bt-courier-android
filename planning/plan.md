@@ -44,7 +44,7 @@ BLE / Wi-Fi   WiCAN      clock repair   SQLite    HttpPut/HttpPost/Sftp/Mqtt/Loc
 | Store | append page, persist cursor atomically, seal batches, per-sink ack, byte cap | core `DefaultStore` on an in-memory snapshot behind one `SnapshotPersistence` seam (`FilePersistence`: index.json + one file per page, temp-then-rename; `MemoryPersistence` for tests; Room dropped, see tasks A10). Pages keyed by `_cursor` (idempotency). Seal on `_file` boundary, 1 MB, or the upload-delay setting (0 by default, so every seal closes what is open; a non-zero delay gets its own scheduled upload). Cap 200 MB, oldest-first eviction with a dropped counter |
 | Sink | `upload(batch) → ack`; `Delivery` owns per-sink retry state (streak, `Retry-After`) across rounds and, through `RetryStateStore` (the app's in the status DataStore), across process restarts; transports only classify | Transports `HttpPut`, `HttpPost`, `Sftp` (sshj, pinned host key, Keystore P-256 key), `Mqtt` (HiveMQ, QoS 1), `LocalFolder` (SAF); formats `Jsonl`, `Csv`, `PrometheusText`; any transport × any format, several sinks at once, each with its own ack id |
 | Auth | `None \| Basic \| Bearer \| Oidc` per sink; `SinkCredentials` owns every per-sink credential (names, SFTP key alias, token rotation, SAF grant release) | OIDC via device authorization grant (RFC 8628), tokens and client secret in the Keystore-backed secret store, refreshed in the background; MQTT uses Basic as its username/password; SFTP authenticates with the Keystore key |
-| Scheduler | triggers → sync; constraints → upload | CDM device presence (that device), periodic 15 min (every device), manual, car ACL connect/disconnect (WiCAN devices only); `SyncJob` returns one `SyncOutcome` with the status record and the retry verdict (`SyncRetryPolicy`: 429 retried 1/2/4 s on the link, interrupted runs re-run up to 5 times); one sync per device with a per-device lock shared with the pair wizard's probe; an automatic sync skips connecting before its kind's `nextDueAtMs` from the stored cursor (the ring: an hour after its cursor's cut; WiCAN: always due), a manual one always connects; upload `UNMETERED` by default with cellular toggle |
+| Scheduler | triggers → sync; constraints → upload | CDM device presence (that device), periodic 15 min (every device), manual, car ACL connect/disconnect (WiCAN devices only); with the drive session setting on, presence and car connect start a `DriveSession` for kinds with a live mode instead (a `connectedDevice` foreground service holding the link, pulling every 1–10 min until the car disconnects, the idle time passes or the 3 h cap; `planTrigger` decides, ticket 0001); `SyncJob` returns one `SyncOutcome` with the status record and the retry verdict (`SyncRetryPolicy`: 429 retried 1/2/4 s on the link, interrupted runs re-run up to 5 times); one sync per device with a per-device lock shared with the pair wizard's probe; an automatic sync skips connecting before its kind's `nextDueAtMs` from the stored cursor (the ring: an hour after its cursor's cut; WiCAN: always due), a manual one always connects; upload `UNMETERED` by default with cellular toggle |
 | UI | pair wizard (device kind first), status per device, settings with a sink list and a generic sink editor, log export | Compose; per-device-kind behaviour (profile, filter, source, probe, labels) behind `app/device/DeviceSupport`; per-transport config, fields, validation and build behind `app/data/sinkkind/SinkTransportKind` |
 
 ### Sync loop
@@ -80,7 +80,7 @@ BLE / Wi-Fi   WiCAN      clock repair   SQLite    HttpPut/HttpPost/Sftp/Mqtt/Loc
 | Stream while connected | none | ELM327 over BLE (built in core, `Elm327Source`; collected by the drive session, ticket 0001); HR straps |
 | Broadcast | none | Ruuvi, TPMS, Victron |
 
-Class 1 is built for the WiCAN logger and the Colmi ring (`DeviceKind` picks the GATT profile, source and store source id `wican:`/`colmi:<address>`); Class 2 has `Elm327Source` in core (ticket 0002); `Source.subscribe()` has no collector until the drive session lands.
+Class 1 is built for the WiCAN logger and the Colmi ring (`DeviceKind` picks the GATT profile, source and store source id `wican:`/`colmi:<address>`). Class 2 is collected by the drive session (`LiveMode.STREAM`): each emission of `subscribe()` is stored by core `StreamRecorder` as a page `session:<start ms>:<n>` under a `{"_file":"<kind>/<start ms>"}` marker, so sealing, dedupe and uploads are unchanged; `Elm327Source` in core is the first such source (ticket 0002).
 
 ### Car trigger
 
@@ -88,11 +88,13 @@ Class 1 is built for the WiCAN logger and the Colmi ring (`DeviceKind` picks the
 unit's address, are exempt from implicit-broadcast limits and reach a manifest
 receiver. Connect = in the car, dongle awake: enqueue a sync. Disconnect = trip
 ended, dongle stays awake ~3 min: sync now so the trip lands before it sleeps.
+With the drive session setting on, connect starts a session instead and disconnect
+(after the same 60 s debounce) gives the running session one last pull and ends it.
 CDM presence on the dongle itself remains the primary trigger.
 
 ## Non-goals (v1)
 
-iOS, Play Store, live streaming, broadcast sources, daily cellular cap.
+iOS, Play Store, broadcast sources, daily cellular cap, Bluetooth classic (SPP) OBD adapters.
 
 ## Constraints
 

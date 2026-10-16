@@ -26,11 +26,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.btcourier.R
+import app.btcourier.data.AppSettings
 import app.btcourier.data.SinkConfig
 import app.btcourier.data.sinkkind.module
 import app.btcourier.ui.BackButton
@@ -88,6 +90,29 @@ fun SettingsScreen(
                 viewModel.edit { it.copy(periodicSync = v) }
             }
             CarPicker(form.carDeviceAddress) { address -> viewModel.edit { it.copy(carDeviceAddress = address) } }
+            Toggle(R.string.settings_drive_session, R.string.settings_drive_session_help, form.driveSession) { v ->
+                viewModel.edit { it.copy(driveSession = v) }
+            }
+            if (form.driveSession) {
+                MinutesPicker(
+                    R.string.settings_drive_interval,
+                    R.string.settings_drive_interval_help,
+                    DRIVE_INTERVAL_OPTIONS,
+                    form.drivePullIntervalMinutes,
+                ) { v -> viewModel.edit { it.copy(drivePullIntervalMinutes = v) } }
+                MinutesPicker(
+                    R.string.settings_drive_idle,
+                    R.string.settings_drive_idle_help,
+                    DRIVE_IDLE_OPTIONS,
+                    form.driveIdleMinutes,
+                ) { v -> viewModel.edit { it.copy(driveIdleMinutes = v) } }
+                MinutesPicker(
+                    R.string.settings_drive_max,
+                    R.string.settings_drive_max_help,
+                    DRIVE_MAX_OPTIONS,
+                    form.driveMaxSessionMinutes,
+                ) { v -> viewModel.edit { it.copy(driveMaxSessionMinutes = v) } }
+            }
 
             HorizontalDivider()
             Heading(R.string.settings_cache)
@@ -148,6 +173,28 @@ private enum class UploadDelay(
         fun nearest(ms: Long) = entries.minBy { abs(it.ms - ms) }
     }
 }
+
+/** The drive session choices offered, in minutes, each within its [AppSettings] range. */
+internal val DRIVE_INTERVAL_OPTIONS = listOf(1, 2, 5, 10)
+internal val DRIVE_IDLE_OPTIONS = listOf(2, 5, 10, 15, 30, 60)
+internal val DRIVE_MAX_OPTIONS = listOf(30, 60, 120, 180, 240, 480)
+
+/** A [Picker] of minute counts; a stored value that is not offered is shown as it is. */
+@Composable
+private fun MinutesPicker(
+    @StringRes label: Int,
+    @StringRes help: Int,
+    options: List<Int>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+) = Picker(
+    label,
+    (options + selected).distinct().sorted(),
+    selected,
+    help,
+    textOf = { pluralStringResource(R.plurals.settings_minutes, it, it) },
+    onSelect = onSelect,
+)
 
 @Composable
 private fun SinkRow(

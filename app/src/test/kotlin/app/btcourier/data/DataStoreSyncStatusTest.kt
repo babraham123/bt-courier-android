@@ -84,7 +84,7 @@ class DataStoreSyncStatusTest {
         }
 
     @Test
-    fun `per-device entries and the upload record round trip through the file`() =
+    fun `per-device entries, the upload record and the drive session round trip through the file`() =
         runBlocking {
             val expected =
                 SyncStatus(
@@ -97,6 +97,7 @@ class DataStoreSyncStatusTest {
                         ),
                     pendingBatches = 4,
                     lastUploadBySink = mapOf("http" to SinkUpload(5, UploadResultKind.DELIVERED)),
+                    driveSession = DriveSessionStatus(dongle, 6, 3, 40, 7, DriveSessionEnd.CAR_DISCONNECTED),
                 )
             DataStoreSyncStatus(open()).update { expected }
             files.closeAll()

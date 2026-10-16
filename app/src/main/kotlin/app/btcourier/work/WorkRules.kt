@@ -12,15 +12,11 @@ enum class WorkVerdict { SUCCESS, RETRY }
  * a thin adapter that reads its inputs and maps the [WorkVerdict] to a WorkManager result.
  *
  * - Without an address (the periodic work, or a one-time sync queued before syncs were per
- *   device) the run fans out: one automatic sync per paired device ([SyncTrigger.Periodic]). With
- *   none paired it runs [SyncJob] without a device, which only seals.
- * - Whenever the run sealed new batches, an upload is enqueued, KEEP so an upload already waiting
- *   delivers them: also after an interrupted sync and after one that found no device, since
- *   sealing happens anyway.
- * - Whenever the run left lines open, an upload is also scheduled for when the age rule closes
- *   them ([SyncOutcome.sealDueAtMs], [FollowUp.SEAL]); the upload's own seal then closes them, so
- *   they do not wait for the next sync to come along. Both can apply to one run: a sync that
- *   closed one file and left the next half-pulled.
+ *   device) the run fans out: one automatic sync per paired device it syncs
+ *   ([SyncTrigger.Periodic]). With none paired it runs [SyncJob] without a device, which only
+ *   seals.
+ * - After every run, the upload rule of [uploadAfterSeal] applies to its seal: also after an
+ *   interrupted sync and after one that found no device, since sealing happens anyway.
  * - Whether to run again is the outcome's [SyncOutcome.retryWorthwhile] ([SyncRetryPolicy] says
  *   when), which the worker turns into WorkManager's back-off.
  */
@@ -45,10 +41,12 @@ class SyncWork(
         manual: Boolean = false,
         onConnected: suspend () -> Unit = {},
     ): WorkVerdict {
-        if (address == null && fanOut.fire(SyncTrigger.Periodic).isNotEmpty()) return WorkVerdict.SUCCESS
+        if (address == null) {
+            // Paired devices the periodic work does not sync (streaming ones) are not "nothing paired".
+            if (fanOut.fire(SyncTrigger.Periodic).isNotEmpty() || fanOut.anyPaired()) return WorkVerdict.SUCCESS
+        }
         val outcome = job.run(address, sealPolicy, attempt, manual, onConnected)
-        if (outcome.newBatches) work.uploadNow(uploadOverCellular, replace = false)
-        outcome.sealDueAtMs?.let { work.uploadAt(it - clock(), uploadOverCellular, FollowUp.SEAL) }
+        work.uploadAfterSeal(outcome.newBatches, outcome.sealDueAtMs, uploadOverCellular, clock())
         return if (outcome.retryWorthwhile) WorkVerdict.RETRY else WorkVerdict.SUCCESS
     }
 }

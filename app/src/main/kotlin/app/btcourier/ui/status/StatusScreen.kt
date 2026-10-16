@@ -122,6 +122,10 @@ fun StatusScreen(
                 }, onForget = { viewModel.forget(row.device) })
             }
 
+            state.driveSession?.let { session ->
+                Section(R.string.drive_session_title) { Text(driveSessionSummary(context, session)) }
+            }
+
             Section(R.string.status_cache) {
                 InfoRow(R.string.status_pending_batches, state.pendingBatches.toString())
                 InfoRow(

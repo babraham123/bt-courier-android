@@ -33,6 +33,9 @@ object ColmiRingSupport : DeviceSupport {
     // Worn, not in the car: the head unit says nothing about whether the ring is in range.
     override val syncsOnCarTrigger = false
 
+    // Its logs fill in 5-minute slots and are pulled hourly; a held link would buy nothing.
+    override val liveMode = LiveMode.NONE
+
     /** The interval the pair wizard turns logging on with; its checkbox label states it. */
     const val PAIRING_AUTO_HR_INTERVAL_MINUTES: Int = 5
 

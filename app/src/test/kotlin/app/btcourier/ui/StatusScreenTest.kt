@@ -1,5 +1,6 @@
 package app.btcourier.ui
 
+import android.text.format.DateUtils
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onNodeWithText
@@ -8,6 +9,8 @@ import app.btcourier.R
 import app.btcourier.ble.PairedDevice
 import app.btcourier.data.AppSettings
 import app.btcourier.data.DeviceSync
+import app.btcourier.data.DriveSessionEnd
+import app.btcourier.data.DriveSessionStatus
 import app.btcourier.data.InMemorySyncStatus
 import app.btcourier.data.SinkConfig
 import app.btcourier.data.SinkUpload
@@ -95,6 +98,46 @@ class StatusScreenTest : ScreenTest() {
         infoRow(string(R.string.status_sink, sink.name), string(R.string.upload_retrying))
             .performScrollTo()
             .assertIsDisplayed()
+    }
+
+    private fun rounds(n: Int) = app.resources.getQuantityString(R.plurals.drive_session_rounds, n, n)
+
+    private fun rows(n: Long) = app.resources.getQuantityString(R.plurals.drive_session_rows, n.toInt(), n)
+
+    @Test
+    fun `a running drive session shows its rounds, rows and start time`() {
+        val start = 1_790_000_000_000L
+        show(SyncStatus(driveSession = DriveSessionStatus(device.address, start, rounds = 3, rows = 120)))
+
+        val since = DateUtils.formatDateTime(app, start, DateUtils.FORMAT_SHOW_TIME)
+        onText(R.string.drive_session_title).performScrollTo().assertIsDisplayed()
+        onText(R.string.drive_session_running, rounds(3), rows(120), since).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `an ended drive session shows when and why it ended, with its totals`() {
+        val start = 1_790_000_000_000L
+        val end = start + 3_600_000
+        show(
+            SyncStatus(
+                driveSession = DriveSessionStatus(device.address, start, 30, 1, end, DriveSessionEnd.CAR_DISCONNECTED),
+            ),
+        )
+
+        onText(
+            R.string.drive_session_ended,
+            formatStatusTime(app, end),
+            string(R.string.drive_end_car_disconnected),
+            rounds(30),
+            rows(1),
+        ).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `without a drive session there is no drive session section`() {
+        show()
+
+        assertNoText(R.string.drive_session_title)
     }
 
     @Test

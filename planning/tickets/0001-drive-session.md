@@ -1,6 +1,6 @@
 # Drive session: keep pulling from the WiCAN while the car is in use
 
-Status: proposed. File as a GitHub issue with `gh issue create --title "..." -F planning/tickets/0001-drive-session.md`.
+Status: implemented (unverified on hardware), with the amendments below (task L10). File as a GitHub issue with `gh issue create --title "..." -F planning/tickets/0001-drive-session.md`.
 
 ## Problem
 
@@ -35,6 +35,30 @@ while the companion device is connected; the manifest already declares `connecte
   `app/work/` next to `SyncJob`, behind `WorkControl` per ADR 0001; the service is a thin adapter.
 - **Settings**: "Keep syncing while driving" toggle (default off until verified on hardware),
   interval, and the idle cap.
+
+## Amendments (as implemented)
+
+- **Live modes.** `DeviceSupport.liveMode: LiveMode {NONE, PULL, STREAM}`. WiCAN is `PULL` (the loop
+  above), the Colmi ring `NONE` (never in a session), and a streaming kind such as the ELM327 of
+  ticket 0002 is `STREAM`: the session collects `Source.subscribe()` and stores each emission
+  through core `StreamRecorder` (one page per emission with rows, cursor
+  `session:<start ms>:<n>`, the first under `{"_file":"<kind>/<start ms>"}`, normalised with an
+  empty journal and no anchor). A streaming kind sets its own polling pace and is never synced by
+  a trigger, since it keeps nothing to pull.
+- **Idle rule as a duration.** `maxIdlePulls` became `driveIdleMinutes` (default 10, 2–60): the
+  session ends once no row has been stored for that long, which works for both modes (with the
+  defaults it is the same five idle pulls). Settings: `driveSession` (default off),
+  `drivePullIntervalMinutes` (default 2, 1–10, `PULL` only), `driveIdleMinutes`,
+  `driveMaxSessionMinutes` (default 180, 30–480).
+- **Rounds, not pulls.** The status line counts rounds (pull rounds or stream emissions) and rows:
+  "Drive session: N rounds, M rows, since HH:MM", or the last session's end time and reason.
+- **Manual sync.** A manual sync that finds the session's lock asks the session for a round now
+  (`SyncOutcome.HandedToSession`); automatic syncs stay no-ops (`AlreadyRunning`), and presence
+  or the car connecting enqueue nothing for a device already in a session.
+- **Link loss.** A pull round whose response was cut off counts as a lost link too; each loss gets
+  up to 2 reopen attempts 10 s apart, and a link that comes back is pulled at once.
+- **Refused start.** If the system refuses the foreground service start, the trigger enqueues
+  the sync it would have enqueued with the setting off.
 
 ## Prerequisite
 

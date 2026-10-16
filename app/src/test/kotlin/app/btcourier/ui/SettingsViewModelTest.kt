@@ -4,6 +4,9 @@ import app.btcourier.data.AppSettings
 import app.btcourier.data.SinkConfig
 import app.btcourier.data.TransportConfig
 import app.btcourier.ui.settings.CacheCapProblem
+import app.btcourier.ui.settings.DRIVE_IDLE_OPTIONS
+import app.btcourier.ui.settings.DRIVE_INTERVAL_OPTIONS
+import app.btcourier.ui.settings.DRIVE_MAX_OPTIONS
 import app.btcourier.ui.settings.SettingsViewModel
 import app.btcourier.ui.settings.validateCacheCap
 import app.btcourier.work.RecordingWorkControl
@@ -47,6 +50,10 @@ class SettingsViewModelTest {
                     periodicSync = false,
                     maxBatchAgeMs = 5 * 60_000L,
                     carDeviceAddress = CAR,
+                    driveSession = true,
+                    drivePullIntervalMinutes = 1,
+                    driveIdleMinutes = 30,
+                    driveMaxSessionMinutes = 60,
                 )
             }
 
@@ -60,6 +67,10 @@ class SettingsViewModelTest {
                     maxBatchAgeMs = 5 * 60_000L,
                     periodicSync = false,
                     carDeviceAddress = CAR,
+                    driveSession = true,
+                    drivePullIntervalMinutes = 1,
+                    driveIdleMinutes = 30,
+                    driveMaxSessionMinutes = 60,
                 ),
                 settings.current(),
             )
@@ -112,6 +123,35 @@ class SettingsViewModelTest {
             assertTrue(work.calls.isEmpty())
             assertTrue(work.periodic.isEmpty())
         }
+
+    @Test
+    fun `the drive session settings start from the stored ones and are saved without rescheduling work`() =
+        runTest {
+            settings.update { it.copy(driveSession = true, drivePullIntervalMinutes = 5, driveIdleMinutes = 15) }
+            val vm = vm()
+            assertEquals(true, vm.state.value.form.driveSession)
+            assertEquals(5, vm.state.value.form.drivePullIntervalMinutes)
+            assertEquals(15, vm.state.value.form.driveIdleMinutes)
+            assertEquals(180, vm.state.value.form.driveMaxSessionMinutes)
+
+            vm.edit { it.copy(driveSession = false, driveMaxSessionMinutes = 480) }
+            vm.save()
+
+            assertEquals(false, settings.current().driveSession)
+            assertEquals(480, settings.current().driveMaxSessionMinutes)
+            assertTrue(work.calls.isEmpty())
+            assertTrue(work.periodic.isEmpty())
+        }
+
+    @Test
+    fun `every drive session choice offered is within its stored range`() {
+        assertTrue(DRIVE_INTERVAL_OPTIONS.all { it in AppSettings.DRIVE_PULL_INTERVAL_MINUTES })
+        assertTrue(DRIVE_IDLE_OPTIONS.all { it in AppSettings.DRIVE_IDLE_MINUTES })
+        assertTrue(DRIVE_MAX_OPTIONS.all { it in AppSettings.DRIVE_MAX_SESSION_MINUTES })
+        assertTrue(AppSettings().drivePullIntervalMinutes in DRIVE_INTERVAL_OPTIONS)
+        assertTrue(AppSettings().driveIdleMinutes in DRIVE_IDLE_OPTIONS)
+        assertTrue(AppSettings().driveMaxSessionMinutes in DRIVE_MAX_OPTIONS)
+    }
 
     @Test
     fun `reloading discards unsaved edits`() =

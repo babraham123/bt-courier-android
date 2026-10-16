@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
@@ -30,6 +31,14 @@ import kotlinx.coroutines.flow.map
  * @property carDeviceAddress MAC of the car head unit whose ACL connect/disconnect triggers a sync
  *   (`CarTrigger`); null disables the car trigger.
  * @property devices kind and name of each associated device ([DeviceConfig]).
+ * @property driveSession whether the car connecting or a device appearing starts a drive session
+ *   (`DriveSession`) for devices that have a live mode, instead of one sync.
+ * @property drivePullIntervalMinutes how often a session pulls a device it pulls
+ *   ([DRIVE_PULL_INTERVAL_MINUTES]); a streaming device sets its own pace.
+ * @property driveIdleMinutes a session ends once no row has been stored for this long
+ *   ([DRIVE_IDLE_MINUTES]).
+ * @property driveMaxSessionMinutes a session ends this long after it started, whatever happens
+ *   ([DRIVE_MAX_SESSION_MINUTES]).
  */
 data class AppSettings(
     val sinks: List<SinkConfig> = emptyList(),
@@ -39,8 +48,23 @@ data class AppSettings(
     val periodicSync: Boolean = true,
     val carDeviceAddress: String? = null,
     val devices: List<DeviceConfig> = emptyList(),
+    val driveSession: Boolean = false,
+    val drivePullIntervalMinutes: Int = 2,
+    val driveIdleMinutes: Int = 10,
+    val driveMaxSessionMinutes: Int = 180,
 ) {
     val sealPolicy: SealPolicy get() = SealPolicy(maxBatchAgeMs = maxBatchAgeMs, maxStoreBytes = cacheCapBytes)
+
+    companion object {
+        /** Below a minute a pull costs more radio time than it saves latency; above 10 it is the periodic sync. */
+        val DRIVE_PULL_INTERVAL_MINUTES = 1..10
+
+        /** At least one pull interval of quiet; at most an hour parked with the engine on. */
+        val DRIVE_IDLE_MINUTES = 2..60
+
+        /** The hard cap on one session, so a stuck one cannot hold the link all day. */
+        val DRIVE_MAX_SESSION_MINUTES = 30..480
+    }
 }
 
 interface SettingsRepository {
@@ -82,6 +106,10 @@ class DataStoreSettings(
             prefs[SettingsKeys.PERIODIC_SYNC] = next.periodicSync
             next.carDeviceAddress?.let { prefs[SettingsKeys.CAR_DEVICE] = it } ?: prefs.remove(SettingsKeys.CAR_DEVICE)
             prefs[SettingsKeys.DEVICES] = encodeDevices(next.devices)
+            prefs[SettingsKeys.DRIVE_SESSION] = next.driveSession
+            prefs[SettingsKeys.DRIVE_PULL_INTERVAL] = next.drivePullIntervalMinutes
+            prefs[SettingsKeys.DRIVE_IDLE] = next.driveIdleMinutes
+            prefs[SettingsKeys.DRIVE_MAX_SESSION] = next.driveMaxSessionMinutes
         }
     }
 
@@ -95,6 +123,16 @@ class DataStoreSettings(
             periodicSync = prefs[SettingsKeys.PERIODIC_SYNC] ?: defaults.periodicSync,
             carDeviceAddress = prefs[SettingsKeys.CAR_DEVICE],
             devices = prefs[SettingsKeys.DEVICES]?.let(::decodeDevicesOrEmpty) ?: defaults.devices,
+            driveSession = prefs[SettingsKeys.DRIVE_SESSION] ?: defaults.driveSession,
+            // Clamped, so a value only a newer version offers still reads as one this version can run.
+            drivePullIntervalMinutes =
+                (prefs[SettingsKeys.DRIVE_PULL_INTERVAL] ?: defaults.drivePullIntervalMinutes)
+                    .coerceIn(AppSettings.DRIVE_PULL_INTERVAL_MINUTES),
+            driveIdleMinutes =
+                (prefs[SettingsKeys.DRIVE_IDLE] ?: defaults.driveIdleMinutes).coerceIn(AppSettings.DRIVE_IDLE_MINUTES),
+            driveMaxSessionMinutes =
+                (prefs[SettingsKeys.DRIVE_MAX_SESSION] ?: defaults.driveMaxSessionMinutes)
+                    .coerceIn(AppSettings.DRIVE_MAX_SESSION_MINUTES),
         )
     }
 
@@ -126,6 +164,10 @@ internal object SettingsKeys {
     val PERIODIC_SYNC = booleanPreferencesKey("periodic_sync")
     val CAR_DEVICE = stringPreferencesKey("car_device_address")
     val DEVICES = stringPreferencesKey("devices")
+    val DRIVE_SESSION = booleanPreferencesKey("drive_session")
+    val DRIVE_PULL_INTERVAL = intPreferencesKey("drive_pull_interval_minutes")
+    val DRIVE_IDLE = intPreferencesKey("drive_idle_minutes")
+    val DRIVE_MAX_SESSION = intPreferencesKey("drive_max_session_minutes")
 
     // The single HTTP PUT sink of earlier versions; read only by LegacySinkMigration.
     val LEGACY_URL = stringPreferencesKey("sink_url")

@@ -82,6 +82,31 @@ class SettingsScreenTest : ScreenTest() {
         assertEquals(30 * 60_000L, stored().maxBatchAgeMs)
     }
 
+    private fun minutes(n: Int) = app.resources.getQuantityString(R.plurals.settings_minutes, n, n)
+
+    @Test
+    fun `the drive session choices show once it is on, start from the defaults, and saving stores the ones picked`() {
+        show()
+
+        assertNoText(R.string.settings_drive_interval)
+        toggle(R.string.settings_drive_session).assertIsOff().tap().assertIsOn()
+        field(R.string.settings_drive_interval).assertTextContains(minutes(2))
+        field(R.string.settings_drive_idle).assertTextContains(minutes(10))
+        field(R.string.settings_drive_max).assertTextContains(minutes(180))
+
+        pick(R.string.settings_drive_interval, minutes(5))
+        pick(R.string.settings_drive_idle, minutes(30))
+        pick(R.string.settings_drive_max, minutes(480))
+        onText(R.string.settings_save).tap()
+
+        onText(R.string.settings_saved).assertIsDisplayed()
+        assertEquals(true, stored().driveSession)
+        assertEquals(5, stored().drivePullIntervalMinutes)
+        assertEquals(30, stored().driveIdleMinutes)
+        assertEquals(480, stored().driveMaxSessionMinutes)
+        assertTrue(work.calls.isEmpty())
+    }
+
     @Test
     fun `each sink row shows its name and kind and opens it, and add opens a new one`() {
         show()

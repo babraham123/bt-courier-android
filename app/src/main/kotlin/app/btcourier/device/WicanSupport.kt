@@ -28,6 +28,9 @@ object WicanSupport : DeviceSupport {
     // Only a dongle plugged into the car is awake when the head unit connects.
     override val syncsOnCarTrigger = true
 
+    // The logger appends while the car runs, and the export serves rows from the stored cursor.
+    override val liveMode = LiveMode.PULL
+
     override val label = R.string.kind_wican
     override val pairingText =
         PairingText(

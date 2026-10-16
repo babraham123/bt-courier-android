@@ -18,7 +18,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 
 /** A dropdown labelled [label] choosing one of [options], each named by the string [labelOf] gives. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun <T> Picker(
     @StringRes label: Int,
@@ -27,11 +26,23 @@ internal fun <T> Picker(
     labelOf: (T) -> Int,
     @StringRes help: Int? = null,
     onSelect: (T) -> Unit,
+) = Picker(label, options, selected, help, textOf = { stringResource(labelOf(it)) }, onSelect = onSelect)
+
+/** A dropdown labelled [label] choosing one of [options], each named by the text [textOf] gives. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun <T> Picker(
+    @StringRes label: Int,
+    options: List<T>,
+    selected: T,
+    @StringRes help: Int? = null,
+    textOf: @Composable (T) -> String,
+    onSelect: (T) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         OutlinedTextField(
-            value = stringResource(labelOf(selected)),
+            value = textOf(selected),
             onValueChange = {},
             readOnly = true,
             label = { Text(stringResource(label)) },
@@ -46,7 +57,7 @@ internal fun <T> Picker(
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(stringResource(labelOf(option))) },
+                    text = { Text(textOf(option)) },
                     onClick = {
                         onSelect(option)
                         expanded = false

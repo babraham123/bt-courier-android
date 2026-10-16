@@ -31,6 +31,7 @@ import kotlinx.serialization.json.JsonObject
  *
  * @property lastSyncByDevice latest sync per device, keyed by upper-case address; a device that
  *   never synced has no entry.
+ * @property driveSession the drive session running now, or the last one; null before the first.
  */
 @Serializable
 data class SyncStatus(
@@ -46,6 +47,7 @@ data class SyncStatus(
     val lastUploadBySink: Map<String, SinkUpload> = emptyMap(),
     val lastError: String? = null,
     val lastErrorAtMs: Long? = null,
+    val driveSession: DriveSessionStatus? = null,
 ) {
     fun withCounters(c: StoreCounters) =
         copy(
@@ -69,6 +71,54 @@ data class SyncStatus(
         lastSyncByDevice =
             lastSyncByDevice + (address.uppercase() to sync),
     )
+}
+
+/**
+ * A drive session as `DriveSession` records it: at its start, after every round, and at its end.
+ *
+ * @property address upper-case address of the device the session holds a link to.
+ * @property rounds pull rounds run, or stream emissions received.
+ * @property rows data rows newly stored.
+ * @property endedAtMs null while the session runs.
+ * @property end why it ended; null while it runs.
+ */
+@Serializable
+data class DriveSessionStatus(
+    val address: String,
+    val startedAtMs: Long,
+    val rounds: Int = 0,
+    val rows: Long = 0,
+    val endedAtMs: Long? = null,
+    val end: DriveSessionEnd? = null,
+) {
+    val running: Boolean get() = end == null
+}
+
+/** Why a drive session ended. */
+enum class DriveSessionEnd {
+    /** The car head unit disconnected; a pulled device got one last round first. */
+    CAR_DISCONNECTED,
+
+    /** The user pressed Stop. */
+    USER_STOPPED,
+
+    /** No row was stored for the idle time. */
+    IDLE,
+
+    /** The session reached its maximum length. */
+    SESSION_CAP,
+
+    /** The link dropped and could not be reopened. */
+    LINK_LOST,
+
+    /** The first link could not be opened. */
+    UNREACHABLE,
+
+    /** Another session or a sync held the device's link, so this one never started. */
+    BUSY,
+
+    /** The device is not paired, or its kind has no live mode; nothing was opened. */
+    NOT_LIVE,
 }
 
 /**

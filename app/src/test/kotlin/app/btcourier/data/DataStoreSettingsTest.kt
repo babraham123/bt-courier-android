@@ -70,6 +70,10 @@ class DataStoreSettingsTest {
                     periodicSync = false,
                     carDeviceAddress = "AA:BB:CC:DD:EE:0A",
                     devices = devices,
+                    driveSession = true,
+                    drivePullIntervalMinutes = 5,
+                    driveIdleMinutes = 15,
+                    driveMaxSessionMinutes = 240,
                 )
             DataStoreSettings(open(migrate = true)).update { expected }
             files.closeAll()
@@ -214,6 +218,35 @@ class DataStoreSettingsTest {
             assertEquals(0L, settings.maxBatchAgeMs)
             assertEquals(0L, settings.sealPolicy.maxBatchAgeMs)
             assertEquals(settings.cacheCapBytes, settings.sealPolicy.maxStoreBytes)
+        }
+
+    @Test
+    fun `settings stored before drive sessions existed keep them off, with a 2-minute pull, 10 idle minutes and a 3-hour cap`() =
+        runBlocking {
+            writeLegacy { it[SettingsKeys.CELLULAR] = true }
+
+            val settings = DataStoreSettings(open(migrate = true)).current()
+
+            assertFalse(settings.driveSession)
+            assertEquals(2, settings.drivePullIntervalMinutes)
+            assertEquals(10, settings.driveIdleMinutes)
+            assertEquals(180, settings.driveMaxSessionMinutes)
+        }
+
+    @Test
+    fun `drive session minutes outside their ranges read as the nearest bound`() =
+        runBlocking {
+            writeLegacy {
+                it[SettingsKeys.DRIVE_PULL_INTERVAL] = 0
+                it[SettingsKeys.DRIVE_IDLE] = 600
+                it[SettingsKeys.DRIVE_MAX_SESSION] = 5
+            }
+
+            val settings = DataStoreSettings(open(migrate = true)).current()
+
+            assertEquals(1, settings.drivePullIntervalMinutes)
+            assertEquals(60, settings.driveIdleMinutes)
+            assertEquals(30, settings.driveMaxSessionMinutes)
         }
 
     @Test

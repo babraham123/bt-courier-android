@@ -34,6 +34,9 @@ interface DeviceSupport {
     /** Whether the car head unit connecting or disconnecting syncs devices of this kind. */
     val syncsOnCarTrigger: Boolean
 
+    /** How a drive session (`DriveSession`) keeps a link to a device of this kind; see [LiveMode]. */
+    val liveMode: LiveMode
+
     /** The kind's name on the pair wizard and status screen. */
     @get:StringRes
     val label: Int
@@ -73,6 +76,18 @@ interface DeviceSupport {
         link: GattLink,
         choices: PairingChoices,
     ): ProbeResult
+}
+
+/** How a drive session gets rows from a device it holds a link to. */
+enum class LiveMode {
+    /** Never in a drive session: the device's history grows too slowly to be worth a held link. */
+    NONE,
+
+    /** The session runs `SyncRunner` from the stored cursor on the open link every pull interval. */
+    PULL,
+
+    /** The session collects [Source.subscribe] and stores each emission; the source sets the pace. */
+    STREAM,
 }
 
 /**

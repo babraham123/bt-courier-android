@@ -14,6 +14,7 @@ import app.btcourier.data.DeviceSync
 import app.btcourier.data.SyncResultKind
 import app.btcourier.data.SyncStatusRepository
 import app.btcourier.data.SyncStopKind
+import app.btcourier.device.DeviceSupport
 import app.btcourier.device.SourceOptions
 import app.btcourier.device.support
 import app.btcourier.log.AppLog
@@ -46,8 +47,11 @@ import kotlin.time.Duration.Companion.seconds
  *
  * At most one sync runs per device: periodic fan-out, presence and manual syncs can enqueue
  * overlapping works for one device, so [locks] is what keeps them from opening two links to it;
- * the pair wizard's probe takes the same lock. A sync that finds its device's lock held returns
- * [SyncOutcome.AlreadyRunning]. Different devices sync in parallel.
+ * the pair wizard's probe takes the same lock, and so does a [DriveSession] for its whole length.
+ * A sync that finds its device's lock held returns [SyncOutcome.AlreadyRunning], except a manual
+ * one while a drive session holds it: the session runs a round at once instead
+ * ([DriveSession.pullNow]), so the user's request is answered on the open link and no second link
+ * is tried ([SyncOutcome.HandedToSession]). Different devices sync in parallel.
  *
  * @param retry when a sync is tried again, within the run and across runs; see [SyncRetryPolicy].
  * @param zone the phone's zone, which the ring's clock is set to and its days are counted in.
@@ -63,6 +67,7 @@ class SyncJob(
     private val zone: () -> ZoneId = ZoneId::systemDefault,
     private val log: AppLog = AppLog(),
     private val retry: SyncRetryPolicy = SyncRetryPolicy(),
+    private val sessions: DriveSessions = DriveSessions.process,
 ) {
     /**
      * @param address the device to sync; null when nothing is paired, which only seals.
@@ -90,7 +95,14 @@ class SyncJob(
             if (due != null && clock() < due) return finish(End.NotDue(due), device, sealPolicy, attempt)
         }
         val lock = locks.of(device.address)
-        if (!lock.tryLock()) return SyncOutcome.AlreadyRunning
+        if (!lock.tryLock()) {
+            return if (manual && sessions.pullNow(device.address)) {
+                log.info(TAG, "sync ${device.kind} handed to the running drive session")
+                SyncOutcome.HandedToSession
+            } else {
+                SyncOutcome.AlreadyRunning
+            }
+        }
         try {
             val link =
                 try {
@@ -144,12 +156,10 @@ class SyncJob(
         sealPolicy: SealPolicy,
         attempt: Int,
     ): SyncOutcome.Recorded {
-        val sealed = store.seal(sealPolicy, clock())
-        val counters = store.counters()
+        val seal = store.sealNow(sealPolicy, clock())
+        val counters = seal.counters
         val cursor = device?.let { store.cursor(sourceIdFor(it.kind, it.address)) }
-        val outcome =
-            outcomeOf(end, cursor, sealed, attempt)
-                .copy(sealDueAtMs = counters.oldestUnsealedAtMs?.let { it + sealPolicy.maxBatchAgeMs })
+        val outcome = outcomeOf(end, cursor, seal.sealed, attempt).copy(sealDueAtMs = seal.dueAtMs)
         val now = clock()
         status.update {
             val recorded = device?.let { d -> it.withSync(d.address, outcome.deviceSync(now)) } ?: it
@@ -164,7 +174,7 @@ class SyncJob(
                     append("${report.duplicates} duplicates, cursor $cursor")
                 }
                 outcome.dueAtMs?.let { append(" until ${Instant.ofEpochMilli(it)}") }
-                append("; sealed ${sealed.size}, ${counters.pendingBatches} batches pending")
+                append("; sealed ${seal.sealed.size}, ${counters.pendingBatches} batches pending")
                 outcome.sealDueAtMs?.let { append(", next seal ${Instant.ofEpochMilli(it)}") }
                 outcome.error?.let { append(": $it") }
             }
@@ -279,7 +289,13 @@ class SyncJob(
         fun sourceIdFor(
             kind: DeviceKind,
             address: String,
-        ): String = kind.support.sourcePrefix + address.uppercase()
+        ): String = sourceIdFor(kind.support, address)
+
+        /** [sourceIdFor] by the kind's [support]. */
+        fun sourceIdFor(
+            support: DeviceSupport,
+            address: String,
+        ): String = support.sourcePrefix + address.uppercase()
 
         private const val TAG = "sync"
     }
@@ -363,6 +379,16 @@ sealed interface SyncOutcome {
 
     /** Another run holds the device's lock; nothing was sealed or recorded. */
     data object AlreadyRunning : SyncOutcome {
+        override val sealed get() = emptyList<String>()
+        override val retryWorthwhile get() = false
+        override val sealDueAtMs: Long? get() = null
+    }
+
+    /**
+     * A manual sync found a drive session holding the device's link and asked it for a round now;
+     * the session seals, records and uploads that round itself.
+     */
+    data object HandedToSession : SyncOutcome {
         override val sealed get() = emptyList<String>()
         override val retryWorthwhile get() = false
         override val sealDueAtMs: Long? get() = null

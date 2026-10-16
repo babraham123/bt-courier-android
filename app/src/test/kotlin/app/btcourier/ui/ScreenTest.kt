@@ -116,6 +116,12 @@ abstract class ScreenTest {
     protected fun pick(
         @StringRes label: Int,
         @StringRes option: Int,
+    ) = pick(label, string(option))
+
+    /** Opens the dropdown labelled [label] and picks the option shown as [option]. */
+    protected fun pick(
+        @StringRes label: Int,
+        option: String,
     ) {
         field(label).tap()
         menuItem(option).performClick()

@@ -4,6 +4,7 @@ import app.btcourier.ble.PairedDevice
 import app.btcourier.data.AppSettings
 import app.btcourier.data.DeviceKind
 import app.btcourier.data.DeviceSync
+import app.btcourier.data.DriveSessionStatus
 import app.btcourier.data.InMemorySyncStatus
 import app.btcourier.data.SinkConfig
 import app.btcourier.data.SinkUpload
@@ -75,6 +76,7 @@ class StatusViewModelTest {
                     lastUploadBySink = mapOf("http" to SinkUpload(2_000, UploadResultKind.RETRYING)),
                     lastError = "link lost: timeout",
                     lastErrorAtMs = 1_000,
+                    driveSession = DriveSessionStatus(device.address, 500, rounds = 4, rows = 90),
                 )
             }
             settings.update { it.copy(cacheCapBytes = 50_000_000) }
@@ -101,6 +103,7 @@ class StatusViewModelTest {
             assertEquals(LastUpload(2_000, UploadResultKind.RETRYING), s.lastUpload)
             assertEquals(listOf(SinkRow("Home server", SinkUpload(2_000, UploadResultKind.RETRYING))), s.sinks)
             assertEquals(LastError("link lost: timeout", 1_000), s.lastError)
+            assertEquals(DriveSessionStatus(device.address, 500, rounds = 4, rows = 90), s.driveSession)
         }
 
     @Test

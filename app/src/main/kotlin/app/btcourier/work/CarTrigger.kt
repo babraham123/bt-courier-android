@@ -15,7 +15,7 @@ import kotlinx.coroutines.launch
 const val CAR_TRIGGER_DEBOUNCE_MS = 60_000L
 
 /**
- * True when an ACL broadcast should enqueue a sync: [action] is a connect or disconnect, [address]
+ * True when an ACL broadcast is a car trigger: [action] is a connect or disconnect, [address]
  * is the configured car (MACs compare case-insensitively), and the last trigger is at least
  * [CAR_TRIGGER_DEBOUNCE_MS] old. A [lastTriggerMs] in the future (wall clock moved back) does not
  * suppress, so a clock change can never silence the trigger for good.
@@ -49,11 +49,14 @@ fun decideCarTrigger(
  * On API 31+ the system sends these broadcasts only to holders of BLUETOOTH_CONNECT, so the trigger
  * stays silent until that runtime permission is granted.
  *
- * Only WiCAN devices are synced ([SyncTrigger.Car]): other paired devices are not in the car.
+ * Only kinds that live in the car are concerned ([SyncTrigger.Car], [planTrigger]): other paired
+ * devices are not in the car.
  *
- * - Connect: the phone is in the car, so the dongle is awake; sync now.
+ * - Connect: the phone is in the car, so the dongle is awake; sync now, or start a drive session
+ *   when that setting is on.
  * - Disconnect: the trip just ended. The dongle stays awake ~3 min before sleeping, so syncing now
- *   lands the trip instead of waiting for the next drive.
+ *   lands the trip instead of waiting for the next drive; a running drive session takes its last
+ *   round instead and ends.
  */
 class CarTrigger : BroadcastReceiver() {
     override fun onReceive(
@@ -80,7 +83,9 @@ class CarTrigger : BroadcastReceiver() {
                     // Wall clock, not elapsedRealtime: the window must survive a process death, and
                     // elapsedRealtime resets on reboot.
                     prefs.edit { putLong(LAST_TRIGGER, now) }
-                    AppGraph.syncFanOut.fire(SyncTrigger.Car)
+                    AppGraph.syncFanOut.fire(
+                        SyncTrigger.Car(connected = action == BluetoothDevice.ACTION_ACL_CONNECTED),
+                    )
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "car trigger failed", e)

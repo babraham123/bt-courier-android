@@ -9,6 +9,14 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- Drive session, off by default and unverified on hardware: with "Keep syncing while driving"
+  on, the car head unit connecting or the WiCAN coming in range starts a foreground service that
+  holds the BLE link and pulls every 1 to 10 minutes (2 by default) until the car disconnects
+  (after one last pull), no new data has arrived for the idle time (10 minutes by default), the
+  session reaches its maximum length (3 hours by default), the link is lost and cannot be
+  reopened, or Stop is pressed in its notification. A manual sync during a session pulls on the
+  open link. The status screen and the notification show the session's rounds, rows and start
+  time. Sessions can also collect live-streaming sources, ready for OBD-II (ELM327) adapters.
 - ELM327 OBD-II adapters over BLE, core only (no pairing or drive session yet): polls a car's
   wican-fw vehicle profile (82 cars plus a generic mode-01 set) and writes `autopid.*` rows named
   as the WiCAN logger names them, plus adapter version and battery voltage.

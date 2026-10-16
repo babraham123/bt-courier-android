@@ -20,14 +20,15 @@ import java.time.ZoneOffset
 /**
  * The kind → [DeviceSupport] lookup: a WiCAN is a bonded `ble_http` dongle found as `WiC_…`, stored
  * under `wican:` and synced when the car connects; a Colmi ring is an unbonded `R0…` device stored
- * under `colmi:` that the car does not sync. Each opens its own source on a link. A WiCAN is always
+ * under `colmi:` that the car does not sync. A drive session pulls a WiCAN on its open link and never
+ * holds a ring's. Each opens its own source on a link. A WiCAN is always
  * due for a sync; a ring is due once the day after its cursor day is whole.
  */
 class DeviceSupportTest {
     private val options = SourceOptions(clock = { 1_790_000_000_000L }, zone = ZoneOffset.UTC, pageLimit = 7)
 
     @Test
-    fun `a WiCAN bonds to the tunnel service, scans for WiC_ names, stores under wican and syncs with the car`() {
+    fun `a WiCAN bonds to the tunnel service, scans for WiC_ names, stores under wican, syncs with the car and is pulled in a session`() {
         val wican = DeviceKind.WICAN.support
 
         assertEquals(WicanGatt.PROFILE, wican.profile)
@@ -36,10 +37,11 @@ class DeviceSupportTest {
         assertFalse(wican.filter.matches("R02_0000", listOf(WicanGatt.SERVICE)))
         assertEquals("wican:", wican.sourcePrefix)
         assertTrue(wican.syncsOnCarTrigger)
+        assertEquals(LiveMode.PULL, wican.liveMode)
     }
 
     @Test
-    fun `a ring connects unbonded to its UART service, scans for R0 names, stores under colmi and ignores the car`() {
+    fun `a ring connects unbonded to its UART service, scans for R0 names, stores under colmi and ignores the car and sessions`() {
         val ring = DeviceKind.COLMI_RING.support
 
         assertEquals(ColmiRingGatt.PROFILE, ring.profile)
@@ -48,6 +50,7 @@ class DeviceSupportTest {
         assertFalse(ring.filter.matches("WiC_0123456789ab", emptyList()))
         assertEquals("colmi:", ring.sourcePrefix)
         assertFalse(ring.syncsOnCarTrigger)
+        assertEquals(LiveMode.NONE, ring.liveMode)
     }
 
     @Test

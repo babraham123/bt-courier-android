@@ -66,6 +66,27 @@
         <item quantity="one">%1$d line</item>
         <item quantity="other">%1$d lines</item>
     </plurals>
+    <string name="drive_session_title">Drive session</string>
+    <string name="drive_session_starting">Starting</string>
+    <string name="drive_session_stop">Stop</string>
+    <string name="drive_session_running">%1$s, %2$s, since %3$s</string>
+    <string name="drive_session_ended">Ended %1$s, %2$s: %3$s, %4$s</string>
+    <plurals name="drive_session_rounds">
+        <item quantity="one">%1$d round</item>
+        <item quantity="other">%1$d rounds</item>
+    </plurals>
+    <plurals name="drive_session_rows">
+        <item quantity="one">%1$d row</item>
+        <item quantity="other">%1$d rows</item>
+    </plurals>
+    <string name="drive_end_car_disconnected">car disconnected</string>
+    <string name="drive_end_user_stopped">stopped</string>
+    <string name="drive_end_idle">no new data</string>
+    <string name="drive_end_session_cap">longest session reached</string>
+    <string name="drive_end_link_lost">connection lost</string>
+    <string name="drive_end_unreachable">device unreachable</string>
+    <string name="drive_end_busy">device busy</string>
+    <string name="drive_end_not_live">not a live device</string>
     <string name="status_upload">Last upload</string>
     <string name="status_sink">Sink “%1$s”</string>
     <string name="status_two_values">%1$s, %2$s</string>
@@ -198,6 +219,18 @@
     <string name="settings_car">Car head unit</string>
     <string name="settings_car_none">None</string>
     <string name="settings_car_help">Syncs when the phone connects to or disconnects from this car\'s Bluetooth.</string>
+    <string name="settings_drive_session">Keep syncing while driving</string>
+    <string name="settings_drive_session_help">When the car connects or the dongle comes in range, hold the connection and keep collecting new data until the drive ends. Not yet tested on hardware.</string>
+    <string name="settings_drive_interval">Pull every</string>
+    <string name="settings_drive_interval_help">How often a drive session asks the dongle for new data.</string>
+    <string name="settings_drive_idle">End after no new data for</string>
+    <string name="settings_drive_idle_help">A parked car with the engine off stops logging; the session then ends.</string>
+    <string name="settings_drive_max">Longest session</string>
+    <string name="settings_drive_max_help">A session ends after this long whatever happens. Periodic syncs then take over.</string>
+    <plurals name="settings_minutes">
+        <item quantity="one">%1$d minute</item>
+        <item quantity="other">%1$d minutes</item>
+    </plurals>
     <string name="settings_car_permission">Allow Bluetooth access to list paired devices</string>
     <string name="settings_cache">Local cache</string>
     <string name="settings_cache_cap">Cache limit (MB)</string>
