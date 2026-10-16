@@ -22,7 +22,8 @@ import kotlin.io.path.readBytes
  * batches go out oldest first and each sink stops at its first failure; a sink that answered
  * Retry is not contacted again before the server's `Retry-After` (capped at a day) or, without
  * one, 30 s doubling per consecutive retry up to an hour; Acked, Failed or [Delivery.forget]
- * starts over; all of it keyed by sink id, so rebuilding a sink keeps its schedule.
+ * starts over; all of it keyed by sink id, so rebuilding a sink keeps its schedule, and persisted
+ * through its [RetryStateStore], so a [Delivery] created after a restart keeps it too.
  */
 class DeliveryTest {
     @TempDir
@@ -41,7 +42,11 @@ class DeliveryTest {
         store.seal(SealPolicy(maxBatchAgeMs = 0), h.now)
     }
 
-    private fun delivery() = Delivery(store, clock = { h.now })
+    /** Outlives the [Delivery]s created on it, as the app's status store outlives the process. */
+    private val retryStates = MemoryRetryStateStore()
+
+    /** A new [Delivery], as a new process creates one, on the persisted [retryStates]. */
+    private fun delivery() = Delivery(store, clock = { h.now }, retryStates)
 
     /** Records the ids of the batches it was sent, in order, and answers with [answer]. */
     private class Recording(
@@ -249,6 +254,60 @@ class DeliveryTest {
             )
             assertEquals(30_000, delivery.waitLeft(sink("edited", fixed), fixed), "the streak starts over")
             assertEquals(600_000, delivery.waitLeft(sink("other", otherDown), otherDown))
+        }
+
+    @Test
+    fun `a Delivery created after a restart still waits out the Retry-After, with its reason`() =
+        runTest {
+            storeWith(1, "throttled")
+            val first = scripted(UploadResult.Retry("HTTP 429", retryAfterMs = 6 * 3_600_000L))
+            delivery().deliverPending(sink("throttled", first))
+
+            h.now += 6 * 3_600_000L - 1
+            val restarted = delivery()
+            val rebuilt = scripted(UploadResult.Acked)
+            assertEquals(
+                DeliveryResult.Deferred("HTTP 429", h.now + 1),
+                restarted.deliverPending(sink("throttled", rebuilt)),
+            )
+            assertEquals(emptyList<String>(), rebuilt.sent, "not contacted before it asked to be")
+
+            h.now += 1
+            assertEquals(DeliveryResult.Delivered, delivery().deliverPending(sink("throttled", rebuilt)))
+            assertEquals(emptyMap<String, SinkRetryState>(), retryStates.load(), "an ack clears the persisted schedule")
+        }
+
+    @Test
+    fun `a Delivery created after a restart continues the back-off streak`() =
+        runTest {
+            storeWith(1, "a")
+            val down = scripted(UploadResult.Retry("connection refused"))
+            val before = delivery()
+            repeat(2) {
+                before.deliverPending(sink("a", down))
+                h.now += before.waitLeft(sink("a", down), down)
+            }
+
+            val after = delivery()
+            after.deliverPending(sink("a", down))
+
+            assertEquals(120_000, after.waitLeft(sink("a", down), down), "the third retry in a row")
+        }
+
+    @Test
+    fun `forgetting a sink clears its persisted schedule, so a restart tries it at once`() =
+        runTest {
+            storeWith(1, "edited", "other")
+            val delivery = delivery()
+            delivery.deliverPending(sink("edited", scripted(UploadResult.Retry("HTTP 429", retryAfterMs = 600_000))))
+            delivery.deliverPending(sink("other", scripted(UploadResult.Retry("offline", retryAfterMs = 600_000))))
+
+            delivery.forget("edited")
+
+            assertEquals(setOf("other"), retryStates.load().keys)
+            val fixed = scripted(UploadResult.Acked)
+            assertEquals(DeliveryResult.Delivered, delivery().deliverPending(sink("edited", fixed)))
+            assertEquals(1, fixed.sent.size)
         }
 
     @Test

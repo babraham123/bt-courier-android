@@ -8,9 +8,11 @@ import app.btcourier.ble.Associations
 import app.btcourier.ble.CompanionPairedDeviceRepository
 import app.btcourier.ble.PairedDeviceRepository
 import app.btcourier.ble.newestAssociation
+import app.btcourier.core.sink.Delivery
 import app.btcourier.core.store.DefaultStore
 import app.btcourier.core.store.Store
 import app.btcourier.data.AndroidKeystoreSshKeys
+import app.btcourier.data.DataStoreRetryStates
 import app.btcourier.data.DataStoreSettings
 import app.btcourier.data.DataStoreSyncStatus
 import app.btcourier.data.FolderAccess
@@ -80,9 +82,10 @@ object AppGraph {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val settings: SettingsRepository by lazy { DataStoreSettings(settingsDataStore(app, sinkCredentials)) }
-    val status: SyncStatusRepository by lazy {
-        DataStoreSyncStatus(statusDataStore(app) { newestAssociation(associations.list())?.address })
-    }
+
+    // One DataStore per file: the status and the upload retry schedules share it.
+    private val statusStore by lazy { statusDataStore(app) { newestAssociation(associations.list())?.address } }
+    val status: SyncStatusRepository by lazy { DataStoreSyncStatus(statusStore) }
     val pairedDevices: PairedDeviceRepository by lazy { CompanionPairedDeviceRepository(associations, settings) }
 
     /** Every scheduling request goes through it: screens, triggers and workers. */
@@ -137,14 +140,15 @@ object AppGraph {
 
     val syncWork: SyncWork by lazy { SyncWork(syncJob, syncFanOut, work) }
 
-    // One instance for the process: it keeps each sink's retry schedule across rounds, while the
-    // sinks themselves are rebuilt every round from the current settings.
+    // One instance for the process: it keeps each sink's retry schedule across rounds, and in the
+    // status store across restarts, while the sinks are rebuilt every round from the settings.
     val uploadJob: UploadJob by lazy {
         UploadJob(
             store,
             sinks = { buildSinks(settings.current(), secrets, sinkEnvironment) },
             status = status,
             log = log,
+            delivery = Delivery(store, retryStates = DataStoreRetryStates(statusStore)),
         )
     }
 

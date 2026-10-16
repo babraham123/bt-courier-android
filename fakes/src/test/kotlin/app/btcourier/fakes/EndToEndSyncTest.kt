@@ -6,6 +6,7 @@ import app.btcourier.core.sink.Delivery
 import app.btcourier.core.sink.DeliveryResult
 import app.btcourier.core.sink.Jsonl
 import app.btcourier.core.sink.LocalDirectoryUploadTransport
+import app.btcourier.core.sink.MemoryRetryStateStore
 import app.btcourier.core.sink.UploadResult
 import app.btcourier.core.sink.UploadTransport
 import app.btcourier.core.store.DefaultStore
@@ -97,13 +98,15 @@ class EndToEndSyncTest {
     private fun openStore() = DefaultStore.open(storeDir, clock = { 0 }, sinkIds = { setOf(sink.id) })
 
     /**
-     * One connection: a new link, transport and source over [device], one sync, then delivery.
-     * [beforeExport] runs as the device answers each export request (1-based), to inject faults.
+     * One connection: a new link, transport and source over [device], one sync, then delivery
+     * unless not to [deliver]. [beforeExport] runs as the device answers each export request
+     * (1-based), to inject faults.
      */
     private suspend fun TestScope.connectAndSync(
         device: FakeWicanLogger,
         store: DefaultStore,
         limit: Int = 7,
+        deliver: Boolean = true,
         beforeExport: ScriptedPeripheral.(Int) -> Unit = {},
     ): Synced {
         lateinit var peripheral: ScriptedPeripheral
@@ -121,7 +124,13 @@ class EndToEndSyncTest {
         val report = SyncRunner("wican", source, store).run()
         // Age 0 seals the open file too, so every stored row is deliverable after each sync.
         val sealed = store.seal(SealPolicy(maxBatchAgeMs = 0), 0)
-        assertEquals(DeliveryResult.Delivered, Delivery(store).deliverPending(sink), "everything sealed was delivered")
+        if (deliver) {
+            assertEquals(
+                DeliveryResult.Delivered,
+                Delivery(store).deliverPending(sink),
+                "everything sealed was delivered",
+            )
+        }
         return Synced(report, sealed, peripheral)
     }
 
@@ -225,6 +234,45 @@ class EndToEndSyncTest {
             assertEquals(2, resumedSealed.size, "the rest of file A, then file B")
             val firstExport = peripheral.requests.first { it.path.startsWith("/api/logger/export") }
             assertTrue(firstExport.path.contains("since=$persisted&"), firstExport.path)
+            assertDeliveredExactlyOnce()
+        }
+
+    @Test
+    fun `a sink that asked to wait is still waited for after a process restart, then the follow-up delivers`() =
+        runTest {
+            val wait = 6 * 3_600_000L
+            var now = 0L
+            // Persisted like the app's status store: it outlives every Delivery created on it.
+            val retryStates = MemoryRetryStateStore()
+            val throttled =
+                object : UploadTransport {
+                    var answered = false
+
+                    override suspend fun upload(batch: Batch): UploadResult =
+                        if (answered) {
+                            upload.upload(batch)
+                        } else {
+                            answered = true
+                            UploadResult.Retry("HTTP 503", retryAfterMs = wait)
+                        }
+                }
+            val throttledSink = CompositeSink(sink.id, throttled, Jsonl)
+            connectAndSync(device(), openStore(), deliver = false)
+
+            val deferredRound = Delivery(openStore(), clock = { now }, retryStates = retryStates)
+            assertEquals(
+                DeliveryResult.Stopped(UploadResult.Retry("HTTP 503", retryAfterMs = wait)),
+                deferredRound.deliverPending(throttledSink),
+            )
+
+            // The process dies; a new one opens the store and the retry states from disk.
+            now += wait - 1
+            val restarted = Delivery(openStore(), clock = { now }, retryStates = retryStates)
+            assertEquals(DeliveryResult.Deferred("HTTP 503", wait), restarted.deliverPending(throttledSink))
+            assertEquals(0, upload.uploads, "the restarted process did not hit the sink early")
+
+            now += 1
+            assertEquals(DeliveryResult.Delivered, restarted.deliverPending(throttledSink))
             assertDeliveredExactlyOnce()
         }
 

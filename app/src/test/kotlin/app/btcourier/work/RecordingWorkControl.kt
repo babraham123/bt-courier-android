@@ -51,7 +51,7 @@ class RecordingWorkControl : WorkControl {
         periodic += enabled
     }
 
-    override fun forgetRetries(sinkId: String) {
+    override suspend fun forgetRetries(sinkId: String) {
         calls += "forget $sinkId"
     }
 }
