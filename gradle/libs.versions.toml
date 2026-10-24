@@ -17,7 +17,7 @@ junit = "5.14.4"
 # 4.17 runs SDK 36 (compileSdk); JVM screen tests only.
 robolectric = "4.17"
 sshj = "0.41.2"
-sshd = "2.15.0"
+sshd = "2.20.0"
 hivemq-mqtt = "1.4.1"
 moquette = "0.17"
 documentfile = "1.1.0"
