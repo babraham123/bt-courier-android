@@ -1,0 +1,1 @@
+About screen in Settings: version, source code and bug report links, license and credits. Clearer wording in Settings and on the status screen. Targets Android 17.
