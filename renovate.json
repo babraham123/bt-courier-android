@@ -26,6 +26,14 @@
   },
   "packageRules": [
     {
+      "description": "A pin locks the version already in use, so there is no new release to wait out",
+      "matchUpdateTypes": [
+        "pin",
+        "pinDigest"
+      ],
+      "minimumReleaseAge": "0 days"
+    },
+    {
       "description": "One PR for all AndroidX libraries and the Compose BOM.",
       "matchPackageNames": [
         "androidx.**"
