@@ -14,6 +14,7 @@ import app.btcourier.core.testing.WicanLines.fileMarker
 import app.btcourier.core.testing.WicanLines.journal
 import app.btcourier.core.testing.WicanLines.row
 import app.btcourier.core.testing.WicanLines.storedRow
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -213,6 +214,7 @@ class SyncRunnerTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `429 is retried after each back-off wait, then the sync stops as Busy`() =
         runTest {
             val flaky =

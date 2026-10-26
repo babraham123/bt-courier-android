@@ -8,6 +8,7 @@ import app.btcourier.core.elm327.Pid
 import app.btcourier.core.elm327.VehicleProfile
 import app.btcourier.core.elm327.VehicleProfiles
 import app.btcourier.core.source.Page
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.onEach
@@ -30,6 +31,7 @@ import kotlin.time.Duration.Companion.seconds
 class Elm327SourceTest {
     private val ev6 = VehicleProfiles.byModel("Kia: EV6")!!
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private fun TestScope.source(
         adapter: FakeElm327Adapter,
         profile: VehicleProfile,
@@ -134,6 +136,7 @@ class Elm327SourceTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `rows are phone-stamped, adapter first and voltage last`() =
         runTest {
             val adapter = FakeElm327Adapter(mapOf("010D1" to "7E8 03 41 0D 32"))
@@ -238,6 +241,7 @@ class Elm327SourceTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `rounds start every poll interval`() =
         runTest {
             val adapter = FakeElm327Adapter(mapOf("010D1" to "7E8 03 41 0D 32"), scope = backgroundScope)
@@ -250,6 +254,7 @@ class Elm327SourceTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `a round longer than the poll interval is followed at once`() =
         runTest {
             val adapter = FakeElm327Adapter(mapOf("010D1" to "7E8 03 41 0D 32"), scope = backgroundScope)

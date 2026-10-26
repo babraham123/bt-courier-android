@@ -370,9 +370,7 @@ private fun AuthFields(
 ) {
     val form = state.form
     when (form.authKind) {
-        AuthKind.NONE -> {
-            Unit
-        }
+        AuthKind.NONE -> {}
 
         AuthKind.BASIC -> {
             Field(

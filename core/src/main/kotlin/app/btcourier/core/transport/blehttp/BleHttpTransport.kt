@@ -220,9 +220,7 @@ class BleHttpTransport(
                     return
                 }
 
-                is ResponseAssembler.Event.Head, ResponseAssembler.Event.Ignored -> {
-                    Unit
-                }
+                is ResponseAssembler.Event.Head, ResponseAssembler.Event.Ignored -> {}
             }
         }
     }

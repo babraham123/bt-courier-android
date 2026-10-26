@@ -126,4 +126,6 @@ dependencies {
 tasks.withType<Test>().configureEach {
     // Robolectric's SDK 37 sandbox sets file descriptors through this JDK-internal API.
     jvmArgs("--add-opens=java.base/jdk.internal.access=ALL-UNNAMED")
+    // Robolectric loads its native runtime with System.load, a restricted method since JDK 24.
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
 }

@@ -268,7 +268,7 @@ class FrameParser {
             if (size - pos < BleHttpWire.HEADER_SIZE + len) break
             val seq = buf[pos + 4].u() or (buf[pos + 5].u() shl 8)
             val payloadStart = pos + BleHttpWire.HEADER_SIZE
-            frames += Frame(type!!, buf[pos + 3].u(), seq, buf.copyOfRange(payloadStart, payloadStart + len))
+            frames += Frame(type, buf[pos + 3].u(), seq, buf.copyOfRange(payloadStart, payloadStart + len))
             pos = payloadStart + len
         }
         buf.copyInto(buf, 0, pos, size)
