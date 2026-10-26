@@ -21,6 +21,7 @@ import app.btcourier.fakes.ScriptedPeripheral.Reply
 import app.btcourier.ui.FakePairedDevices
 import app.btcourier.work.SyncOutcome.Recorded
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.currentTime
@@ -303,6 +304,7 @@ class SyncJobTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `a busy device is retried in the run after 1, 2 and 4 s, then the sync is interrupted`() =
         runTest {
             val links = busyLinks(this)
@@ -401,6 +403,7 @@ class SyncJobTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `a sync of a device that is already syncing returns at once, another device still syncs`() =
         runTest {
             val locks = DeviceLocks()

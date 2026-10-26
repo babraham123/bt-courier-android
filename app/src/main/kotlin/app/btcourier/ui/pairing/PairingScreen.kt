@@ -212,9 +212,7 @@ fun PairingScreen(
                         Text(stringResource(R.string.pairing_test_busy))
                     }
 
-                    null -> {
-                        Unit
-                    }
+                    null -> {}
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(

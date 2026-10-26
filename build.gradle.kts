@@ -101,6 +101,9 @@ subprojects {
     // stack trace so a CI log is enough to diagnose them.
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
+        // Netty (core) and DataStore's protobuf (app) use sun.misc.Unsafe, which JDK 24+ warns about
+        // on first use. Only the test JVM runs it; on Android it is the platform's own Unsafe.
+        jvmArgs("--sun-misc-unsafe-memory-access=allow")
         testLogging {
             events("failed")
             exceptionFormat = TestExceptionFormat.FULL

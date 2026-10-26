@@ -8,6 +8,7 @@ import app.btcourier.core.store.Store
 import app.btcourier.core.sync.StopReason
 import app.btcourier.core.sync.SyncReport
 import app.btcourier.core.sync.SyncRunner
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -126,6 +127,7 @@ class ColmiRingSourceTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `walks two days of history from the cursor to more false`() =
         runTest {
             val ring = ring()
@@ -194,6 +196,7 @@ class ColmiRingSourceTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `a ring that never answers HRV is probed once per instance and its days go on without HRV`() =
         runTest {
             val ring = ring()
@@ -249,6 +252,7 @@ class ColmiRingSourceTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `set-time waits for the ring to settle and for its echo, and a lost echo sets the clock again on the next pull`() =
         runTest {
             val ring = ring()

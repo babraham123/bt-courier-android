@@ -11,6 +11,7 @@ import app.btcourier.core.transport.blehttp.tunnelError
 import app.btcourier.fakes.ScriptedPeripheral.Fault
 import app.btcourier.fakes.ScriptedPeripheral.Reply
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -349,6 +350,7 @@ class BleHttpTransportTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `a route that never answers times out after the idle limit, is aborted and frees the tunnel`() =
         runTest {
             val (peripheral, transport) = connect(mapOf("/api/status" to Reply(200, status)), idleTimeout = 10.seconds)
@@ -363,6 +365,7 @@ class BleHttpTransportTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `a body that stops mid-way times out once the device is silent for the idle limit`() =
         runTest {
             val path = "/api/fs/download?path=/sd/a"
@@ -386,6 +389,7 @@ class BleHttpTransportTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `the idle clock does not run while the request body is still going out`() =
         runTest {
             // 4000 B at MTU 23: about 200 writes of 20 B at 100 ms each, 20 s with nothing owed by
@@ -408,6 +412,7 @@ class BleHttpTransportTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `a streamed body nobody collects is aborted after the idle limit and the link released`() =
         runTest {
             val path = "/api/fs/download?path=/data/app/cfg.bin"
@@ -454,6 +459,7 @@ class BleHttpTransportTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `a streamed tunnel error needs no collecting to free the link`() =
         runTest {
             val (peripheral, transport) = connect(mapOf("/api/status" to Reply(200, status)))

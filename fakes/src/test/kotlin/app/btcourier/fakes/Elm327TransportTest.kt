@@ -2,6 +2,7 @@ package app.btcourier.fakes
 
 import app.btcourier.core.elm327.Elm327Exception
 import app.btcourier.core.elm327.Elm327Transport
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -95,6 +96,7 @@ class Elm327TransportTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `no prompt within the timeout is a PromptTimeout`() =
         runTest {
             val adapter = FakeElm327Adapter()
@@ -159,6 +161,7 @@ class Elm327TransportTest {
         }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `a link dropping while an answer is owed is LinkLost`() =
         runTest {
             val adapter = FakeElm327Adapter()

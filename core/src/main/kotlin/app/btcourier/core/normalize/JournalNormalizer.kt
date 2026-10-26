@@ -161,9 +161,7 @@ class JournalNormalizer : Normalizer {
                     origin = origin?.plus(event.deltaMs)
                 }
 
-                is ClockEvent.Rotate -> {
-                    Unit
-                }
+                is ClockEvent.Rotate -> {}
             }
         }
         return out

@@ -24,6 +24,7 @@ import app.btcourier.fakes.ScriptedPeripheral.Fault
 import app.btcourier.ui.FakePairedDevices
 import app.btcourier.ui.FakeSettings
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
@@ -55,6 +56,7 @@ import java.time.ZoneOffset
  * or with the link lost after two reopen attempts; it holds the device's lock throughout, so a
  * sync meanwhile is a no-op and a manual one becomes a round.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class DriveSessionTest {
     private var clock: () -> Long = { NOW }
 
