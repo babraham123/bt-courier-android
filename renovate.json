@@ -12,6 +12,8 @@
     "before 6am on monday"
   ],
   "timezone": "Etc/UTC",
+  "minimumReleaseAge": "3 days",
+  "minimumReleaseAgeBehaviour": "timestamp-optional",
   "osvVulnerabilityAlerts": true,
   "dependencyDashboardOSVVulnerabilitySummary": "unresolved",
   "prConcurrentLimit": 3,
