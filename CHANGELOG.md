@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.3] - 2026-10-26
 
 ### Added
 
@@ -17,6 +17,7 @@ All notable changes to this project are documented here. The format is based on
 - Clearer wording in Settings and on the status screen: "upload target" replaces "sink", drive
   sessions "sync every" rather than "pull every", and settings that apply to every device no
   longer mention the dongle.
+- Targets Android 17 (API level 37).
 
 ## [0.0.2] - 2026-10-16
 
