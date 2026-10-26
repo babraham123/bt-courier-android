@@ -15,7 +15,6 @@ buildscript {
 plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.jvm) apply false
-    alias(libs.plugins.kotlin.android) apply false
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.kotlin.serialization) apply false
     alias(libs.plugins.ktlint) apply false
@@ -23,7 +22,7 @@ plugins {
 }
 
 // Compilers and test JVMs run on the JDK CI installs; settings.gradle.kts provisions it if missing.
-val toolchainJdk = 21
+val toolchainJdk = 25
 
 allprojects {
     // Every resolvable configuration resolves exactly the versions in its project's gradle.lockfile,
@@ -68,9 +67,10 @@ allprojects {
 }
 
 subprojects {
-    // The toolchain only picks the JDK that compiles and tests; bytecode targets stay at 17.
-    listOf("org.jetbrains.kotlin.jvm", "org.jetbrains.kotlin.android").forEach { kotlinPlugin ->
-        plugins.withId(kotlinPlugin) {
+    // The toolchain only picks the JDK that compiles and tests; bytecode targets stay at 17. AGP
+    // compiles Kotlin itself (built-in Kotlin) and registers the same `kotlin` extension.
+    listOf("org.jetbrains.kotlin.jvm", "com.android.application").forEach { pluginId ->
+        plugins.withId(pluginId) {
             extensions.configure<KotlinProjectExtension> {
                 jvmToolchain(toolchainJdk)
             }

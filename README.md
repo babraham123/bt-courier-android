@@ -13,7 +13,7 @@ Planned distribution is via GitHub Releases (for Obtainium), then F-Droid. See `
 
 ## Build
 
-Requires JDK 21 and the Android SDK (platform 36) configured via `sdk.dir` in `local.properties` or `ANDROID_HOME`. Run full checks:
+Requires JDK 25 and the Android SDK (platform 37) configured via `sdk.dir` in `local.properties` or `ANDROID_HOME`. Run full checks:
 
 ```
 ./gradlew :core:test :fakes:test :app:testDebugUnitTest ktlintCheck :app:lintDebug :app:lintRelease :app:assembleDebug :app:assembleRelease

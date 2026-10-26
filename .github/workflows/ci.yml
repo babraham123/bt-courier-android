@@ -26,7 +26,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-build
-      # The runner image ships an Android SDK; the build fetches platform 36 if missing. The
+      # The runner image ships an Android SDK; the build fetches platform 37 if missing. The
       # release variant is unsigned and exercises R8 and resource shrinking.
       - run: >-
           ./gradlew
