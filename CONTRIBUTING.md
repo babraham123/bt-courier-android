@@ -2,7 +2,7 @@
 
 ## Build
 
-Prerequisites: JDK 21 and the Android SDK with platform 36. Point Gradle at the SDK with `sdk.dir`
+Prerequisites: JDK 25 and the Android SDK with platform 37. Point Gradle at the SDK with `sdk.dir`
 in `local.properties` or the `ANDROID_HOME` environment variable.
 
 Run the full check before opening a pull request; CI runs the same tasks:

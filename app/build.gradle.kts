@@ -2,19 +2,18 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
 
 android {
     namespace = "app.btcourier"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "app.btcourier"
         minSdk = 31
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 2
         versionName = "0.0.2"
     }
@@ -125,6 +124,6 @@ dependencies {
 }
 
 tasks.withType<Test>().configureEach {
-    // Robolectric's SDK 36 sandbox sets file descriptors through this JDK-internal API.
+    // Robolectric's SDK 37 sandbox sets file descriptors through this JDK-internal API.
     jvmArgs("--add-opens=java.base/jdk.internal.access=ALL-UNNAMED")
 }

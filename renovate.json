@@ -46,21 +46,6 @@
         "com.squareup.okhttp3:**"
       ],
       "groupName": "OkHttp"
-    },
-    {
-      "description": "AGP 9 needs Gradle 9; stay on AGP 8 until the wrapper moves to Gradle 9.",
-      "matchPackageNames": [
-        "com.android.application**",
-        "com.android.tools.build:gradle"
-      ],
-      "allowedVersions": "<9"
-    },
-    {
-      "description": "Kable releases after 0.42.0 are compiled against Kotlin 2.4 metadata; hold until the project is on Kotlin 2.4.",
-      "matchPackageNames": [
-        "com.juul.kable:**"
-      ],
-      "allowedVersions": "<=0.42.0"
     }
   ]
 }
