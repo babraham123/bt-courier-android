@@ -34,6 +34,18 @@
       "minimumReleaseAge": "0 days"
     },
     {
+      "description": "Renovate looks up catalog plugins only on the Gradle Plugin Portal, but AGP's plugin markers are published to Google Maven alone.",
+      "matchDepTypes": [
+        "plugin"
+      ],
+      "matchPackageNames": [
+        "com.android.**"
+      ],
+      "registryUrls": [
+        "https://dl.google.com/android/maven2/"
+      ]
+    },
+    {
       "description": "One PR for all AndroidX libraries and the Compose BOM.",
       "matchPackageNames": [
         "androidx.**"
