@@ -15,7 +15,9 @@
   "minimumReleaseAge": "3 days",
   "minimumReleaseAgeBehaviour": "timestamp-optional",
   "osvVulnerabilityAlerts": true,
-  "dependencyDashboardOSVVulnerabilitySummary": "unresolved",
+  "dependencyDashboard": {
+    "osvVulnerabilitySummary": "unresolved"
+  },
   "prConcurrentLimit": 3,
   "prHourlyLimit": 2,
   "lockFileMaintenance": {
